@@ -39,6 +39,10 @@ void RoutingUnrollingLowerPass::runOnOperation() {
             }
             if (auto val = mlir::getConstantIntValue(ub)) {
                 iu =   static_cast<int>(*val);;
+            }else if (auto cast = ub.getDefiningOp<mlir::arith::IndexCastOp>()) {
+                if (auto val2 = mlir::getConstantIntValue(cast.getIn())) {
+                    iu = static_cast<int>(*val2);
+                }
             }
             if (auto val = mlir::getConstantIntValue(step)) {
                 is =   static_cast<int>(*val);;
@@ -78,7 +82,7 @@ void RoutingUnrollingLowerPass::runOnOperation() {
             dialect->getCanonicalizationPatterns(patterns);
         }
         for (mlir::RegisteredOperationName op : context->getRegisteredOperations()) {
-            op.getCanonicalizationPatterns(patterns, context);
+           // op.getCanonicalizationPatterns(patterns, context);
         }
 
             // Apply the patterns greedily. This will simplify and clean up the IR.

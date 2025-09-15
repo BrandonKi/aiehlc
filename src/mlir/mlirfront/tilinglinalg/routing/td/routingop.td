@@ -34,6 +34,21 @@ def routing_createdataio : routingop<"routingcreatedataio", [DeclareOpInterfaceM
 	let assemblyFormat = " $iotype `,` $direction attr-dict `->` type($output)";
 }
 
+def routing_createhwiowithtarget : routingop<"routingcreatehwiowithtarget"> {
+	let summary = "createhwiowithtarget";
+	let cppNamespace = "routing";
+	let description = "create hw io with target";
+	let arguments = (ins
+		I32:$targettilelist,
+		StrAttr:$direction,
+		StrAttr:$iotype
+	);
+	let results = (outs
+		I32:$output
+	);
+	let assemblyFormat = " `targettilelist` `=` $targettilelist `:` type($targettilelist) attr-dict `->` type($output)";
+}
+
 def routing_creatbroadcast : routingop<"routingcreatebroadcast"> {
 	let summary = "createbroadcast";
 	let cppNamespace = "routing";
@@ -46,6 +61,20 @@ def routing_creatbroadcast : routingop<"routingcreatebroadcast"> {
 	let results = (outs
 		I32:$output);
 	let assemblyFormat = "$io `,` $tilearray `:` type($io) `,` type($tilearray)  attr-dict`->` type($output)";
+}
+
+def routing_movedatabyio : routingop<"routingmovedatabyio "> {
+	let summary = "movedatabyio";
+	let cppNamespace = "routing";
+	let description = "move data through io to aie or from";
+
+	let arguments = (ins
+		I32:$pktmerge_or_slicetestor,
+		I32:$hwiowithtarget);
+
+	let results = (outs
+		I32:$output);
+	let assemblyFormat = " `pktmerge_or_slicetestor` `=` $pktmerge_or_slicetestor `,` `hwiowithtarget` `=` $hwiowithtarget `:` type($pktmerge_or_slicetestor) `,` type($hwiowithtarget)  attr-dict`->` type($output)";
 }
 
 def routing_createhwmesh :routingop<"routingcreatehwmesh"> {
@@ -82,51 +111,43 @@ def routing_createdummytensor :routingop<"routingcreatedummytensor"> {
 
 }
 
-def routing_partitionmesh :routingop<"routingpartitionmesh"> {
+def routing_partitionmesh :routingop<"partitionmesh"> {
 	let summary = "partitionmesh";
 	let cppNamespace = "routing";
 	let description = "partitionmesh";
 
 	let arguments = (ins
 		I32:$mesh,
-		I32:$splitnum,
-		I32:$axisidx
+		I32Attr:$splitnum,
+		StrAttr:$splitaxis
 		);
 
 	let results = (outs
 		I32:$output);
 
-	let assemblyFormat = [{`mesh` `=` $mesh`,` `splitnum` `=` $splitnum `,` `axisidx` `=`  $axisidx `:` type($mesh) `,` type($splitnum) `,` type($axisidx) attr-dict `->` type($output)}];	
+	let assemblyFormat = [{`mesh` `=` $mesh `:` type($mesh) attr-dict `->` type($output)}];	
 
 }
 
-def routing_partitiontensor :routingop<"routingpartitiontensor"> {
+def routing_partitiontensor :routingop<"partitiontensor"> {
 	let summary = "partitiontensor";
 	let cppNamespace = "routing";
-	let description = "partitionmtensor";
+	let description = "partitiontensor";
 
 	let arguments = (ins
 		I32:$tensor,
-		I32:$splitnum,
-		I32:$splitdim,
-		I32:$hw_axis_owner,
-		I32:$replicate_on,
-		I32:$single_tile_owner
+		I32Attr:$splitnum,
+		I32Attr:$splitdim,
+		StrAttr:$hw_axis_owner,
+		StrAttr:$replicate_on,
+		StrAttr:$single_tile_owner
 	);
 
 	let results = (outs
 		I32:$output);
 	
 	let assemblyFormat = [{
-		`tensor` `=` $tensor `,`
-		`splitnum` `=` $splitnum `,`
-		`splitdim` `=` $splitdim `,`
-		`hw_axis_owner` `=` $hw_axis_owner `,`
-		`replicate_on` `=` $replicate_on `,`
-		`single_tile_owner` `=` $single_tile_owner
-		`:` type($tensor) `,` type($splitnum) `,` type($splitdim) `,`
-			type($hw_axis_owner) `,` type($replicate_on) `,` type($single_tile_owner)
-		attr-dict `->` type($output)
+		`tensor` `=` $tensor `:` type($tensor) attr-dict `->` type($output)
 	}];	
 
 }
@@ -164,3 +185,81 @@ def routing_extract_tiles :routingop<"routingextract_tiles"> {
 	let assemblyFormat = "$partitions `,`  $idx `:` type($partitions) `,` type($idx) attr-dict `->` type($output)";	
 
 }
+
+def Routing_YieldOp : routingop<"yield", [Terminator]> {
+  let summary = "Terminator for regions in routing ops";
+  let description = [{
+    The `routing.yield` operation is a terminator that yields a value from
+    a region within a `routing` operation.
+  }];
+
+  //let arguments = (ins AnyType:$value);
+  let arguments = (ins);
+  let results = (outs); // No results
+}
+
+def Routing_RoutingCreate : routingop<"RoutingCreate", []> {
+  let summary = "A structured operation for routing logic";
+  let description = [{
+    Represents a dispatch of a value through a routing pipeline,
+    configured by a static device_row attribute. The operation contains
+    a region that defines the routing logic.
+  }];
+
+  let arguments = (ins 
+  				   I32:$scf_idx,
+				   StrAttr:$Memo
+				   );
+  let results = (outs I32:$output);
+
+  let regions = (region SizedRegion<1>:$body);
+ 
+  let builders = [
+    OpBuilder<(ins "Value":$scf_idx, 
+				   "Attribute":$Memo,
+                   "function_ref<void(OpBuilder &, Location, Value)>":$bodyBuilder),
+    [{
+      // no region creatation
+	  // 2. Add operands to the state object.
+      $_state.addTypes($_builder.getI32Type());//for output , the result
+      $_state.addOperands(scf_idx);
+	  
+      // 3. Add attributes to the state object.
+      // Note that we must provide the attribute's name as a string.
+      $_state.addAttribute("Memo", Memo);
+
+      // 2. 创建 Region 和 Block
+      auto *bodyRegion = $_state.addRegion();
+      Block *bodyBlock = new Block();
+      bodyRegion->push_back(bodyBlock);
+      bodyBlock->addArgument(scf_idx.getType(), scf_idx.getLoc());
+
+      // 3. 调用用户提供的 lambda 来填充 Block
+      OpBuilder::InsertionGuard guard($_builder);
+      $_builder.setInsertionPointToStart(bodyBlock);
+      bodyBuilder($_builder, 
+	  			  scf_idx.getLoc(),
+				  bodyBlock->getArgument(0)
+				  );
+    }]>
+  ];
+
+  // --- 添加一个验证器 ---
+  /*
+  let verifier = [{
+    // verify region and argument
+    if (getRegion().front().getArgument(0).getType() != getInput().getType())
+      return emitOpError("region argument type must match input type");
+
+    // verify yeild
+    auto yieldOp = getRegion().front().getTerminator();
+    if (yieldOp->getOperand(0).getType() != getResult().getType())
+      return emitOpError("yield type must match result type");
+  }];
+*/
+  // 
+  //let assemblyFormat = [{ `(` $input `)` attr-dict `->` type($output) region $body
+  //}];
+  let hasCustomAssemblyFormat = 1;
+}
+

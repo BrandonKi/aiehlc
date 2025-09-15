@@ -34,7 +34,7 @@ int main(int argc, char* argv[]) {
     ctx.getOrLoadDialect<arith::ArithDialect>();
     
     //auto module1 = mtest.createroutingfunc(&ctx,1);
-    auto module1 = mtest.ops_test(&ctx,1);
+    auto module1 = mtest.ops_testNew(&ctx,1);
     module1.dump();
     //auto module2 = mtesthw.ops_test(&ctx);
     std::cout << "main" <<std::endl;
@@ -42,6 +42,7 @@ int main(int argc, char* argv[]) {
     mlir::PassManager pm(&ctx);;
     RoutingTopology rtopology("Gen2");
     
+    pm.addPass(mlir::createPrintIRPass());
     pm.addPass(std::make_unique<RoutingUnrollingLowerPass>());
     pm.addPass(mlir::createPrintIRPass());
     pm.addPass(std::make_unique<RoutingLowerPass>(rtopology));
