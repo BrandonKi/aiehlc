@@ -374,14 +374,14 @@ done < "$kernel_list_file"
 
 #Compile host
 host_file=$(pwd)/aout/host.cc
-# echo "INCLUDE_DIR: ${AIE_DRIVER_PARENT_DIR}include/"
-# echo "LIB_DIR: ${AIE_DRIVER_PARENT_DIR}lib/"
-# echo "ARCH_APU_AINC: $ARCH_APU_AINC"
-# echo "SECONDARY_ARCH_APU_AINC: $SECONDARY_ARCH_APU_AINC"
-# echo "ARCH_APU_ALIB: $ARCH_APU_ALIB"
-# echo "ARCH_APU_LD: ${ARCH_APU_LD}"
-# echo -e "OBJ FILES: ${temp_obj_files[@]}\n"
-# echo "AIENGINE_LIB_DIR: ${AIENGINE_LIB_DIR}"
+dbg_echo "INCLUDE_DIR: ${AIE_DRIVER_PARENT_DIR}include/"
+dbg_echo "LIB_DIR: ${AIE_DRIVER_PARENT_DIR}lib/"
+dbg_echo "ARCH_APU_AINC: $ARCH_APU_AINC"
+dbg_echo "SECONDARY_ARCH_APU_AINC: $SECONDARY_ARCH_APU_AINC"
+dbg_echo "ARCH_APU_ALIB: $ARCH_APU_ALIB"
+dbg_echo "ARCH_APU_LD: ${ARCH_APU_LD}"
+dbg_echo -e "OBJ FILES: ${temp_obj_files[@]}\n"
+dbg_echo "AIENGINE_LIB_DIR: ${AIENGINE_LIB_DIR}"
 
 # when use local aiert_bsp then set the local aiengine lib name
 if [ "$USE_LOCAL_AIERT_BSP" -eq 0 ]; then
