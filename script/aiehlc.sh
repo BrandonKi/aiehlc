@@ -350,7 +350,7 @@ while IFS= read -r kernel_source_file; do
     mkdir -p "$KERNEL_BUILD_DIR"
 
     if [[ "$use_llvm_aie" != "true" ]]; then
-        echo "Processing Kernel (using chess): $kernel_source_file"
+        echo "Compiling Kernel (using chess): $kernel_source_file"
 
         xchesscc $compiler_flags_chess -o "${KERNEL_BUILD_DIR}/kernel_orig.ll" "$KERNEL_SRC/wrapper.cc"
         
@@ -360,7 +360,7 @@ while IFS= read -r kernel_source_file; do
         dbg_echo $chess_elf_compiler +o "$KERNEL_BUILD_DIR" "$KERNEL_SRC/aieml.prx"
         $chess_elf_compiler +o "$KERNEL_BUILD_DIR" "$KERNEL_SRC/aieml.prx"
     else
-        echo "Processing Kernel (using llvm-aie): $kernel_source_file"
+        echo "Compiling Kernel (using llvm-aie): $kernel_source_file"
 
         dbg_echo ${LLVM_AIE_PATH}/bin/clang++ $compiler_flags_llvm_aie "$KERNEL_SRC/wrapper.cc" -Wl,-T $KERNEL_SRC/main.ld.script -o $KERNEL_BUILD_DIR/kernel
         ${LLVM_AIE_PATH}/bin/clang++ $compiler_flags_llvm_aie "$KERNEL_SRC/wrapper.cc" -Wl,-T $KERNEL_SRC/main.ld.script -o $KERNEL_BUILD_DIR/kernel
@@ -393,14 +393,14 @@ dbg_echo "BAREMETAL_AIENGINE_LIB: ${BAREMETAL_AIENGINE_LIB}"
 
 echo -e "\n"
 echo "Targeting $platform platform..."
+echo "Compiling host..."
+echo "    $host_file"
+echo "Linking kernels..."
+echo "    ${temp_obj_files[@]}"
 if [[ "$platform" == "baremetal" ]]; then
-    echo "Compiling host... $host_file"
-    echo "Linking kernels... ${temp_obj_files[@]}"
     dbg_echo ${TOOL_PREFIX}g++ -Os -L$XILINX_VITIS/aietools/lib/lnx64.o/ -L$AIENGINE_LIB_DIR -DAIE_GEN=${aie_version} ${compiler_cpu_flag} -Wl,-T -Wl,${ARCH_APU_LD} -I$ARCH_APU_AINC -I$SECONDARY_ARCH_APU_AINC -I$AIE_DRIVER_PARENT_DIR/include/ -L$ARCH_APU_ALIB -L$AIE_DRIVER_PARENT_DIR/lib/ -o $HOST_BUILD_DIR/main.elf $host_file ${temp_obj_files[@]} -Wl,--start-group,-lm,-l${BAREMETAL_AIENGINE_LIB},-lxil,-lgcc,-lc,-lstdc++,${EXTRA_LIBS}--end-group
     ${TOOL_PREFIX}g++ -Os -L$XILINX_VITIS/aietools/lib/lnx64.o/ -L$AIENGINE_LIB_DIR -DAIE_GEN=${aie_version} ${compiler_cpu_flag} -Wl,-T -Wl,${ARCH_APU_LD} -I$ARCH_APU_AINC -I$SECONDARY_ARCH_APU_AINC -I$AIE_DRIVER_PARENT_DIR/include/ -L$ARCH_APU_ALIB -L$AIE_DRIVER_PARENT_DIR/lib/ -o $HOST_BUILD_DIR/main.elf $host_file ${temp_obj_files[@]} -Wl,--start-group,-lm,-l${BAREMETAL_AIENGINE_LIB},-lxil,-lgcc,-lc,-lstdc++,${EXTRA_LIBS}--end-group
 elif [[ "$platform" == "linux" ]]; then
-    echo "Compiling host... $host_file"
-    echo "Linking kernels... ${temp_obj_files[@]}"
     dbg_echo ${TOOL_PREFIX}g++ -Os -D__AIELINUX__ -DAIE_GEN=${aie_version} ${compiler_cpu_flag} \
         -I${AIE_DRIVER_DIR}/include -I$ARCH_APU_AINC -I$SECONDARY_ARCH_APU_AINC -I$AIE_DRIVER_PARENT_DIR/include/ \
         -L${AIE_DRIVER_DIR}/src -L$ARCH_APU_ALIB -L$AIE_DRIVER_PARENT_DIR/lib/ -L$AIE_DRIVER_PARENT_DIR/aie-rt/driver/src/ \
