@@ -318,12 +318,12 @@ if [[ "$use_llvm_aie" == "true" ]]; then
     "$LD_SO" --library-path "${LIB_PATH}:${LIB_BASE_PATH}" "${AIEHLC}" --use-llvm-aie --extra-arg="-DAIE_GEN=${aie_version}" \
         --extra-arg="-I${ARCH_APU_AINC}" --extra-arg="-I${SECONDARY_ARCH_APU_AINC}" --extra-arg="-I$BAREMETAL_AIENGINE_INCLUDE" \
         --extra-arg="-I$XILINX_VITIS_AIETOOLS/include" --extra-arg="-I${CLANG_INCLUDE_PATH}" --extra-arg="-I${AIEHLC_DIR}/include/llvm" \
-        --extra-arg="-include"aie_compat.h"" ${runtime_source_file}
+        --extra-arg="-include"aie_compat.h"" ${runtime_source_file} --
 else
     "$LD_SO" --library-path "${LIB_PATH}:${LIB_BASE_PATH}" "${AIEHLC}" --extra-arg="-DAIE_GEN=${aie_version}" \
         --extra-arg="-I${ARCH_APU_AINC}" --extra-arg="-I${SECONDARY_ARCH_APU_AINC}" --extra-arg="-I$BAREMETAL_AIENGINE_INCLUDE" \
         --extra-arg="-I$XILINX_VITIS_AIETOOLS/include" --extra-arg="-I${CLANG_INCLUDE_PATH}" --extra-arg="-I${AIEHLC_DIR}/include/llvm" \
-        --extra-arg="-include"aie_compat.h"" ${runtime_source_file}
+        --extra-arg="-include"aie_compat.h"" ${runtime_source_file} --
 fi
 
 HOST_BUILD_DIR=$(pwd)/aout/
