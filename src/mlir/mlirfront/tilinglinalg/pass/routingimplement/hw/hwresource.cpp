@@ -215,6 +215,11 @@ public:
     TileType tileType(uint32_t r,uint32_t c) const override
     { return layout_.tileType(r,c); }
 
+    //
+
+    uint32_t absTileRow(TileType type, uint32_t relativeRow) const override
+    { return layout_.absTileRow(type,relativeRow);}
+
     const std::vector<PortTemplate>& getPortsForTileType(TileType type) const override {
         return layout_.getPortsForTileType(type);
     }

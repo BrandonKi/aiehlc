@@ -43,6 +43,11 @@ struct PortTemplate {
     int           ports; // available number of ports
 };
 
+struct TypeBasedTileLoc {
+    TileType ttype;
+    struct Point loc;
+};
+
 static const std::string& PortDirectiontoString(PortDirection dir) {
     // The map is created only on the first call to this function
     static const std::map<PortDirection, std::string> PortDirectionMap = {
@@ -107,6 +112,13 @@ struct AIEDeviceLayout
         return TileType::Unknown;
     }
 
+    uint32_t absTileRow(TileType type, uint32_t relativeRow) const
+    {
+        for (const auto& s : segments)
+            if (s.type == type) return relativeRow + s.firstRow;
+        return relativeRow;
+    }
+
     const std::vector<PortTemplate>& getPortsForTileType(TileType type) const {
         static const std::vector<PortTemplate> emptyList;
         auto it = portTemplates.find(type);
@@ -135,6 +147,8 @@ public:
     virtual const std::vector<PortTemplate>& getPortsForTileType(TileType type) const = 0;
 
     virtual const std::unordered_set<uint32_t>& getShimNoc() const = 0;
+
+    virtual uint32_t absTileRow(TileType type, uint32_t relativeRow) const = 0;
 
     virtual std::string name() const = 0;
 };

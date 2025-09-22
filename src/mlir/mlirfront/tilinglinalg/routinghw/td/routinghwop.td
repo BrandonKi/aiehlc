@@ -38,7 +38,9 @@ def IOShimTileCreate:RoutingHWOp<"ioshimtilecreate"> {
         I32Attr:$row,
         I32Attr:$col,
         I32Attr:$IOID,
-        StrAttr:$comments
+        StrAttr:$comments,
+        I32Attr:$dmadirection, 
+        I32Attr:$channelused 
     );
     let results = (outs
         I32:$output

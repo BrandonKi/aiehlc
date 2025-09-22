@@ -55,7 +55,7 @@ mlir::func::FuncOp routinghwmanager::createroutingfunc(MLIRContext* ctx) {
     builder.setInsertionPointToEnd(block);
     auto output = builder.getI32Type();
     auto routinghandle = builder.create<TileArrayHandleCreate>(builder.getUnknownLoc(), output, "col1");
-    auto routingshimio = builder.create<IOShimTileCreate>(builder.getUnknownLoc(), output, 0, 2,1, "col2");
+    auto routingshimio = builder.create<IOShimTileCreate>(builder.getUnknownLoc(), output, 0, 2,1, "col2",0,0);
     SmallVector<mlir::Value, 4> tileArray;
     for (int i = 0; i < 8 ; i++) {
         std::ostringstream ostr;
