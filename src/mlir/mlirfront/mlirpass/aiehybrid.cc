@@ -29,20 +29,20 @@ void HybridPass::convertDialect(mlir::Operation* op)
 }
 
 void HybridPass::runOnOperation() {
-	std::cout << "HybridPass: " << std::endl;
+	// std::cout << "HybridPass: " << std::endl;
 
 	std::vector<mlir::Operation*> ops;
 
 	mlir::Operation* op = getOperation();
 	op->walk([&](mlir::Operation* op) {
 		if (llvm::isa<mlir::ModuleOp>(op)) {
-			llvm::outs() << "op is ModuleOp return \n";
+			// llvm::outs() << "op is ModuleOp return \n";
 			return;
 		}
 		
-		llvm::outs() << "op is: ";
-		op->print(llvm::outs());
-		llvm::outs() << "\n";
+		// llvm::outs() << "op is: ";
+		// op->print(llvm::outs());
+		// llvm::outs() << "\n";
 
 		if (op->getName().getStringRef() =="Aie.create_kernelobject_op") {
 			ops.push_back(op);
@@ -76,7 +76,7 @@ void HybridPass::runOnOperation() {
 			auto pongaddr = window.getPongaddr();
 			auto direct = window.getDirection();
 			auto wname = window.getName().str();
-			std::cout << wname << std::endl;
+			// std::cout << wname << std::endl;
 			std::ostringstream ostr;
 			ostr << wname << "_ping";
 			auto wping = ostr.str();
@@ -124,7 +124,7 @@ void HybridPass::runOnOperation() {
 			prx.exportfile();
 		}
 		Wrapper wrap(kname, fname);
-		std::cout << "std::to_string(max_pingpong_size) is " << std::to_string(max_pingpong_size) << std::endl;
+		// std::cout << "std::to_string(max_pingpong_size) is " << std::to_string(max_pingpong_size) << std::endl;
 		wrap.setbufsize(max_pingpong_size);
 		wrap.addkernelfuncparams(kfuncparams);
 		wrap.set_kernel_in_param_type(in_param_type);

@@ -13,12 +13,12 @@ AIE_DRIVER_PARENT_DIR=$AIEHLC_DIR/thirdparty/alib/
 export PATH=$PATH:$AIEHLC_DIR:$SCRIPT_DIR
 
 usage() {
-    echo "Usage: $0 [--help] [--skip-llvm] [--skip-bsp] [--cortexa78 PATH] [--psv72 PATH] [--psvr5 PATH] [--vitis-settings PATH]"
-    echo "  --help                    Show this help message"
-    echo "  --path-set-only           Set up the path only"
-    echo "  --enable-llvmaie          Skip llvm-aie installation"
-    echo "  --bsp-use-git-repo=<repo>           Skip BSP generation and build aie-rt from git repo"
-    echo "  --vitis-settings PATH Set VITIS_SETTINGS_PATH"
+    echo "Usage: $0 [--help] [--path-set-only] [--enable-llvmaie] [--bsp-use-git-repo=<repo>] [--vitis-settings PATH]"
+    echo "  --help                     Show this help message"
+    echo "  --path-set-only            Set up the path only"
+    echo "  --enable-llvmaie           Skip llvm-aie installation"
+    echo "  --bsp-use-git-repo=<repo>  Skip BSP generation and build aie-rt from git repo"
+    echo "  --vitis-settings PATH      Set  VITIS_SETTINGS_PATH"
 }
 
 aierepo_download_check() {
