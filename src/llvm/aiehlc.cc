@@ -72,12 +72,14 @@ public:
             FD->getBody()->printPretty(llvm::outs(), nullptr, PrintingPolicy(Context->getLangOpts()));
             llvm::outs() << "\n\n";
         }*/
+			llvm::outs() << "Exporting File: " << AOUT+std::string("kernel_list") << "\n\n";
 			 std::ofstream kl(AOUT+std::string("kernel_list"), std::ios::app | std::ios::out);
 			 kl << kname << std::endl;
 			 kl.close();
 
 			 std::error_code error_code;
 			 //change the ext from .c into .cc to fix the aiecompiler compile issue
+			llvm::outs() << "Exporting File: " << AOUT+kname + ".cc" << "\n";
 			 std::ofstream fd(AOUT+kname + ".cc");
 			 auto str = GetFuncText(FD);
 			 //std::string toRemove = "__attribute__((annotate(\"__global__\")))";
@@ -124,12 +126,12 @@ public:
 				 "\n#include <aie_api/aie_adf.hpp>"
 				 "\n#include <aie_api/utils.hpp>\n\n";
 			 }
-       str = header + str;
+             str = header + str;
 			 fd << str << std::endl;
     }
 
 		 void printSourceRange(const clang::SourceRange &range, const clang::SourceManager &sourceManager) {
-			 llvm::errs() << "SourceRange: ";
+			 llvm::outs() << "SourceRange: ";
 
 			 // Get the start and end locations
 			 clang::SourceLocation startLoc = range.getBegin();
@@ -137,15 +139,15 @@ public:
 
 			 // Print the file name
 			 auto& sc = Rewrite->getSourceMgr();
-			 llvm::errs() << sourceManager.getFilename(startLoc).str() << ":";
-			 llvm::errs() << sourceManager.getFilename(endLoc).str() << ":";
+			 llvm::outs() << sourceManager.getFilename(startLoc).str() << ":";
+			 llvm::outs() << sourceManager.getFilename(endLoc).str() << ":";
 
 			 ///*
 			 // Print the start line and column
-			 llvm::errs() << sourceManager.getSpellingLineNumber(startLoc) << ":" << sourceManager.getSpellingColumnNumber(startLoc) << "-";
+			 llvm::outs() << sourceManager.getSpellingLineNumber(startLoc) << ":" << sourceManager.getSpellingColumnNumber(startLoc) << "-";
 
 			 // Print the end line and column
-			 llvm::errs() << sourceManager.getSpellingColumnNumber(endLoc) << ":" << sourceManager.getSpellingColumnNumber(endLoc) << "\n";
+			 llvm::outs() << sourceManager.getSpellingColumnNumber(endLoc) << ":" << sourceManager.getSpellingColumnNumber(endLoc) << "\n";
 			 //*/
 		 }
 		 bool VisitFunctionDecl(FunctionDecl *f) {
@@ -155,9 +157,9 @@ public:
 						if (anno->getAnnotation() == "__global__" || anno->getAnnotation() == "__kernel__") {
 							std::string kernelName = f->getNameInfo().getName().getAsString();
 
-							std::cout << "find global " << f->getNameInfo().getName().getAsString() << std::endl;
+							// std::cout << "find global " << f->getNameInfo().getName().getAsString() << std::endl;
 							ParmVarDecl *param = f->getParamDecl(0);
-							llvm::outs() << "param->hasAttrs() is " << param->hasAttrs() << "\n";
+							// llvm::outs() << "param->hasAttrs() is " << param->hasAttrs() << "\n";
 							//llvm::outs << "range is " << range <<"\n";
 							ExportFunction(f, kernelName);
 							clang::SourceRange functionRange = f->getSourceRange();
@@ -188,18 +190,18 @@ public:
 							
 							}
 						} else {
-							std::cout << "not global func" << std::endl;
+							std::cerr << "not global func" << std::endl;
 						}
 						auto range = f->getSourceRange();
 						auto& sc = Rewrite->getSourceMgr();
-						std::cout << "range.isValid() " << range.isValid() <<std::endl;
-						printSourceRange(range,  sc);
+						// std::cout << "range.isValid() " << range.isValid() <<std::endl;
+						// printSourceRange(range,  sc);
 					}
 					for (unsigned int i = 0; i < f->getNumParams(); ++i) {
 						ParmVarDecl *param = f->getParamDecl(i);
-						llvm::outs() << "  Param " << (i + 1) << ": type: "
-							<< param->getType().getAsString() << "  name:"
-							<< param->getNameAsString() << "\n";
+						// llvm::outs() << "  Param " << (i + 1) << ": type: "
+						// 	<< param->getType().getAsString() << "  name:"
+						// 	<< param->getNameAsString() << "\n";
 					}
 				}
 			}
@@ -227,9 +229,9 @@ public:
 				 for (unsigned i = 0; i < num; i++) {
 					 const clang::Expr* arg = CE->getArg(i);
 					 clang::QualType argType = arg->getType();
-					 std::cout << "x- Parameter " << i << " type: ";
-					 std::cout << argType.getAsString();
-					 std::cout << std::endl;
+					//  std::cout << "x- Parameter " << i << " type: ";
+					//  std::cout << argType.getAsString();
+					//  std::cout << std::endl;
 					 if (auto *DRE = dyn_cast<DeclRefExpr>(arg->IgnoreImpCasts())) {
 						 if (const VarDecl *VD = dyn_cast<const VarDecl>(DRE->getDecl())) {
 							 ostr << VD->getNameAsString() ;
@@ -245,7 +247,7 @@ public:
 							 std::string argStr;
 							 llvm::raw_string_ostream os(argStr);
 							 arg->printPretty(os, nullptr, PrintingPolicy(LangOptions()));
-							 llvm::outs() << "Pretty printed argument " << i << ": " << os.str() << "\n";
+							//  llvm::outs() << "Pretty printed argument " << i << ": " << os.str() << "\n";
 							 ostr<< os.str() <<((i<num-1) ? ",":" ");
 							 /*
 							 if (const DeclRefExpr *declRef = dyn_cast<const DeclRefExpr>(arg->IgnoreParenImpCasts())) {
@@ -274,7 +276,7 @@ public:
 									 const ValueDecl *valueDecl = declRef->getDecl();
 
 									 // Retrieve and print the name of the variable
-									 llvm::outs() << "Variable name: " << valueDecl->getName() << "\n";
+									//  llvm::outs() << "Variable name: " << valueDecl->getName() << "\n";
 									 ostr<< valueDecl->getName().str() <<((i < num -1) ?",":" ");
 								 }
 						} else if (argType->isIntegerType()) {
@@ -301,7 +303,7 @@ public:
 		 bool VisitCallExpr(const CallExpr * 	CE) {
 			const FunctionDecl *Callee = CE->getDirectCallee();
 			if (Callee && Callee->getNameAsString() =="XAie_LoadElfMem") {
-				 std::cout << GetCallExprString(CE) <<std::endl;
+				//  std::cout << GetCallExprString(CE) <<std::endl;
 				 auto fstr =GetCallExprString(CE) ;
 				 std::size_t lastCommaPos = fstr.find_last_of(',');
     		 	 std::string kernel = fstr.substr(lastCommaPos + 1);
@@ -316,7 +318,7 @@ public:
 				 boost::algorithm::trim(kernel);
 				 kernel = "_binary_kernel_" + kernel + "_start";
 				 beforeLastComma += "," + kernel + ")";
-				 std::cout << beforeLastComma << std::endl;
+				//  std::cout << beforeLastComma << std::endl;
 
 				 clang::SourceRange callExprRange = CE->getSourceRange();
 				 Rewrite->ReplaceText(callExprRange, beforeLastComma);
@@ -453,7 +455,7 @@ public:
 
     void HandleTranslationUnit(ASTContext &Context) override {
         Visitor.TraverseDecl(Context.getTranslationUnitDecl());
-				std::cout << __FUNCTION__ << " get called " << std::endl;
+		// std::cout << __FUNCTION__ << " get called " << std::endl;
     }
 
 private:
@@ -510,7 +512,7 @@ public:
 				llvm::StringRef FileName = FileEntryRef->getName();
 
 				// Print or use the file name as needed
-				llvm::outs() << "Processing file: " << FileName << "\n";
+				// llvm::outs() << "Processing file: " << FileName << "\n";
 				clang::FileID MainFileID = SourceMgr.getMainFileID();
 
 				// Get the source code buffer for the main file
@@ -607,15 +609,16 @@ public:
 		}
 
 		void EndSourceFileAction() override {
-			 std::cout << "---------EndSourceFileAction---------" << std::endl;
+			//  std::cout << "---------EndSourceFileAction---------" << std::endl;
 			 const RewriteBuffer *RewriteBuf = TheRewriter.getRewriteBufferFor(TheRewriter.getSourceMgr().getMainFileID());
 			 if (RewriteBuf) {
 				 //RewriteBuf->write(llvm::outs());
         //llvm::outs() << "Rewritten Source Code:\n" << RewriteBuf << "\n";
 	  		} else {
-					std::cout << "RewriteBuf is null" <<std::endl;
+					llvm::errs() << "RewriteBuf is null\n";
 				}
 			 std::error_code error_code;
+			 llvm::outs() << "Exporting File: " << std::string(AOUT)+"./host.cc" << "\n";
 			 llvm::raw_fd_ostream outFile(std::string(AOUT)+"./host.cc", error_code, llvm::sys::fs::OF_None);
 			 if (error_code) {
 				 llvm::errs() << "Error opening file: " << error_code.message() << "\n";
@@ -637,7 +640,7 @@ public:
 					ofs.close();
 			 }
 			 aiefrontend.RunPass(fname);
-			 std::cout << "----------------end-----------------" << std::endl;
+			//  std::cout << "----------------end-----------------" << std::endl;
   	}
     std::unique_ptr<ASTConsumer> CreateASTConsumer(CompilerInstance &CI,
                                                    StringRef file) override {
@@ -668,7 +671,7 @@ void trycreatefolder(std::string dirPath) {
 	int result = system(command.c_str());           // Run the command
 
 	if (result == 0) {
-		std::cout << "Directory created." << std::endl;
+		// std::cout << "Directory created." << std::endl;
 	} else {
 		std::cerr << "Failed to create directory." << std::endl;
 	}

@@ -287,11 +287,11 @@ mlir::Value AieFrontEnd::createKernelWindowOp(ParmVarDecl * param,
                                     name.str());
 }
 void AieFrontEnd::createKernelFunction(std::vector<std::string> params) {
-    std::cout << "--------------AieFrontEnd::createKernelFunction-----------" << std::endl;
+    // std::cout << "--------------AieFrontEnd::createKernelFunction-----------" << std::endl;
     for (auto x: params) {
         std::cout << x << std::endl;
     }
-    std::cout << "--------------AieFrontEnd::createKernelFunction----END-------" << std::endl;
+    // std::cout << "--------------AieFrontEnd::createKernelFunction----END-------" << std::endl;
     return;
 }
 void AieFrontEnd::createKernelDefinitionOp(FunctionDecl *f,
@@ -300,7 +300,7 @@ void AieFrontEnd::createKernelDefinitionOp(FunctionDecl *f,
     llvm::SmallVector<mlir::Value, 4> windowOps;
     llvm::SmallVector<WindowType> windowOpTypes;
     std::string kernelFuncName = f->getNameInfo().getName().getAsString();
-    std::cout << " kernelFuncNamexx is " << kernelFuncName << std::endl;
+    // std::cout << " kernelFuncNamexx is " << kernelFuncName << std::endl;
     // Assume you have a way to determine the kernel symbol, input args, and output args
     int numInputArgs = 0; // Placeholder: calculate based on function's input
     int numOutputArgs = 0; // Placeholder: calculate based on function's output
@@ -397,7 +397,7 @@ std::string AieFrontEnd::dumpir() {
     std::string output;
     llvm::raw_string_ostream os(output);
     module->print(os);
-    std::cout << output << std::endl;
+    // std::cout << output << std::endl;
     return output;
 }
 
@@ -409,7 +409,7 @@ void AieFrontEnd::RunPass(std::string file_path) {
     auto fo = llvm::MemoryBuffer::getFile(file_path.c_str());
 
   if (auto err = fo.getError()) {
-        std::cout << "fo opend error" << std::endl;
+        std::cerr << "file open error" << std::endl;
         return;
     }
 
@@ -417,19 +417,19 @@ void AieFrontEnd::RunPass(std::string file_path) {
     auto module = mlir::parseSourceFile(sourceMgr, &ctx);
 
     if (!module) {
-        std::cout << "module error" <<std::endl;
+        std::cerr << "module error" <<std::endl;
         return;
     }
 
     auto pm = PassManager::on<mlir::ModuleOp>(&ctx);
       pm.addPass(std::make_unique<HybridPass>());
     if (failed(pm.run(*module))) {
-        std::cout << "pm.run failed " << std::endl;
+        std::cerr << "pm.run failed " << std::endl;
     }
 }
 
 void AieFrontEnd::Parser(std::string file_path) {
-    std::cout << "Parser" << std::endl;
+    // std::cout << "Parser" << std::endl;
     mlir::MLIRContext context;
     llvm::SourceMgr sourceMgr;
     context.getOrLoadDialect<AieADialect>();
@@ -437,7 +437,7 @@ void AieFrontEnd::Parser(std::string file_path) {
     auto foe = llvm::MemoryBuffer::getFile(file_path.c_str());
 
     if (auto err = foe.getError()) {
-        std::cout << "file error" << std::endl;
+        std::cerr << "file error" << std::endl;
         return;
     }
   sourceMgr.AddNewSourceBuffer(std::move(*foe), llvm::SMLoc());
