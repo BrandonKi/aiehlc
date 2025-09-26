@@ -110,12 +110,15 @@ build_hw_lib() {
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 export AIEHLC_DIR="${SCRIPT_DIR}/../"
+
 runtime_source_file=""
 aie_version="2"
 use_llvm_aie="false"
 DEBUG_OUTPUT=0
 platform="baremetal"
 USE_LOCAL_AIERT_BSP=0
+NO_AIERT_REBUILD=0
+
 while [[ $# -gt 0 ]]; do
     case "$1" in
         -help)
@@ -143,6 +146,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --debug-output)
             DEBUG_OUTPUT=1
+            shift
+            ;;
+        --no-aiert-rebuild)
+            NO_AIERT_REBUILD=1
             shift
             ;;
         *)
@@ -280,7 +287,7 @@ if [[ ! -f "${AIEHLC_DIR}/build/aiehlc" ]]; then
 fi
 
 # compile aie-rt, if the local aie-rt exist
-if [ -d "${AIE_DRIVER_PARENT_DIR}/aie-rt/driver/" ] ; then
+if [ -d "${AIE_DRIVER_PARENT_DIR}/aie-rt/driver/" ] && [ $NO_AIERT_REBUILD -eq 0 ] ; then
     USE_LOCAL_AIERT_BSP=1
     build_hw_lib \
         "${ARCH_APU_AINC}" \
@@ -292,7 +299,7 @@ if [ -d "${AIE_DRIVER_PARENT_DIR}/aie-rt/driver/" ] ; then
         "$AIELIB_APU_NAME" \
         "$ARCH_APU_ALIB" \
         "$ARCH_APU_LD" \
-                "$platform"
+        "$platform"
 
     if [[ $aie_version == "1" || $aie_version == "2" ]]; then
         EXTRA_LIBS=""
