@@ -24,17 +24,32 @@
 #define XAIE_RES_TILE_ROW_START 1
 #define XAIE_RES_TILE_NUM_ROWS 2
 
-// Architecture-specific defines
-#if AIE_GEN <= 2
-#define XAIE_NUM_ROWS 11
-#define XAIE_NUM_COLS 38
-#define XAIE_AIE_TILE_ROW_START 3
-#define XAIE_AIE_TILE_NUM_ROWS 8
+#ifndef AIE_GEN
+#  if defined(__AIE_ARCH__) && __AIE_ARCH__ >= 22
+#    define AIE_GEN 5
+#  elif defined(__AIE_ARCH__) && __AIE_ARCH__ >= 20
+#    define AIE_GEN 2
+#  else
+#    define AIE_GEN 1
+#  endif
+#endif
+
+#if AIE_GEN == 1
+#  define XAIE_NUM_ROWS            9
+#  define XAIE_NUM_COLS           50
+#  define XAIE_AIE_TILE_ROW_START  1
+#  define XAIE_AIE_TILE_NUM_ROWS   8
+#  undef  XAIE_RES_TILE_ROW_START
+#  undef  XAIE_RES_TILE_NUM_ROWS
+#  define XAIE_RES_TILE_ROW_START  0
+#  define XAIE_RES_TILE_NUM_ROWS   0
+#elif AIE_GEN <= 5
+#  define XAIE_NUM_ROWS           11
+#  define XAIE_NUM_COLS           38
+#  define XAIE_AIE_TILE_ROW_START  3
+#  define XAIE_AIE_TILE_NUM_ROWS   8
 #else
-#define XAIE_NUM_ROWS 7
-#define XAIE_NUM_COLS 36
-#define XAIE_AIE_TILE_ROW_START 3
-#define XAIE_AIE_TILE_NUM_ROWS 4
+#  error "Unsupported AIE_GEN. Supported values: 1, 2, 5"
 #endif
 
 #endif // AIE_DEVICE_MAP_H
