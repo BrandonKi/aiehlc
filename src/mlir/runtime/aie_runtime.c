@@ -7,9 +7,16 @@
 #include "aie_device_map.h"
 #include "aie_runtime_debug.h"
 #include "aie_runtime_stream_debug.h"
-#include "sleep.h"
+#ifdef __AIESIM__
+#  include <unistd.h>
+#  define Xil_DCacheFlushRange(addr, len)       ((void)0)
+#  define Xil_DCacheInvalidateRange(addr, len)  ((void)0)
+#  define Xil_SetTlbAttributes(addr, attr)      ((void)0)
+#else
+#  include "sleep.h"
+#  include "xil_cache.h"
+#endif
 #include "xaiengine/xaie_helper.h"
-#include "xil_cache.h"
 #include <stdio.h>
 
 // HW generation for device config (reference: aieml_perf.cc lines 14-20)
@@ -462,7 +469,14 @@ void __Runtime_routing_init(XAie_DevInst *dev) {
  * Partition init helper: plain default partition initialize.
  * ----------------------------------------------------------------------- */
 #if AIE_GEN >= 2
-static AieRC __Runtime_partition_initialize(XAie_DevInst *dev) { return XAie_PartitionInitialize(dev, NULL); }
+static AieRC __Runtime_partition_initialize(XAie_DevInst *dev) {
+#ifdef __AIESIM__
+    (void)dev;
+    return XAIE_OK;
+#else
+    return XAie_PartitionInitialize(dev, NULL);
+#endif
+}
 #endif
 
 /**
@@ -499,9 +513,14 @@ XAie_DevInst *__Runtime_explicit_init(void) {
         return NULL;
     }
 
+#ifdef __AIESIM__
+    XAie_SetIOBackend(dev, XAIE_IO_BACKEND_SIM);
+#else
     XAie_SetIOBackend(dev, XAIE_IO_BACKEND_BAREMETAL);
+#endif
 
 #if AIE_GEN >= 2
+#ifndef __AIESIM__
     if (dev->Backend->Type == XAIE_IO_BACKEND_BAREMETAL) {
 #if AIE_GEN == 5
         RC = XAie_UpdateNpiAddr(dev, 0xf6d50000);
@@ -513,6 +532,7 @@ XAie_DevInst *__Runtime_explicit_init(void) {
             return NULL;
         }
     }
+#endif
     RC = __Runtime_partition_initialize(dev);
 #else
     XAie_PmRequestTiles(dev, NULL, 0);
@@ -565,9 +585,14 @@ XAie_DevInst *__Runtime_explicit_init_partition(int startCol, int numCols) {
         return NULL;
     }
 
+#ifdef __AIESIM__
+    XAie_SetIOBackend(dev, XAIE_IO_BACKEND_SIM);
+#else
     XAie_SetIOBackend(dev, XAIE_IO_BACKEND_BAREMETAL);
+#endif
 
 #if AIE_GEN >= 2
+#ifndef __AIESIM__
     if (dev->Backend->Type == XAIE_IO_BACKEND_BAREMETAL) {
 #if AIE_GEN == 5
         RC = XAie_UpdateNpiAddr(dev, 0xf6d50000);
@@ -579,6 +604,7 @@ XAie_DevInst *__Runtime_explicit_init_partition(int startCol, int numCols) {
             return NULL;
         }
     }
+#endif
     RC = __Runtime_partition_initialize(dev);
 #else
     XAie_PmRequestTiles(dev, NULL, 0);
