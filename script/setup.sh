@@ -42,7 +42,7 @@ aierepo_download_check() {
         mkdir -p ${AIE_DRIVER_PARENT_DIR}/include
     fi
 
-    bash -c "pushd  $AIE_DRIVER_PARENT_DIR;git clone $AIE_REPO; popd"
+    bash -c "pushd  $AIE_DRIVER_PARENT_DIR;git clone --branch main-aie $AIE_REPO; popd"
     bash -c "cd $AIE_DRIVER_PARENT_DIR/aie-rt/driver/src; CC=\${CC:-gcc} CXX=\${CXX:-g++} make -f Makefile.Linux; make clean"
     ##temporary disable PLM support privledge register, as compile have issue
     find $AIE_DRIVER_PARENT_DIR/aie-rt/driver/src -name "Makefile" -exec sed -i 's/-DXAIE_PROD//g' {} \;
@@ -54,8 +54,7 @@ LOCAL_AIE_RT_REPO=0
 PATH_SET_ONLY=0
 #VITIS_SETTINGS_PATH="/proj/xbuilds/2025.2_0414_1/installs/lin64/HEAD/Vitis/settings64.sh"
 #VITIS_SETTINGS_PATH="/proj/xbuilds/HEAD_qualified_latest/installs/lin64/HEAD/Vitis/settings64.sh"
-#VITIS_SETTINGS_PATH="/proj/xbuilds/2025.2_daily_latest/installs/lin64/HEAD/Vitis/settings64.sh"
-VITIS_SETTINGS_PATH="/proj/xbuilds/2026.1_daily_latest/installs/lin64/2026.1/Vitis/settings64.sh"
+VITIS_SETTINGS_PATH="/proj/xbuilds/2026.2_weekly_latest/installs/lin64/2026.2/Vitis/settings64.sh"
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
