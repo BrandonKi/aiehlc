@@ -221,10 +221,16 @@ if [[ "$platform" == "linux" ]]; then
     TOOL_PREFIX="aarch64-linux-gnu-"
 elif [[ "$platform" == "baremetal" ]]; then
     TOOL_PREFIX="aarch64-none-elf-"
+elif [[ "$platform" == "sim" ]]; then
+    TOOL_PREFIX=""
+    linker="/usr/bin/ld -m elf_x86_64 -EL -r -b binary"
+    objcopy_tool="objcopy"
 fi
 
-linker="${TOOL_PREFIX}ld -EL -r -b binary"
-objcopy_tool="${TOOL_PREFIX}objcopy"
+if [[ "$platform" != "sim" ]]; then
+    linker="${TOOL_PREFIX}ld -EL -r -b binary"
+    objcopy_tool="${TOOL_PREFIX}objcopy"
+fi
 
 # --- Set up compiler flags per AIE version ---
 
@@ -264,6 +270,12 @@ compiler_flags_llvm_aie_aie2ps="-include ${LLVM_AIE_PATH}/../llvm-aie-extra.h $K
 # Select flags based on AIE version
 extra_chess_flag=""
 if [[ "$aie_version" == "1" ]]; then
+    if [ ! -d "$arch_model_dir_aie" ]; then
+        echo "Error: AIE gen1 chess library not found at '$arch_model_dir_aie'."
+        echo "       AIE gen1 is not supported by this Vitis installation."
+        echo "       Use --aie-version 2 (AIE-ML) or --aie-version 5 (AIE2PS)."
+        exit 1
+    fi
     compiler_flags_chess="$compiler_flags_aie"
     compiler_flags_llvm_aie_sel="$compiler_flags_llvm_aie_aie"
     arch_model_dir="$arch_model_dir_aie"
@@ -310,7 +322,9 @@ if [[ "$use_llvm_aie" != "true" ]]; then
         return 1
     fi
 
-    # Step 2: LLVM opt passes (xlopt x2)
+    # Step 2: LLVM opt passes (xlopt x2).
+    _xlopt_lib=$(ls -d "$XILINX_VITIS_AIETOOLS"/[0-9]*.*/lnx64.o/lib 2>/dev/null | head -1)
+    export LD_LIBRARY_PATH="${_xlopt_lib:+${_xlopt_lib}:}$XILINX_VITIS_AIETOOLS/lib/lnx64.o:${LD_LIBRARY_PATH}"
     run_cmd "$XILINX_VITIS_AIETOOLS/lnx64.o/tools/clang/bin/opt -S -load-pass-plugin=$XILINX_VITIS_AIETOOLS/lib/lnx64.o/libLLVMXLOpt.so -passes=xlopt ${output_dir}/kernel_orig.ll -o ${output_dir}/kernel.ll"
     if [ $? -ne 0 ]; then
         echo "Error: LLVM opt pass 1 (xlopt) failed"
