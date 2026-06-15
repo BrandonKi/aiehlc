@@ -5,41 +5,31 @@
 
 #include "xaiengine.h"
 
-#include "xil_printf.h"
-#include "xil_cache.h"
+#include "aie_device_map.h"
+#include "aie_timer.h"
 
-#if AIE_GEN <= 2
-#define HW_GEN XAIE_DEV_GEN_AIEML
-#include "xtime_l.h"
-#else
-#define HW_GEN XAIE_DEV_GEN_AIE2PS
-#include "xiltimer.h"
+#ifndef __AIESIM__
+#include "xil_cache.h"
+#include "xil_printf.h"
 #endif
 
 #ifdef __AIELINUX__
 #define OUT_COL 35
+#elif defined(__AIESIM__)
+#define OUT_COL 3
 #else
 #define OUT_COL 2
 #endif
 
 #include <stdio.h>
-// #include <math.h>
 
-#define XAIE_BASE_ADDR 0x20000000000
-#define XAIE_COL_SHIFT 25
-#define XAIE_ROW_SHIFT 20
-
-#define XAIE_NUM_ROWS 11
-#define XAIE_NUM_COLS 38
-#define XAIE_SHIM_ROW 0
-#define XAIE_RES_TILE_ROW_START 1
-#define XAIE_RES_TILE_NUM_ROWS 2
-#define XAIE_AIE_TILE_ROW_START 3
-#define XAIE_AIE_TILE_NUM_ROWS 8
-
-// default memory addresses for input and output
-#define CORE_IP_MEM 0x1000
-#define CORE_OP_MEM 0x5000
+// these are fallbacks, the actual values are injected via dm_offsets.h by aiehlc
+#ifndef CORE_IP_MEM
+#define CORE_IP_MEM 0x9000
+#endif
+#ifndef CORE_OP_MEM
+#define CORE_OP_MEM 0xA000
+#endif
 
 #define DISABLE_CACHE
 
@@ -48,7 +38,7 @@ __global__ void k1(int *in, int *out) {
         *(out++) = 100 + i;
 }
 
-__global__ void k2(void *in, int *out) {
+__global__ void k2(int *in, int *out) {
     for (int i = 0; i < 20; ++i)
         *(out++) = 200 + i;
 }
@@ -99,15 +89,14 @@ int test_kernel1(XAie_DevInst *DevInst) {
     while(XAie_CoreWaitForDone(DevInst, XAie_TileLoc(4,4), 0) != XAIE_OK) {
         // wait until core done
     }
-
     XTime_GetTime(&tEnd);
     printf("Output took %.2f us.\n", 1.0 * (tEnd - tStart) / (COUNTS_PER_SECOND/1000000));
     printf("Finished. Continuing...\n");
 
     printf("\nMoving output data to CPU...\n");
-    XAie_MoveDataAie2External(routingInstance, /*src=*/ XAie_TileLoc(4,4),
-                              CORE_OP_MEM, len*sizeof(u32),
-                              out, /*dest=*/ XAie_TileLoc(OUT_COL,0));	
+    XAie_MoveDataAie2External(routingInstance, /*src=*/XAie_TileLoc(4, 4), CORE_OP_MEM, len * sizeof(u32), out,
+                              /*dest=*/XAie_TileLoc(OUT_COL, 0));
+    XAie_MemSyncForCPU(out);
     printf("Finished. Continuing...\n");
 
     printf("\nVerifying output data...\n");
@@ -123,12 +112,13 @@ int test_kernel1(XAie_DevInst *DevInst) {
 
     if (mismatches == 0) {
         printf("Sucess: CPU result matches AIE.\n");
+        printf("\n\nDone with kernel 1!\n\n");
+        return 0;
     } else {
         printf("Failure: There were %d mismatches.\n", mismatches);
+        printf("\n\nDone with kernel 1!\n\n");
+        return -1;
     }
-
-    printf("\n\nDone with kernel 1!\n\n");
-    return 0;
 }
 
 int test_kernel2(XAie_DevInst *DevInst) {
@@ -177,15 +167,14 @@ int test_kernel2(XAie_DevInst *DevInst) {
     while(XAie_CoreWaitForDone(DevInst, XAie_TileLoc(4,4), 0) != XAIE_OK) {
     //wait until core done
     }
-
     XTime_GetTime(&tEnd);
     printf("Output took %.2f us.\n", 1.0 * (tEnd - tStart) / (COUNTS_PER_SECOND/1000000));
     printf("Finished. Continuing...\n");
 
     printf("\nMoving output data to CPU...\n");
-    XAie_MoveDataAie2External(routingInstance, /*src=*/ XAie_TileLoc(4,4),
-                              CORE_OP_MEM, len*sizeof(u32),
-                              out, /*dest=*/ XAie_TileLoc(OUT_COL,0));				
+    XAie_MoveDataAie2External(routingInstance, /*src=*/XAie_TileLoc(4, 4), CORE_OP_MEM, len * sizeof(u32), out,
+                              /*dest=*/XAie_TileLoc(OUT_COL, 0));
+    XAie_MemSyncForCPU(out);
     printf("Finished. Continuing...\n");
 
     printf("\nVerifying output data...\n");
@@ -201,21 +190,20 @@ int test_kernel2(XAie_DevInst *DevInst) {
 
     if (mismatches == 0) {
         printf("Sucess: CPU result matches AIE.\n");
+        printf("\n\nDone with kernel 2!\n\n");
+        return 0;
     } else {
         printf("Failure: There were %d mismatches.\n", mismatches);
+        printf("\n\nDone with kernel 2!\n\n");
+        return -1;
     }
-
-    printf("\n\nDone with kernel 2!\n\n");
-    return 0;
 }
 
 int main(int argc, char* argv[]) {
-#ifdef DISABLE_CACHE
+#if defined(DISABLE_CACHE) && !defined(__AIESIM__)
     Xil_DCacheDisable();
     Xil_ICacheDisable();
     printf("Cache disabled\n");
-#else
-    printf("Cache enabled\n");
 #endif
 
     XAie_SetupConfig(ConfigPtr, HW_GEN, XAIE_BASE_ADDR,
@@ -232,6 +220,9 @@ int main(int argc, char* argv[]) {
         return -1;
     }
 
+#ifdef __AIESIM__
+    XAie_SetIOBackend(&DevInst, XAIE_IO_BACKEND_SIM);
+#else
     XAie_SetIOBackend(&DevInst, XAIE_IO_BACKEND_BAREMETAL);
 
 #if AIE_GEN >= 2
@@ -248,8 +239,9 @@ int main(int argc, char* argv[]) {
         return -1;
     }
 #else
-    XAie_PmRequestTiles(&DevInst, NULL, 0); 
+    XAie_PmRequestTiles(&DevInst, NULL, 0);
 #endif
+#endif /* __AIESIM__ */
 
     if(test_kernel1(&DevInst) == 0 && test_kernel2(&DevInst) == 0) {
         printf("\nKernel test passed!\n");
