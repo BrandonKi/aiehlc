@@ -126,6 +126,7 @@ platform="baremetal"
 COMPILE_AIELIB_ONLY=0
 USE_LOCAL_AIERT_BSP=0
 PRETTY_DEBUG=0
+SIM_TILES=""
 while [[ $# -gt 0 ]]; do
     case "$1" in
         -help)
@@ -151,6 +152,10 @@ while [[ $# -gt 0 ]]; do
         --use-llvm-aie)
             use_llvm_aie="true"
             shift
+            ;;
+        --sim-tiles)
+            SIM_TILES="$2"
+            shift 2
             ;;
         --debug-output)
             DEBUG_OUTPUT=1
@@ -187,6 +192,25 @@ fi
 #set up env
 run_cmd "source $SCRIPT_DIR/setup.sh --path-set-only"
 
+if [[ "$platform" == "sim" ]] && [ -n "$runtime_source_file" ]; then
+    if ! grep -q '__global__' "$runtime_source_file" 2>/dev/null; then
+        echo "[sim] No __global__ kernel found — running runsim.sh directly..."
+        run_cmd "source $SCRIPT_DIR/setup.sh --path-set-only"
+        rm -f  "${SCRIPT_DIR}/sim/build/aiehlc_ps.so" \
+               "${SCRIPT_DIR}/sim/build/aiehlc_ps_wrapper.o" \
+               "${SCRIPT_DIR}/sim/build/kernel_elf_init."{cc,o} \
+               "${SCRIPT_DIR}/sim/build/"*.o
+        rm -rf "${SCRIPT_DIR}/sim/build/kernel_"*
+        bash "${SCRIPT_DIR}/sim/runsim.sh" \
+            --host-src "$runtime_source_file" \
+            ${kernel_source:+--kernel-src "$kernel_source"} \
+            --aie-gen  "$aie_version" \
+            $([ -n "$SIM_TILES" ] && echo "--stub-tiles $SIM_TILES" || echo "--stub-all")
+        return $?
+    fi
+    echo "[sim] __global__ kernel detected — running aiehlc extraction first..."
+fi
+
 # Verify one-time BSP setup was done (source ./script/setup.sh).
 check_bsp_environment "$aie_version" || return 1
 
@@ -194,13 +218,15 @@ if [[ "$platform" == "linux" ]]; then
     TOOL_PREFIX="aarch64-linux-gnu-"
 elif [[ "$platform" == "baremetal" ]]; then
     TOOL_PREFIX="aarch64-none-elf-"
+elif [[ "$platform" == "sim" ]]; then
+    TOOL_PREFIX="aarch64-none-elf-"
 fi
 
 KERNEL_DIR=$(pwd)/aout/
 rm -rf $KERNEL_DIR
 # Also clean build/aout/ if it exists (stale from previous runs with different CWD)
 [ -d "$(pwd)/build/aout" ] && rm -rf "$(pwd)/build/aout"
-XILINX_VITIS_AIETOOLS=$XILINX_VITIS/aietools
+export XILINX_VITIS_AIETOOLS=$XILINX_VITIS/aietools
 CARDANO_AIE_ARCH_MODEL_DIR="$XILINX_VITIS_AIETOOLS/data/versal_prod/lib"
 
 # Check if local thirdparty/alib/include has xaiengine headers
@@ -271,7 +297,7 @@ if [[ ! -f "${AIEHLC_DIR}/build/aiehlc" ]]; then
 fi
 
 # compile aie-rt, if the local aie-rt exist
-if [ -d "${AIE_DRIVER_PARENT_DIR}/aie-rt/driver/" ] ; then
+if [ -d "${AIE_DRIVER_PARENT_DIR}/aie-rt/driver/" ] && [[ "$platform" != "sim" ]]; then
     USE_LOCAL_AIERT_BSP=1
     build_hw_lib \
         "${ARCH_APU_AINC}" \
@@ -321,6 +347,7 @@ if [[ "$use_llvm_aie" == "true" ]]; then
         --extra-arg="-I${ARCH_APU_AINC}" --extra-arg="-I${SECONDARY_ARCH_APU_AINC}" \
         --extra-arg="-I$XILINX_VITIS_AIETOOLS/include" --extra-arg="-I${CLANG_INCLUDE_PATH}" --extra-arg="-I${AIEHLC_DIR}/include/llvm" \
         --extra-arg="-I${SOURCE_DIR}" --extra-arg="-I${AIEHLC_DIR}/src/mlir/runtime" \
+        --extra-arg="-I${AIEHLC_DIR}/include" \
         ${runtime_source_file} -- 2> >(tee "$AIEHLC_ERRLOG" >&2)
     AIEHLC_RC=$?
 else
@@ -331,6 +358,7 @@ else
         --extra-arg="-I${ARCH_APU_AINC}" --extra-arg="-I${SECONDARY_ARCH_APU_AINC}" \
         --extra-arg="-I$XILINX_VITIS_AIETOOLS/include" --extra-arg="-I${CLANG_INCLUDE_PATH}" --extra-arg="-I${AIEHLC_DIR}/include/llvm" \
         --extra-arg="-I${SOURCE_DIR}" --extra-arg="-I${AIEHLC_DIR}/src/mlir/runtime" \
+        --extra-arg="-I${AIEHLC_DIR}/include" \
         ${runtime_source_file} -- 2> >(tee "$AIEHLC_ERRLOG" >&2)
     AIEHLC_RC=$?
 fi
@@ -351,6 +379,19 @@ fi
 rm -f "$AIEHLC_ERRLOG"
 HOST_BUILD_DIR=$(pwd)/aout/
 mkdir -p $HOST_BUILD_DIR
+
+
+_host_cc="$(pwd)/aout/host.cc"
+if [ -f "$_host_cc" ]; then
+    for _kdir in "$(pwd)/aout/kernelcfg"/*/; do
+        _kname="$(basename "$_kdir")"
+        _dm="${_kdir}dm_offsets.h"
+        if [ -f "$_dm" ] && ! grep -q "#include.*dm_offsets.h" "$_host_cc"; then
+            sed -i "1s|^|#include \"kernelcfg/${_kname}/dm_offsets.h\"\n|" "$_host_cc"
+            echo "[aiehlc] Injected kernelcfg/${_kname}/dm_offsets.h into host.cc"
+        fi
+    done
+fi
 
 # Check if tiling pipeline generated output in worklocal/
 if [ -f "${HOST_BUILD_DIR}/worklocal/host.cc" ]; then
@@ -439,8 +480,10 @@ while IFS= read -r kernel_source_file; do
         --include-base "$AIETOOLS_INCLUDE_BASE"
     )
 
-    if [[ "$use_llvm_aie" == "true" ]]; then
+    if [[ "$use_llvm_aie" == "true" && "$platform" != "sim" ]]; then
         compile_args+=(--use-llvm-aie --ld-script "$KERNEL_SRC/main.ld.script")
+    elif [[ "$platform" == "sim" ]]; then
+        compile_args+=(--prx "$KERNEL_SRC/aieml.prx" --commons-dir "$KERNEL_BUILD_DIR")
     else
         compile_args+=(--prx "$KERNEL_SRC/aieml.prx" --commons-dir "$KERNEL_DIR/TheHouseOfCommons/")
     fi
@@ -494,9 +537,20 @@ echo "Linking kernels..."
 echo "    ${temp_obj_files[@]}"
 # opt_flags="-O2"
 opt_flags="-Os"
-if [[ "$platform" == "baremetal" ]]; then
-    dbg_echo ${TOOL_PREFIX}g++ $opt_flags -L$XILINX_VITIS/aietools/lib/lnx64.o/ -L$AIENGINE_LIB_DIR -DAIE_GEN=${aie_version} ${compiler_cpu_flag} -Wl,-T -Wl,${ARCH_APU_LD} -I${AIETOOLS_INCLUDE_BASE} -I$AIE_DRIVER_PARENT_DIR/include/ -I$ARCH_APU_AINC -I$SECONDARY_ARCH_APU_AINC -I${SOURCE_DIR} -I${AIEHLC_DIR}/src/mlir/runtime -L$ARCH_APU_ALIB -L$AIE_DRIVER_PARENT_DIR/lib/ -o $HOST_BUILD_DIR/main.elf $host_file ${AIEHLC_DIR}/src/mlir/runtime/aie_runtime_common.c ${temp_obj_files[@]} -Wl,--start-group,-lm,-l${BAREMETAL_AIENGINE_LIB},-lxil,-lgcc,-lc,-lstdc++,${EXTRA_LIBS}--end-group
-    ${TOOL_PREFIX}g++ $opt_flags -L$XILINX_VITIS/aietools/lib/lnx64.o/ -L$AIENGINE_LIB_DIR -DAIE_GEN=${aie_version} ${compiler_cpu_flag} -Wl,-T -Wl,${ARCH_APU_LD} -I${AIETOOLS_INCLUDE_BASE} -I$AIE_DRIVER_PARENT_DIR/include/ -I$ARCH_APU_AINC -I$SECONDARY_ARCH_APU_AINC -I${SOURCE_DIR} -I${AIEHLC_DIR}/src/mlir/runtime -L$ARCH_APU_ALIB -L$AIE_DRIVER_PARENT_DIR/lib/ -o $HOST_BUILD_DIR/main.elf $host_file ${AIEHLC_DIR}/src/mlir/runtime/aie_runtime_common.c ${temp_obj_files[@]} -Wl,--start-group,-lm,-l${BAREMETAL_AIENGINE_LIB},-lxil,-lgcc,-lc,-lstdc++,${EXTRA_LIBS}--end-group
+if [[ "$platform" == "sim" ]]; then
+    echo -e "\n[sim] Handing off to runsim.sh..."
+    rm -f  "${SCRIPT_DIR}/sim/build/aiehlc_ps.so" \
+           "${SCRIPT_DIR}/sim/build/kernel_elf_init."{cc,o}
+    bash "${SCRIPT_DIR}/sim/runsim.sh" \
+        --host-src     "$host_file" \
+        --kernel-objs  "${temp_obj_files[*]}" \
+        --kernel-names "${kernel_names[*]}" \
+        --aie-gen      "$aie_version" \
+        $([ -n "$SIM_TILES" ] && echo "--stub-tiles $SIM_TILES" || echo "--stub-all")
+    return $?
+elif [[ "$platform" == "baremetal" ]]; then
+    dbg_echo ${TOOL_PREFIX}g++ $opt_flags -L$XILINX_VITIS/aietools/lib/lnx64.o/ -L$AIENGINE_LIB_DIR -DAIE_GEN=${aie_version} ${compiler_cpu_flag} -Wl,-T -Wl,${ARCH_APU_LD} -I${AIETOOLS_INCLUDE_BASE} -I$AIE_DRIVER_PARENT_DIR/include/ -I$ARCH_APU_AINC -I$SECONDARY_ARCH_APU_AINC -I${SOURCE_DIR} -I${AIEHLC_DIR}/src/mlir/runtime -I${AIEHLC_DIR}/include -L$ARCH_APU_ALIB -L$AIE_DRIVER_PARENT_DIR/lib/ -o $HOST_BUILD_DIR/main.elf $host_file ${AIEHLC_DIR}/src/mlir/runtime/aie_runtime_common.c ${temp_obj_files[@]} -Wl,--start-group,-lm,-l${BAREMETAL_AIENGINE_LIB},-lxil,-lgcc,-lc,-lstdc++,${EXTRA_LIBS}--end-group
+    ${TOOL_PREFIX}g++ $opt_flags -L$XILINX_VITIS/aietools/lib/lnx64.o/ -L$AIENGINE_LIB_DIR -DAIE_GEN=${aie_version} ${compiler_cpu_flag} -Wl,-T -Wl,${ARCH_APU_LD} -I${AIETOOLS_INCLUDE_BASE} -I$AIE_DRIVER_PARENT_DIR/include/ -I$ARCH_APU_AINC -I$SECONDARY_ARCH_APU_AINC -I${SOURCE_DIR} -I${AIEHLC_DIR}/src/mlir/runtime -I${AIEHLC_DIR}/include -L$ARCH_APU_ALIB -L$AIE_DRIVER_PARENT_DIR/lib/ -o $HOST_BUILD_DIR/main.elf $host_file ${AIEHLC_DIR}/src/mlir/runtime/aie_runtime_common.c ${temp_obj_files[@]} -Wl,--start-group,-lm,-l${BAREMETAL_AIENGINE_LIB},-lxil,-lgcc,-lc,-lstdc++,${EXTRA_LIBS}--end-group
     GPP_RC=$?
 elif [[ "$platform" == "linux" ]]; then
     dbg_echo ${TOOL_PREFIX}g++ $opt_flags -D__AIELINUX__ -DAIE_GEN=${aie_version} ${compiler_cpu_flag} \
@@ -505,7 +559,7 @@ elif [[ "$platform" == "linux" ]]; then
         -o $HOST_BUILD_DIR/main.elf $host_file ${AIEHLC_DIR}/src/mlir/runtime/aie_runtime_common.c ${temp_obj_files[@]} \
         -Wl,--start-group,-lxaiengine,-lxil,--end-group
     ${TOOL_PREFIX}g++ $opt_flags -D__AIELINUX__ -DAIE_GEN=${aie_version} ${compiler_cpu_flag} \
-        -I${AIETOOLS_INCLUDE_BASE} -I$AIE_DRIVER_PARENT_DIR/include/ -I${AIE_DRIVER_DIR}/include -I$ARCH_APU_AINC -I$SECONDARY_ARCH_APU_AINC -I${SOURCE_DIR} -I${AIEHLC_DIR}/src/mlir/runtime \
+        -I${AIETOOLS_INCLUDE_BASE} -I$AIE_DRIVER_PARENT_DIR/include/ -I${AIE_DRIVER_DIR}/include -I$ARCH_APU_AINC -I$SECONDARY_ARCH_APU_AINC -I${SOURCE_DIR} -I${AIEHLC_DIR}/src/mlir/runtime -I${AIEHLC_DIR}/include \
         -L${AIE_DRIVER_DIR}/src -L$ARCH_APU_ALIB -L$AIE_DRIVER_PARENT_DIR/lib/ -L$AIE_DRIVER_PARENT_DIR/aie-rt/driver/src/  \
         -o $HOST_BUILD_DIR/main.elf $host_file ${AIEHLC_DIR}/src/mlir/runtime/aie_runtime_common.c ${temp_obj_files[@]} \
         -Wl,--start-group,-lxaiengine,-lxil,--end-group
