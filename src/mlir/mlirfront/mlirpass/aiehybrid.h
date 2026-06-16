@@ -344,17 +344,17 @@ public:
         bool hasExplicitLockIds() const { return acquireLockId >= 0 && releaseLockId >= 0; }
 
         std::string getbufdeclare() {
-			std::string code;
-			code = "v4int32 " + pingName +"[BUF_SZ];\n";
-            // Only declare pong buffer in ping-pong mode
+            std::string code;
+            // Use volatile int32 (not v4int32) so chess generates actual DM store
+            // instructions when the kernel writes through the window pointer.
+            code = "volatile int32 " + pingName + "[BUF_SZ];\n";
             if (isPingPong()) {
-                code += "v4int32 " + pongName + "[BUF_SZ];\n";
+                code += "volatile int32 " + pongName + "[BUF_SZ];\n";
             }
             return code;
         }
-
-		std::string getbufdefine() {
-			std::string code;
+        std::string getbufdefine() {
+            std::string code;
 			auto internal_win = getwinintername();
 			code = "\twindow_internal " + internal_win + "[1];\n";
             if (isPingPong()) {
@@ -368,7 +368,8 @@ public:
             auto paramname = getwinpointername();
             code += "\t" + window_type + "*  " + paramname + " = " + window_getfunc + "(" + internal_win + ");\n";
 			return code;
-		}
+        }
+
 private:
 		uint32_t wtype;
 		std::string pingName;
@@ -453,80 +454,39 @@ private:
 
         std::string generateNormalWrapper() {
             std::string code;
-			code += "#include <adf.h>\n";
+            code += "#include <adf.h>\n";
             code += "#include <aie_api/aie.hpp>\n";
             code += "#include <aie_api/aie_adf.hpp>\n";
-            for (auto x:headers) {
-				code += "#include \"" + x + "\"\n";
-			};
-			//code += "#define XSTRINGIFY(s) #s\n";
-			//code += "#define STRINGIFY(s) XSTRINGIFY(s)\n";
-			//code += "#define CALL_KERNEL(KERNEL_CALL, ...) KERNEL_CALL(__VA_ARGS__)\n";
-			code += "#define FOR_READ  1\n";
-			code += "#define FOR_WRITE 0\n";
-			code += "#define BUF_SZ " + std::to_string(lbuf_size) + "\n";
-			code += "\nvolatile static int sync_buffer[8] = {0, -1};\n\n";
-			code += "#include <adf/sync/mesync.h>\n\n";
+            for (auto x : headers) {
+                code += "#include \"" + x + "\"\n";
+            }
+            code += "#define FOR_READ  1\n";
+            code += "#define FOR_WRITE 0\n";
+            code += "#define BUF_SZ " + std::to_string(lbuf_size) + "\n";
+            code += "\nvolatile static int sync_buffer[8] = {0, -1};\n\n";
+            code += "#include <adf/sync/mesync.h>\n\n";
 
-            // Add debug logging code
-            if (enable_logging) {
-                code += generateLoggingCode();
+            // Buffer declarations — BCF pins each symbol at the correct tile address.
+            for (auto &x : params) {
+                code += x.getbufdeclare();
             }
+            code += "#include \"../../" + kernel_name + ".cc\"\n";
 
-            for (auto x:params) {
-				code += x.getbufdeclare();
-			}
-			code += "#include \"../../" + kernel_name +".cc\"";
-			code += "\nint main(void) {\n";
-            if (enable_logging) {
-                code += "\tlog(11);  // Log: entering main\n";
+            code += "\nint main(void) {\n";
+            // Call the kernel with the BCF-pinned buffer addresses directly.
+            // No window_init/get_*_async_window needed.
+            code += "\t" + kernel_name + "(";
+            for (int i = 0; i < (int)params.size(); i++) {
+                code += "(int *)" + params[i].getPingName();
+                code += (i < (int)params.size() - 1) ? ", " : "";
             }
-            if (enable_logging) {
-                code += "\tlog(22);  // Log: before buffer init\n";
-            }
-            for (auto x:params) {
-				code += x.getbufdefine();
-				code += "\n";
-			}
-            if (enable_logging) {
-                code += "\tlog(33);  // Log: before kernel call\n";
-            }
-            code += "\t";
-			code += kernel_name;
-			code += "(";
-			int len = params.size();
-			for (int i = 0; i < len; i++) {
-				std::string kernel_param_type = this->kernel_out_param_type;
-				if(i == 0)
-					kernel_param_type = this->kernel_in_param_type;
-
-				if(kernel_param_type == "" || kernel_param_type.find("input_window") != std::string::npos || kernel_param_type.find("output_window") != std::string::npos) {
-					code += params[i].getwinpointername();
-				} else {
-					if (kernel_param_type.back() != '*') {
-						code += "*";
-						kernel_param_type += "*";
-					}
-					code += "(" + kernel_param_type + ")" + params[i].getwinpointername() + "->ptr";
-				}
-				code += (i < len - 1) ? "," : "";
-			}
-			code += ");\n";
-            if (enable_logging) {
-                code += "\tlog(44);  // Log: after kernel, before fence\n";
-            }
+            code += ");\n";
             code += "\tchess_memory_fence();\n";
-            if (enable_logging) {
-                code += "\tlog(55);  // Log: before done\n";
-            }
             code += "\tdone();\n";
-            if (enable_logging) {
-                code += "\tlog(66);  // Log: after done\n";
-            }
             code += "\treturn 0;\n";
-			code += "}";
+            code += "}";
 
-			return code;
+            return code;
         }
         void addkernelfuncparams(std::vector<Buffer>& bufs) {
 			params = bufs;

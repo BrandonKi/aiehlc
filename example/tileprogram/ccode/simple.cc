@@ -1,4 +1,6 @@
 
+#include <stdlib.h>
+
 #define M 16
 #define K 16
 #define N 16

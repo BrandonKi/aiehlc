@@ -961,6 +961,19 @@ after_host_emit:
             stream << "            klog(\"OV\", (int)out0[di]);\n";
             stream << "        }\n";
             stream << "\n";
+            // [Optional] If supporting kernels with no output window, guard output ops:
+            // Replace BUF_SZ_IN_0/BUF_SZ_OUT_0 with unified BUF_SZ, and wrap:
+            //   if (numOutputWindows > 0) {
+            //       stream << "            *((" << vecType << " *)&out0[i * 4]) = data0;\n";
+            //   }
+            //   stream << "        klog(\"CLOP\", BUF_SZ);\n";
+            //   if (numOutputWindows > 0) {
+            //       stream << "        klog(\"OUT0\", BUF_SZ * 4);\n";
+            //       stream << "        for (int di = 0; di < BUF_SZ * 4; di++) {\n";
+            //       stream << "            klog(\"OV\", (int)out0[di]);\n";
+            //       stream << "        }\n";
+            //       stream << "\n";
+            //   }
 
             // Release all windows
             for (int i = 0; i < numInputWindows; ++i) {

@@ -1,3 +1,6 @@
+example/aiesim_test/Work*/
+example/aiesim_test*
+
 # build/binary
 aout/
 build/
@@ -113,3 +116,10 @@ run_build_test2.py
 run_build_test3.py
 run_build_test4.py
 run_test2.py
+
+# aiesim generated directories
+script/sim/Work*/
+script/sim/build/
+example/aiesim_test/Work*/
+example/aiesim_test/Work_gen*/
+example/aiesim_test/build/

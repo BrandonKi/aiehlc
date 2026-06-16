@@ -1,6 +1,22 @@
 // User-provided compute kernel (extracted from __global__ function)
 // User macro definitions from source file
 #define DEBUG_OUTPUT_ORDER 1
+#if DEBUG_OUTPUT_ORDER
+#endif
+#if DEBUG_OUTPUT_ORDER
+#endif
+#if DEBUG_OUTPUT_ORDER
+#endif
+#if DEBUG_OUTPUT_ORDER
+#endif
+#if DEBUG_OUTPUT_ORDER
+#endif
+#if DEBUG_OUTPUT_ORDER
+#endif
+#if DEBUG_OUTPUT_ORDER
+#endif
+#if DEBUG_OUTPUT_ORDER
+#endif
 
 void matmul(input_window_int8 *win_a, input_window_int8 *win_b, output_window_int8 *win_c) {
 

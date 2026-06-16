@@ -1796,12 +1796,19 @@ public:
                             continue;
                         }
                         size_t firstNonSpace = line.find_first_not_of(" \t");
-                        if (firstNonSpace != std::string::npos && line.substr(firstNonSpace, 7) == "#define") {
-                            // Skip aiehlc-internal stub macros
-                            if (line.find("AIEHLC_STUBS_DEFINED") != std::string::npos ||
-                                line.find("AIEHLC_TILING_STUBS_DEFINED") != std::string::npos) {
-                                continue;
-                            }
+                        if (firstNonSpace == std::string::npos)
+                            continue;
+                        std::string trimmed = line.substr(firstNonSpace);
+                        if (trimmed.empty() || trimmed[0] != '#')
+                            continue;
+                        if (trimmed.substr(0, 8) == "#include")
+                            continue;
+                        if (line.find("AIEHLC_STUBS_DEFINED") != std::string::npos ||
+                            line.find("AIEHLC_TILING_STUBS_DEFINED") != std::string::npos)
+                            continue;
+                        if (trimmed.substr(0, 7) == "#define" || trimmed.substr(0, 6) == "#undef" ||
+                            trimmed.substr(0, 3) == "#if" || trimmed.substr(0, 5) == "#elif" ||
+                            trimmed.substr(0, 5) == "#else" || trimmed.substr(0, 6) == "#endif") {
                             currentDefine = line;
                             if (!line.empty() && line.back() == '\\') {
                                 inMultiLine = true;
@@ -2100,11 +2107,12 @@ public:
                            "    if (DevInst == nullptr) {\n"
                            "        return;\n"
                            "    }\n"
+                           "    XAie_CoreDisable(DevInst, XAie_TileLoc(Col,Row));\n"
                            "    XAie_CoreReset(DevInst, XAie_TileLoc(Col,Row));\n"
-                           "    XAie_CoreUnreset(DevInst, XAie_TileLoc(Col,Row));\n"
                            "    XAie_LoadElfMem(DevInst, XAie_TileLoc(Col,Row), (unsigned char *)_binary_kernel_" +
                            x +
                            "_start);\n"
+                           "    XAie_CoreUnreset(DevInst, XAie_TileLoc(Col,Row));\n"
                            "    XAie_CoreEnable(DevInst, XAie_TileLoc(Col,Row));\n"
                            "    if (__aiehlc_launched_tile_count < AIEHLC_MAX_LAUNCHED_TILES) {\n"
                            "        __aiehlc_launched_tiles[__aiehlc_launched_tile_count++] = XAie_TileLoc(Col,Row);\n"
@@ -2821,6 +2829,14 @@ public:
             if (error_code) {
                 llvm::errs() << "Error opening file: " << error_code.message() << "\n";
                 return; // Exit early if there's an error
+            }
+            for (auto &kv : globalKernelFuncs) {
+                const std::string &kname = kv.first;
+                std::string dmOffsetsPath = std::string(AOUT) + "./kernelcfg/" + kname + "/dm_offsets.h";
+                if (llvm::sys::fs::exists(dmOffsetsPath)) {
+                    outFile << "#include \"kernelcfg/" << kname << "/dm_offsets.h\"\n";
+                    llvm::outs() << "[aiehlc] Injected dm_offsets.h for " << kname << " into host.cc\n";
+                }
             }
             // Emit strong g_runtime_debug_level override if user set #pragma aie_debug_level
             if (parsedDebugLevel >= 0) {

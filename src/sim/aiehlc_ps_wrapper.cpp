@@ -3,6 +3,23 @@
  * SPDX-License-Identifier: MIT
  ******************************************************************************/
 
+/* Prevent adf/wrapper/logging.h from including boost::log — Vitis 2026.2's
+ * bundled Boost 1.72 has a C++17/C++20 constexpr issue with boost::log's MPL
+ * enum arithmetic.  We only need SC_LOG() which can be safely no-op'd here. */
+#ifndef __LOGGING_H__
+#define __LOGGING_H__
+#include <systemc.h>
+#define SC_LOG(lvl)                                                                                                    \
+    while (false)                                                                                                      \
+    std::cerr
+#define SC_LOG_TRACE                                                                                                   \
+    while (false)                                                                                                      \
+    std::cerr
+#define SC_LOG_DEBUG                                                                                                   \
+    while (false)                                                                                                      \
+    std::cerr
+#endif
+
 #include <adf/wrapper/me_ip_block.h>
 #include <xtlm.h>
 #include "ioutils.h"
@@ -11,6 +28,15 @@
 #include <cstdlib>
 #include <cstring>
 #include <string>
+
+#ifndef __global__
+#define __global__
+#endif
+#ifdef __cplusplus
+extern "C" void host_canonicalized();
+#else
+void host_canonicalized();
+#endif
 
 #ifdef AIEHLC_HOST_SRC
 #  include AIEHLC_HOST_SRC

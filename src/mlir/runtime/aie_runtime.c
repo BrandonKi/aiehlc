@@ -34,6 +34,15 @@ static XAie_SetupConfig(g_Config, HW_GEN, XAIE_BASE_ADDR, XAIE_COL_SHIFT, XAIE_R
                         XAIE_SHIM_ROW, XAIE_RES_TILE_ROW_START, XAIE_RES_TILE_NUM_ROWS, XAIE_AIE_TILE_ROW_START,
                         XAIE_AIE_TILE_NUM_ROWS);
 
+/* Global device instance for legacy generated code that uses g_DevInst directly.
+ * tilinglinalg-emitted host.cc uses g_DevInst directly; routing.cc calls
+ * getOrCreateDeviceInstance().  Both require this to be non-NULL before use.
+ * Set by __Runtime_explicit_init / __Runtime_explicit_init_partition and by
+ * the _tiling_init __attribute__((constructor)) in the sim kernel_elf_init shim. */
+XAie_DevInst *g_DevInst = NULL;
+
+XAie_DevInst *getOrCreateDeviceInstance(void) { return g_DevInst; }
+
 // Global routing instance (kept for legacy path)
 XAie_RoutingInstance *g_RoutingInst = NULL;
 
@@ -348,7 +357,11 @@ AieRC __Runtime_device_teardown(XAie_DevInst *dev) {
 
 XAie_DevInst *__Runtime_explicit_init(void) {
     __Runtime_platform_init();
-    XAie_DevInst *dev = (XAie_DevInst *)malloc(sizeof(XAie_DevInst));
+    // calloc zero-initializes the struct so IsReady == 0.
+    // XAie_CfgInitialize returns XAIE_OK early (without setting up the device)
+    // if IsReady is any non-zero value, and XAie_SetIOBackend then fails with
+    // "Invalid Device Instance" because IsReady != XAIE_COMPONENT_IS_READY (1U).
+    XAie_DevInst *dev = (XAie_DevInst *)calloc(1, sizeof(XAie_DevInst));
     if (!dev) {
         printf("[aie_runtime] explicit_init: malloc failed\n");
         return NULL;
@@ -405,6 +418,7 @@ XAie_DevInst *__Runtime_explicit_init(void) {
     __Runtime_routing_init(dev);
 
     printf("[aie_runtime] explicit_init OK dev=%p\n", (void *)dev);
+    g_DevInst = dev;
     return dev;
 }
 
@@ -497,6 +511,7 @@ XAie_DevInst *__Runtime_explicit_init_partition(int startCol, int numCols) {
     __Runtime_routing_init(dev);
 
     printf("[aie_runtime] explicit_init_partition OK startCol=%d numCols=%d dev=%p\n", startCol, numCols, (void *)dev);
+    g_DevInst = dev;
     return dev;
 }
 
@@ -1039,9 +1054,10 @@ struct_kernel_group __Runtime_load_kernel_group(XAie_DevInst *dev, XAie_LocType 
         for (int i = 0; i < num_tiles; i++) {
             if (!__Runtime_is_aie_core_tile(tiles[i]))
                 continue;
+            XAie_CoreDisable(dev, tiles[i]);
             XAie_CoreReset(dev, tiles[i]);
-            XAie_CoreUnreset(dev, tiles[i]);
             XAie_LoadElfMem(dev, tiles[i], elf_buffers[i]);
+            XAie_CoreUnreset(dev, tiles[i]);
         }
     }
 
@@ -1065,9 +1081,10 @@ struct_kernel_group __Runtime_load_kernel_group_nt(XAie_DevInst *dev, XAie_LocTy
             continue;
         printf("[aie_runtime] loading kernel ELF into tile (%u,%u)\n", (unsigned)s_kernel_tiles[i].Col,
                (unsigned)s_kernel_tiles[i].Row);
+        XAie_CoreDisable(dev, s_kernel_tiles[i]);
         XAie_CoreReset(dev, s_kernel_tiles[i]);
-        XAie_CoreUnreset(dev, s_kernel_tiles[i]);
         XAie_LoadElfMem(dev, s_kernel_tiles[i], s_active_kernel_elf);
+        XAie_CoreUnreset(dev, s_kernel_tiles[i]);
     }
     struct_kernel_group kg;
     kg.tiles = s_kernel_tiles;
