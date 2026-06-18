@@ -6,9 +6,13 @@
 #ifndef AIE_DEVICE_MAP_H
 #define AIE_DEVICE_MAP_H
 
-// AIE tile memory map (reference: aieml_perf.cc lines 53-54)
-#define CORE_IP_MEM 0x1000 // Input memory offset
-#define CORE_OP_MEM 0x6000 // Output memory offset
+// AIE tile memory map fallbacks. The correct values are injected by aiehlc (dm_offsets.h).
+#ifndef CORE_IP_MEM
+#define CORE_IP_MEM 0x1000
+#endif
+#ifndef CORE_OP_MEM
+#define CORE_OP_MEM 0x6000
+#endif
 #define DEBUG_LOG_BASE 0x73000
 #define SYNC_BUFFER_BASE 0x74000
 
@@ -35,6 +39,7 @@
 #endif
 
 #if AIE_GEN == 1
+#define HW_GEN XAIE_DEV_GEN_AIE
 #  define XAIE_NUM_ROWS            9
 #  define XAIE_NUM_COLS           50
 #  define XAIE_AIE_TILE_ROW_START  1
@@ -43,13 +48,18 @@
 #  undef  XAIE_RES_TILE_NUM_ROWS
 #  define XAIE_RES_TILE_ROW_START  0
 #  define XAIE_RES_TILE_NUM_ROWS   0
-#elif AIE_GEN <= 5
+#elif AIE_GEN == 5
+#define HW_GEN XAIE_DEV_GEN_AIE2PS
 #  define XAIE_NUM_ROWS           11
 #  define XAIE_NUM_COLS           38
 #  define XAIE_AIE_TILE_ROW_START  3
 #  define XAIE_AIE_TILE_NUM_ROWS   8
 #else
-#  error "Unsupported AIE_GEN. Supported values: 1, 2, 5"
+#define HW_GEN XAIE_DEV_GEN_AIEML
+#define XAIE_NUM_ROWS 11
+#define XAIE_NUM_COLS 38
+#define XAIE_AIE_TILE_ROW_START 3
+#define XAIE_AIE_TILE_NUM_ROWS 8
 #endif
 
 #endif // AIE_DEVICE_MAP_H

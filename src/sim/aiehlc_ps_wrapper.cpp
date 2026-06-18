@@ -3,6 +3,21 @@
  * SPDX-License-Identifier: MIT
  ******************************************************************************/
 
+// Avoid issue with compilation error caused by boost::log's MPL enum arithmetic in Vitis 2026.2
+#ifndef __LOGGING_H__
+#define __LOGGING_H__
+#include <systemc.h>
+#define SC_LOG(lvl)                                                                                                    \
+    while (false)                                                                                                      \
+    std::cerr
+#define SC_LOG_TRACE                                                                                                   \
+    while (false)                                                                                                      \
+    std::cerr
+#define SC_LOG_DEBUG                                                                                                   \
+    while (false)                                                                                                      \
+    std::cerr
+#endif
+
 #include <adf/wrapper/me_ip_block.h>
 #include <xtlm.h>
 #include "ioutils.h"
@@ -11,6 +26,15 @@
 #include <cstdlib>
 #include <cstring>
 #include <string>
+
+#ifndef __global__
+#define __global__
+#endif
+#ifdef __cplusplus
+extern "C" void host_canonicalized();
+#else
+void host_canonicalized();
+#endif
 
 #ifdef AIEHLC_HOST_SRC
 #  include AIEHLC_HOST_SRC

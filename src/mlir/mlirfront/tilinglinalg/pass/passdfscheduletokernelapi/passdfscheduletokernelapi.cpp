@@ -260,8 +260,11 @@ struct KernelModuleToEmitCPattern : public OpConversionPattern<KernelModuleOp> {
         Block *entry = emitcMain.addEntryBlock();
         rewriter.setInsertionPointToStart(entry);
 
-        rewriter.create<emitc::VerbatimOp>(loc, "volatile static int sync_buffer[8] = {0, -1};");
+        // This crashes the simulator, commenting out for now
+        // rewriter.create<emitc::VerbatimOp>(loc, "volatile static int sync_buffer[8] = {0, -1};");
+        rewriter.create<emitc::VerbatimOp>(loc, "volatile int sync_buffer[8];");
         rewriter.create<emitc::VerbatimOp>(loc, "sync_buffer[0] = 0;");
+        rewriter.create<emitc::VerbatimOp>(loc, "sync_buffer[1] = -1;");
         rewriter.create<emitc::VerbatimOp>(loc, "klog_init();");
 
         for (Operation &inner : mainBody) {

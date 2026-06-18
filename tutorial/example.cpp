@@ -21,8 +21,10 @@
 #define OUT_COL 35
 #elif defined(__AIESIM__)
 #define OUT_COL 3
+#elif AIE_GEN == 5
+#define OUT_COL 10
 #else
-#define OUT_COL 2
+#define OUT_COL 6
 #endif
 
 // these are fallbacks, the actual values are injected via dm_offsets.h by aiehlc

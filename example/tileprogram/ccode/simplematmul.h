@@ -59,19 +59,30 @@
 //   max_buffer_bytes: Maximum per-buffer size in bytes
 // ═══════════════════════════════════════════════════════════════════════════
 
+#ifndef __AIESIM__
 #include "xil_cache.h"
-#include "xiltimer.h"
+#endif
+#include "aie_timer.h"
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
-// GEMM dimensions (user-specified)
+// GEMM dimensions (user-specified, overridable via -D)
+#ifndef M
 #define M 256 // 4096
+#endif
+#ifndef K
 #define K 256 // 4096
+#endif
+#ifndef N
 #define N 256 // 4096
+#endif
 
-// HW mesh dimensions (number of AIE tile rows and columns)
+#ifndef HW_ROWS
 #define HW_ROWS 4
+#endif
+#ifndef HW_COLS
 #define HW_COLS 4
+#endif
 
 // Derived constants for host-side verification (not used in kernel)
 // #define TILE_ROWS (M / HW_ROWS)

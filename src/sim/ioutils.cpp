@@ -63,4 +63,13 @@ void XPl_IOstart() {
     if (s_PLIOStart) s_PLIOStart();
 }
 
+void uc_dma_init(void) {}
+void uc_dma_process_responses(void) {}
+void uc_dma_process_dm2mm_responses(void) {}
+void uc_dma_create_bd(void *, unsigned short, unsigned int, unsigned int, unsigned int, unsigned int) {}
+void uc_dma_create_bd_simple(void *, unsigned short, unsigned int, unsigned int) {}
+unsigned short uc_dma_dm2mm_push_task(unsigned int) { return 0xffff; }
+unsigned short uc_dma_mm2dm_push_task(unsigned int) { return 0xffff; }
+int uc_dma_atomic_op(unsigned int, unsigned int, unsigned int, unsigned int, unsigned int, unsigned int) { return 0; }
+
 } // extern "C"
