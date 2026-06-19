@@ -147,14 +147,36 @@ EOF
             PORT_IDX=$(( PORT_IDX + 1 ))
         done
     else
-        NOC_PHYS_IDX=$(( SHIM_COL / 2 ))
-        PLACEMENTS="
+        _noc_all_cols=($SHIM_COL)
+        if [ "$AIE_ARCH" != "aie-ml" ] && [ -n "$STUB_TILES" ]; then
+            declare -A _noc_cols_seen
+            _noc_cols_seen[$SHIM_COL]=1
+            IFS=',' read -ra _stub_list <<< "$STUB_TILES"
+            for _ts in "${_stub_list[@]}"; do
+                _c="${_ts%%:*}"
+                if [ -z "${_noc_cols_seen[$_c]:-}" ]; then
+                    _noc_cols_seen[$_c]=1
+                    _noc_all_cols+=($_c)
+                fi
+            done
+            unset _noc_cols_seen
+        fi
+        PLACEMENTS=""
+        _port_idx=0
+        for _col in "${_noc_all_cols[@]}"; do
+            NOC_PHYS_IDX=$(( _col / 2 ))
+            PORT_NAME=$(printf "M%02d_AXI" "$_port_idx")
+            SEP=""
+            [ $_port_idx -gt 0 ] && SEP=","
+            PLACEMENTS+="${SEP}
     {
-      \"LogicalInstance\": {\"InstanceName\": \"ai_engine_0\", \"PortName\": \"M00_AXI\"},
+      \"LogicalInstance\": {\"InstanceName\": \"ai_engine_0\", \"PortName\": \"${PORT_NAME}\"},
       \"PhysicalInstance\": [{\"name\": \"${NOC_NAME_PREFIX}_X${NOC_PHYS_IDX}Y0_${NOC_NAME_PREFIX}_M_AXI\",
-                               \"column\": ${SHIM_COL}, \"channel\": 0}],
+                               \"column\": ${_col}, \"channel\": 0}],
       \"IsSoft\": true
     }"
+            _port_idx=$(( _port_idx + 1 ))
+        done
     fi
 
     cat > "${WORK_DIR}/arch/aieshim_solution.aiesol" <<EOF
