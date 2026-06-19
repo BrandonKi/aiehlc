@@ -119,4 +119,5 @@ export AIE_WORK_DIR="${WORK_DIR}"
 
 "${REPO_ROOT}/aiehlc_aiesimulator" \
     --pkg-dir "${WORK_DIR}" \
+    --display-run-interval=100000 \
     ${SIM_OPTS}

@@ -339,10 +339,16 @@ echo -e "    ${runtime_source_file}\n"
 # Add the source file's directory to include path so relative includes resolve
 SOURCE_DIR="$(cd "$(dirname "${runtime_source_file}")" && pwd)"
 AIEHLC_ERRLOG=$(mktemp /tmp/aiehlc_err.XXXXXX)
+AIEHLC_SIM_DEFINE=""
+if [[ "$platform" == "sim" ]]; then
+    AIEHLC_SIM_DEFINE='--extra-arg=-D__AIESIM__'
+fi
+
 if [[ "$use_llvm_aie" == "true" ]]; then
     dbg_echo "+ $LD_SO --library-path ${LIB_PATH}:${LIB_BASE_PATH} ${AIEHLC} --use-llvm-aie --extra-arg=-DAIE_GEN=${aie_version} ... ${runtime_source_file} --"
     "$LD_SO" --library-path "${LIB_PATH}:${LIB_BASE_PATH}" "${AIEHLC}" --use-llvm-aie --extra-arg="-DAIE_GEN=${aie_version}" \
         --extra-arg="-D__AIE_ARCH__=${AIE_ARCH_MACRO}" \
+        ${AIEHLC_SIM_DEFINE} \
         --extra-arg="-I${AIETOOLS_INCLUDE_BASE}" --extra-arg="-I$BAREMETAL_AIENGINE_INCLUDE" \
         --extra-arg="-I${ARCH_APU_AINC}" --extra-arg="-I${SECONDARY_ARCH_APU_AINC}" \
         --extra-arg="-I$XILINX_VITIS_AIETOOLS/include" --extra-arg="-I${CLANG_INCLUDE_PATH}" --extra-arg="-I${AIEHLC_DIR}/include/llvm" \
@@ -354,6 +360,7 @@ else
     dbg_echo "+ $LD_SO --library-path ${LIB_PATH}:${LIB_BASE_PATH} ${AIEHLC} --extra-arg=-DAIE_GEN=${aie_version} ... ${runtime_source_file} --"
     "$LD_SO" --library-path "${LIB_PATH}:${LIB_BASE_PATH}" "${AIEHLC}" --extra-arg="-DAIE_GEN=${aie_version}" \
         --extra-arg="-D__AIE_ARCH__=${AIE_ARCH_MACRO}" \
+        ${AIEHLC_SIM_DEFINE} \
         --extra-arg="-I${AIETOOLS_INCLUDE_BASE}" --extra-arg="-I$BAREMETAL_AIENGINE_INCLUDE" \
         --extra-arg="-I${ARCH_APU_AINC}" --extra-arg="-I${SECONDARY_ARCH_APU_AINC}" \
         --extra-arg="-I$XILINX_VITIS_AIETOOLS/include" --extra-arg="-I${CLANG_INCLUDE_PATH}" --extra-arg="-I${AIEHLC_DIR}/include/llvm" \
@@ -409,6 +416,7 @@ if [ -f "${HOST_BUILD_DIR}/worklocal/host.cc" ]; then
 
     # Run hostcompile.sh with WORKLOCAL_DIR pointing at aout/worklocal.
     WORKLOCAL_DIR="${WORKLOCAL_DIR}" AIE_VERSION="${aie_version}" PLATFORM="${platform}" \
+        SIM_TILES="${SIM_TILES:-}" \
         bash "${AIEHLC_DIR}/script/hostcompile.sh"
     TILING_RC=$?
     if [ $TILING_RC -ne 0 ]; then

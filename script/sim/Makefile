@@ -73,7 +73,7 @@ ALL_KERNEL_OBJS := $(KERNEL_OBJS)
 CXXFLAGS = \
     --gcc-install-dir=$(GCC_INSTALL) \
     -stdlib=libstdc++ \
-    -fPIC -std=c++17 -O1 \
+    -fPIC -std=c++20 -O1 \
     -D__AIESIM__ \
     -DAIE_GEN=$(AIE_GEN) \
     -D__PS_INIT_AIE__ \
