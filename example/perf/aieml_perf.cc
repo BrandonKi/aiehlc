@@ -3,25 +3,27 @@
  * SPDX-License-Identifier: Apache-2.0
  ******************************************************************************/
 
-// #include <iostream>
-// #include <sstream>
-#include "xil_printf.h"
 #include "xaiengine.h"
-//#include "xil_io.h"
-#include "xil_cache.h"
-#include <stdio.h>
 #include <math.h>
+#include <stdio.h>
+
+#ifndef __AIESIM__
+#include "xil_cache.h"
+#include "xil_printf.h"
 #if AIE_GEN <= 2
-#define HW_GEN XAIE_DEV_GEN_AIEML
 #include "xtime_l.h"
 #else
-#define HW_GEN XAIE_DEV_GEN_AIE2PS
 #include "xiltimer.h"
 #endif
-// #include "unistd.h"
+#endif /* __AIESIM__ */
+
 #define uint_TYPE uint32_t
 
-#include "kernel_log.h"
+#if AIE_GEN <= 2
+#define HW_GEN XAIE_DEV_GEN_AIEML
+#else
+#define HW_GEN XAIE_DEV_GEN_AIE2PS
+#endif
 
 #if AIE_GEN <= 2
 
@@ -52,35 +54,35 @@
 
 #endif
 
+// real offsets are injected by aiehlc
+#ifndef CORE_IP_MEM
 #define CORE_IP_MEM 0x1000
+#endif
+#ifndef CORE_OP_MEM
 #define CORE_OP_MEM 0x6000
+#endif
 
-#define MAT_SIZE 256 // Size of each matrix (A and B)
-#define N 16         // Dimension of the square matrices (16x16)
+// Reduced for simulator
+// #define N 16
+#define N 4
+#define MAT_SIZE (N * N)
 
 // #define DISABLE_CACHE
 //__attribute__((annotate("streaming")))
 __global__ void perf(input_window_int32 *win __attribute__((annotate("mem_address:0x1000"), annotate("size_hint:512"))),
                      output_window_int32 *out
                      __attribute__((annotate("mem_address:0x6000"), annotate("size_hint:512")))) {
-#define DATA_SIZE 512
-#define MAT_SIZE 256
-#define N 16          // Dimension of the square matrices
+#define N 4
+#define MAT_SIZE (N * N)
+#define DATA_SIZE (MAT_SIZE * 2)
 #define VECTOR_LENGTH 16
 	//aie::vector<int32_t, VECTOR_LENGTH> temp_a = window_readincr_v<VECTOR_LENGTH>(win);
 	//aie::store_unaligned_v<VECTOR_LENGTH>(A_mat + (w*VECTOR_LENGTH), temp_a);
 	uint32_t * ptr_out = (uint32_t *)(0x70000 + 0x6000);
 	uint32_t * ptr_in = (uint32_t *)(0x70000 + 0x1000);
 
-    klog_init();
-    klog("INIT", 0);
-
-    ///*
     uint32_t * vec1 = ((uint32_t*)ptr_in), * vec2 = ((uint32_t*)ptr_in + MAT_SIZE);
 
-    klog("MMUL", 0);
-    klog("A0  ", vec1[0]);
-    klog("A1  ", vec2[0]);
     for (int i = 0; i < N; i++) {
         for (uint32_t j = 0; j < N; j++) {
             uint32_t ret = 0;
@@ -90,14 +92,6 @@ __global__ void perf(input_window_int32 *win __attribute__((annotate("mem_addres
             ptr_out[i * N + j] = ret;
         }
     }
-    klog("MDON", 0);
-    //*/
-
-    klog("MCPY", 0);
-    // for (int i = 0; i < DATA_SIZE; i++) {
-    //     ptr_out[i] = ptr_in[i];
-    // }
-    klog("DONE", 01);
 }
 void blockread(XAie_DevInst *DevInst, uint64_t addr)
 {
@@ -124,58 +118,59 @@ int test_routing(XAie_DevInst *DevInst)
 {
 	AieRC RC = XAIE_OK;
 	XAie_RoutingInstance* routingInstance;
-  	//XTime tStart, tEnd;
+#ifndef __AIESIM__
+    XTime tStart, tEnd;
+#endif
     printf("Starting test_routing 02/2 -1\n");
     breakprint("core reset--");
-#if AIE_GEN == XAIE_DEV_GEN_AIE2PS
-    int shimcol = 10; // 33;
+#ifdef __AIESIM__
+    int shimcol = 3;
+#elif AIE_GEN == 5
+    int shimcol = 10;
 #else
-    int shimcol = 33;
+    int shimcol = 6;
 #endif
-    XAie_CoreReset(DevInst, XAie_TileLoc(4,4));
-	XAie_CoreUnreset(DevInst, XAie_TileLoc(4,4));
-	XAie_LoadElfMem(DevInst, XAie_TileLoc(4,4), (unsigned char *)perf);
+    XAie_CoreReset(DevInst, XAie_TileLoc(4, 4));
+    XAie_LoadElfMem(DevInst, XAie_TileLoc(4, 4), (unsigned char *)perf);
+    XAie_CoreUnreset(DevInst, XAie_TileLoc(4, 4));
 
-	breakprint("  XAie_InitRoutingHandler---\n");
-	routingInstance = XAie_InitRoutingHandler(DevInst);
-	breakprint("  XAie_Route-4--\n");
-	XAie_Route(routingInstance, NULL, XAie_TileLoc(shimcol,0) /* Source*/,
-				 XAie_TileLoc(4,4) /* destination*/	);
-	XAie_Route(routingInstance, NULL, XAie_TileLoc(4,4) /* Source*/,
-				 XAie_TileLoc(shimcol,0) /* destination*/	);
+    routingInstance = XAie_InitRoutingHandler(DevInst);
+    XAie_Route(routingInstance, NULL, XAie_TileLoc(shimcol, 0) /* Source*/, XAie_TileLoc(4, 4) /* destination*/);
+    XAie_Route(routingInstance, NULL, XAie_TileLoc(4, 4) /* Source*/, XAie_TileLoc(shimcol, 0) /* destination*/);
 
-	breakprint("  XAie_MemAllocate---\n");
-
-	//printf("Routing successful\n");
-	u64 phy = 0, phy_out = 0;
-	u32 mlen = MAT_SIZE*2;
-	const u32 recv_len = MAT_SIZE;
+    u32 mlen = MAT_SIZE * 2;
+    const u32 recv_len = MAT_SIZE;
 	
 	//Prepare DDR data
-	XAie_MemInst *in = XAie_MemAllocate(DevInst, mlen * sizeof(u32), XAIE_MEM_CACHEABLE);
-	phy = (u32)XAie_MemGetDevAddr(in);
-	XAie_MemInst *out = XAie_MemAllocate(DevInst, mlen * sizeof(u32), XAIE_MEM_CACHEABLE);
-	phy_out = (u32)XAie_MemGetDevAddr(out);
+    XAie_MemInst *in = XAie_MemAllocate(DevInst, mlen * sizeof(u32), XAIE_MEM_CACHEABLE);
+    XAie_MemInst *out = XAie_MemAllocate(DevInst, mlen * sizeof(u32), XAIE_MEM_CACHEABLE);
 
-	breakprint(" XAie_MemSyncForDev---\n");
+    breakprint(" XAie_MemSyncForDev---\n");
 
-	u64 vmem =    phy;
-    u64 vmem_out = phy_out;
+    int32_t *vmem = (int32_t *)XAie_MemGetVAddr(in);
+    int32_t *vmem_out = (int32_t *)XAie_MemGetVAddr(out);
 
-    //((u32*)vmem)[0] = 1024*1024;
     for (int j = 0; j < mlen; j++) {
-        ((int32_t *)vmem)[j] = 1 + j;
-        ((int32_t *)vmem_out)[j] = j;
+        vmem[j] = 1 + j;
+        vmem_out[j] = j;
     }
 
-    const int count = 2;
+    const int count = 2; // iterations for perf measurement
 
-    XTime tStart, tEnd;
+#ifndef __AIESIM__
     XTime_GetTime(&tStart);
+#endif
     for (int i = 0; i < count; i++) {
 
+#ifdef __AIESIM__
+        if (i > 0) {
+            XAie_CoreReset(DevInst, XAie_TileLoc(4, 4));
+            XAie_LoadElfMem(DevInst, XAie_TileLoc(4, 4), (unsigned char *)perf);
+            XAie_CoreUnreset(DevInst, XAie_TileLoc(4, 4));
+        }
+#endif
+
         XAie_MemSyncForDev(in);
-        XAie_MemSyncForCPU(out);
 
         breakprint("Starting to Move data\n");
         // step 3: move data to destination tile
@@ -184,47 +179,28 @@ int test_routing(XAie_DevInst *DevInst)
 
         XAie_MoveDataExternal2Aie(routingInstance, /*src=*/XAie_TileLoc(shimcol, 0), in, mlen * sizeof(u32),
                                   CORE_IP_MEM, /*dest=*/XAie_TileLoc(4, 4));
-
-        breakprint("XAie_RouteDmaWait\n");
-
-        // #if AIE_GEN == XAIE_DEV_GEN_AIE2PS
-        // Wait until the data transfer completes.
-        breakprint("XAie_RouteDmaWait--bbb--\n");
-        // XAie_RouteDmaWait(routingInstance, XAie_TileLoc(shimcol,0), XAie_TileLoc(4,4), false);
-        // #endif
-        breakprint("blockread\n");
-        // blockread(DevInst, CORE_IP_MEM);
+        XAie_RouteDmaWait(routingInstance, XAie_TileLoc(shimcol, 0), XAie_TileLoc(4, 4), true);
         XAie_Run(routingInstance, 1);
 
-        breakprint("XAie_CoreWaitForDone\n");
-        // wait until core done
-        u8 allDone = 0;
-        uint32_t CoreStatus = 0;
-        // usleep(1000*1000);
-        do {
-            allDone = 1; // Assume all cores are done initially
-            uint32_t coreStatCharWritten = 0;
-            for (int i = 0; i < 1; i++) { // Iterate over the specified tiles
-                RC = XAie_CoreWaitForDone(DevInst, XAie_TileLoc(4, 4), 0);
-
-                if (RC != XAIE_OK) {
-                    allDone = 0;
-                }
-            }
-        } while (!allDone);
-
-        /* Read kernel log from tile(4,4) — only on first iteration */
-        if (i == 0) {
-            klog_read(DevInst, XAie_TileLoc(4, 4));
+#ifdef __AIESIM__
+        while (XAie_CoreWaitForDone(DevInst, XAie_TileLoc(4, 4), 1) != XAIE_OK) {
         }
+#else
+        XAie_CoreWaitForDone(DevInst, XAie_TileLoc(4, 4), 0);
+#endif
 
         breakprint("fflush\n");
-        // fflush(stdout);
 
+#ifndef __AIESIM__
+        Xil_DCacheFlushRange((INTPTR)vmem_out, mlen * sizeof(int32_t));
+#endif
         XAie_MoveDataAie2External(routingInstance, XAie_TileLoc(4, 4), CORE_OP_MEM, mlen * sizeof(u32), out,
                                   XAie_TileLoc(shimcol, 0));
-        XAie_RouteDmaWait(routingInstance, XAie_TileLoc(shimcol, 0), XAie_TileLoc(4, 4), true);
-        // XAie_MemSyncForCPU(out);
+        XAie_RouteDmaWait(routingInstance, XAie_TileLoc(4, 4), XAie_TileLoc(shimcol, 0), false);
+        XAie_MemSyncForCPU(out);
+#ifndef __AIESIM__
+        Xil_DCacheInvalidateRange((INTPTR)vmem_out, mlen * sizeof(int32_t));
+#endif
 
         ///*
         // XTime_GetTime(&tEnd);
@@ -244,14 +220,14 @@ int test_routing(XAie_DevInst *DevInst)
         // Extract matrix A (row major)
         for (int i = 0; i < N; i++) {
             for (int j = 0; j < N; j++) {
-                A_mat[i][j] = ((int32_t*)vmem)[i * N + j];
+                A_mat[i][j] = vmem[i * N + j];
             }
         }
 
         // Extract matrix B (column major)
         for (int i = 0; i < N; i++) {
             for (int j = 0; j < N; j++) {
-                B_mat[i][j] = ((int32_t*)vmem)[MAT_SIZE + i * N + j];  // Adjust index for column major
+                B_mat[i][j] = vmem[MAT_SIZE + i * N + j];
             }
         }
 
@@ -273,48 +249,45 @@ int test_routing(XAie_DevInst *DevInst)
 
         int mismatches = 0;
         for (int i = 0; i < MAT_SIZE; i++) {
-            if (vmem_out_cpu[i] != ((int32_t*)vmem_out)[i]) {
-
-                printf("Mismatch at index %d: CPU=%d, vmem_out=%d\n", i, vmem_out_cpu[i], ((int32_t*)vmem_out)[i]);
+            if (vmem_out_cpu[i] != vmem_out[i]) {
+                if (mismatches < 4)
+                    printf("[MISMATCH] [%d]: CPU=%d AIE=%d\n", i, vmem_out_cpu[i], vmem_out[i]);
                 mismatches++;
             }
         }
 
-        for (int i = 0; i < ((16 > MAT_SIZE) ? MAT_SIZE : 16); i++) {
-                printf("match example at index %d: CPU=%d, vmem_out=%d\n", i, vmem_out_cpu[i], ((int32_t*)vmem_out)[i]);
-        }
-
         if (mismatches == 0) {
-            printf("CPU result matches vmem_out.\n");
+            printf("\n[PASS] Iteration %d: all %d outputs match CPU reference.\n\n", i, MAT_SIZE);
         } else {
-            printf("There were %d mismatches.\n", mismatches);
+            printf("\n[FAIL] Iteration %d: %d / %d mismatches.\n\n", i, mismatches, MAT_SIZE);
         }
-
-        printf("\nDone\n");
+        fflush(stdout);
         //*/
     }
+#ifndef __AIESIM__
     XTime_GetTime(&tEnd);
-    printf("-%d KB Time taken: %.2f us.\n", (count * mlen * sizeof(u32)) / 1024,
+    printf("Transferred %u bytes (%d iter) in %.2f us.\n", (unsigned)(count * mlen * sizeof(u32)), count,
            1.0 * (tEnd - tStart) / (COUNTS_PER_SECOND / 1000000));
+#endif
     return 0;
 }
 
 int main(int argc, char* argv[]) {
+#ifndef __AIESIM__
 #ifdef DISABLE_CACHE
 	Xil_DCacheDisable();
 	Xil_ICacheDisable();
-	printf("1Cache Disabled performance will have big drop (this test should >350us(8*8 and 16*16)\n ");
+    printf("Cache disabled: expect a big perf drop (>350 us for 8x8 and 16x16).\n");
 #else
-	printf("1cache enabled, this test should be 15us(8*8) 215 us(16*16)");
+    printf("Cache enabled: expect ~15 us for 8x8, ~215 us for 16x16.\n");
 #endif
+#endif /* __AIESIM__ */
 
-	XAie_SetupConfig(ConfigPtr, HW_GEN, XAIE_BASE_ADDR,
-			XAIE_COL_SHIFT, XAIE_ROW_SHIFT,
-			XAIE_NUM_COLS, XAIE_NUM_ROWS, XAIE_SHIM_ROW,
-			XAIE_RES_TILE_ROW_START, XAIE_RES_TILE_NUM_ROWS,
-			XAIE_AIE_TILE_ROW_START, XAIE_AIE_TILE_NUM_ROWS);
+    XAie_SetupConfig(ConfigPtr, HW_GEN, XAIE_BASE_ADDR, XAIE_COL_SHIFT, XAIE_ROW_SHIFT, XAIE_NUM_COLS, XAIE_NUM_ROWS,
+                     XAIE_SHIM_ROW, XAIE_RES_TILE_ROW_START, XAIE_RES_TILE_NUM_ROWS, XAIE_AIE_TILE_ROW_START,
+                     XAIE_AIE_TILE_NUM_ROWS);
 
-	///*
+    ///*
 
 	XAie_InstDeclare(DevInst, &ConfigPtr);
 
@@ -338,33 +311,35 @@ int main(int argc, char* argv[]) {
 		return -1;
 	}
 
-	XAie_SetIOBackend(&DevInst, XAIE_IO_BACKEND_BAREMETAL);
+#ifdef __AIESIM__
+    XAie_SetIOBackend(&DevInst, XAIE_IO_BACKEND_SIM);
+#else
+    XAie_SetIOBackend(&DevInst, XAIE_IO_BACKEND_BAREMETAL);
 
 #if AIE_GEN >= 2
 	if(DevInst.Backend->Type == XAIE_IO_BACKEND_BAREMETAL) {
 		printf("XAie_UpdateNpiAddr()\n");
-		#if AIE_GEN == 5 //aie2ps
-			printf("XAie_UpdateNpiAddr(0xf6d50000)\n");
-			RC = XAie_UpdateNpiAddr(&DevInst, 0xf6d50000);
-		#else
-			RC = XAie_UpdateNpiAddr(&DevInst, 0xF6D10000);
-		#endif
-		if(RC != XAIE_OK) {
+#if AIE_GEN == 5
+        printf("XAie_UpdateNpiAddr(0xf6d50000)\n");
+        RC = XAie_UpdateNpiAddr(&DevInst, 0xf6d50000);
+#else
+        RC = XAie_UpdateNpiAddr(&DevInst, 0xF6D10000);
+#endif
+        if(RC != XAIE_OK) {
 			printf("Failed to update NPI address\n");
 			return -1;
 		}
 	}
-	printf("before XAie_PartitionInitialize-2--\n");
-	//fix in aie2 the shim dma not work issue
-	RC = XAie_PartitionInitialize(&DevInst, NULL);
+    printf("before XAie_PartitionInitialize-2--\n");
+    RC = XAie_PartitionInitialize(&DevInst, NULL);
 #else
-	//fix in aie1 shimd dma not work issue
-	XAie_PmRequestTiles(&DevInst, NULL, 0); 
+    XAie_PmRequestTiles(&DevInst, NULL, 0);
 #endif
+#endif /* __AIESIM__ */
 
-  	test_routing(&DevInst);
+    test_routing(&DevInst);
 
-	RC = XAie_PartitionTeardown(&DevInst);
+    RC = XAie_PartitionTeardown(&DevInst);
     if(RC != XAIE_OK) {
         printf("Failed to Teardown partition\n");
         return -1;
