@@ -345,10 +345,14 @@ public:
 
         std::string getbufdeclare() {
 			std::string code;
-			code = "v4int32 " + pingName +"[BUF_SZ];\n";
+            // commenting because of sim crash
+            // code = "v4int32 " + pingName +"[BUF_SZ];\n";
+            code = "volatile int32 " + pingName + "[BUF_SZ];\n";
             // Only declare pong buffer in ping-pong mode
             if (isPingPong()) {
-                code += "v4int32 " + pongName + "[BUF_SZ];\n";
+                // commenting because of sim crash
+                // code += "v4int32 " + pongName + "[BUF_SZ];\n";
+                code += "volatile int32 " + pongName + "[BUF_SZ];\n";
             }
             return code;
         }
@@ -468,28 +472,18 @@ private:
 			code += "\nvolatile static int sync_buffer[8] = {0, -1};\n\n";
 			code += "#include <adf/sync/mesync.h>\n\n";
 
-            // Add debug logging code
-            if (enable_logging) {
-                code += generateLoggingCode();
-            }
-
+            // commenting because of sim crash
+            // if (enable_logging) {
+            //     code += generateLoggingCode();
+            // }
             for (auto x:params) {
 				code += x.getbufdeclare();
 			}
 			code += "#include \"../../" + kernel_name +".cc\"";
-			code += "\nint main(void) {\n";
-            if (enable_logging) {
-                code += "\tlog(11);  // Log: entering main\n";
-            }
-            if (enable_logging) {
-                code += "\tlog(22);  // Log: before buffer init\n";
-            }
+            code += "\nint main(void) {\n";
             for (auto x:params) {
 				code += x.getbufdefine();
 				code += "\n";
-			}
-            if (enable_logging) {
-                code += "\tlog(33);  // Log: before kernel call\n";
             }
             code += "\t";
 			code += kernel_name;
@@ -511,18 +505,9 @@ private:
 				}
 				code += (i < len - 1) ? "," : "";
 			}
-			code += ");\n";
-            if (enable_logging) {
-                code += "\tlog(44);  // Log: after kernel, before fence\n";
-            }
+            code += ");\n";
             code += "\tchess_memory_fence();\n";
-            if (enable_logging) {
-                code += "\tlog(55);  // Log: before done\n";
-            }
             code += "\tdone();\n";
-            if (enable_logging) {
-                code += "\tlog(66);  // Log: after done\n";
-            }
             code += "\treturn 0;\n";
 			code += "}";
 

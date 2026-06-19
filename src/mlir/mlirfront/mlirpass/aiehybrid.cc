@@ -53,8 +53,10 @@ void HybridPass::runOnOperation() {
 		std::string kname;
 		std::string fname;
 		std::vector<Buffer> kfuncparams;
+        std::vector<uint32_t> kfuncparam_chess_addrs;
 
         uint32_t max_window_size = 0;
+        int autoLockId = 16;
 
         Bcf bcf;
 		Prx prx("Project", "me");
@@ -65,13 +67,24 @@ void HybridPass::runOnOperation() {
 		std::string in_param_type = kop.getInParamType().str();
 		std::string out_param_type = kop.getOutParamType().str();
 
-		for (mlir::Value value : kop.getArguments()) {
-			mlir::aie::CreateWindowOp window = value.getDefiningOp<mlir::aie::CreateWindowOp>();
-			if (!window) {
-				llvm::errs() << "Error: Expected a CreateWindowOp for value in " << "" << "\n";
+        uint32_t final_max_pingaddr = 0;
+        for (mlir::Value value : kop.getArguments()) {
+            auto ww = value.getDefiningOp<mlir::aie::CreateWindowOp>();
+            if (!ww || ww.getPongaddr() != 0)
+                continue;
+            final_max_pingaddr = std::max(final_max_pingaddr, (uint32_t)ww.getPingaddr());
+        }
+        uint32_t single_buf_bytes = (final_max_pingaddr > 0) ? final_max_pingaddr / 4 : 256;
+
+        uint32_t nextSingleBufOffset = 0;
+
+        for (mlir::Value value : kop.getArguments()) {
+            mlir::aie::CreateWindowOp window = value.getDefiningOp<mlir::aie::CreateWindowOp>();
+            if (!window) {
+                llvm::errs() << "Error: Expected a CreateWindowOp for value in " << "" << "\n";
 				continue; // Skip if the cast failed
-			}
-			auto pingaddr =  window.getPingaddr();
+            }
+            auto pingaddr =  window.getPingaddr();
 			auto pongaddr = window.getPongaddr();
 			auto direct = window.getDirection();
 			auto wname = window.getName().str();
@@ -87,22 +100,29 @@ void HybridPass::runOnOperation() {
                 // Ping-pong mode: use _ping and _pong suffixes
                 ostr << wname << "_ping";
                 auto wping = ostr.str();
-                bcf.addsymbols(ostr.str(), 0x70000 + window.getPingaddr());
+                uint32_t ping_chess = 0x70000 + (uint32_t)window.getPingaddr();
+                bcf.addsymbols(ostr.str(), ping_chess);
                 ostr.str("");
                 ostr.clear();
                 ostr << wname << "_pong";
                 auto wpong = ostr.str();
-                bcf.addsymbols(ostr.str(), 0x70000 + window.getPongaddr());
+                bcf.addsymbols(ostr.str(), 0x70000 + (uint32_t)window.getPongaddr());
 
                 kfuncparams.push_back(Buffer(direct, wping, wpong, pingaddr, pongaddr, acquireLockId, releaseLockId));
+                kfuncparam_chess_addrs.push_back(ping_chess);
                 max_window_size = std::max(max_window_size, (uint32_t)(pongaddr - pingaddr));
             } else {
-                // Legacy single buffer mode: just use the window name (no suffix)
-                bcf.addsymbols(wname, 0x70000 + window.getPingaddr());
-                // Use pingaddr for both ping and pong names (pong won't be used)
-                kfuncparams.push_back(Buffer(direct, wname, wname, pingaddr, 0, acquireLockId, releaseLockId));
-                if (window.getSize() > 0)
-                    max_window_size = std::max(max_window_size, window.getSize());
+                std::string wping = wname + "_ping";
+                uint32_t ping_chess = 0x70000 + (uint32_t)window.getPingaddr();
+                bcf.addsymbols(wping, ping_chess);
+
+                kfuncparams.push_back(Buffer(direct, wping, wping, (uint32_t)window.getPingaddr(), /*pongAddr=*/0,
+                                             /*acquireLock=*/autoLockId,
+                                             /*releaseLock=*/autoLockId + 1));
+                kfuncparam_chess_addrs.push_back(ping_chess);
+                autoLockId += 2;
+                if ((uint32_t)window.getSize() > 0)
+                    max_window_size = std::max(max_window_size, (uint32_t)window.getSize());
             }
         }
 
@@ -116,26 +136,42 @@ void HybridPass::runOnOperation() {
 		prx.kernel_name = kname;
 		bcf.kernel_name = kname;
 
-		if(use_llvm_aie) {
-			LdScript ldscript(bcf);
-			// FIXME use the real stack address and size
-			ldscript.setstack(0x7e000, 0x400);
-			ldscript.exportfile();
-		} else {
-			bcf.exportfile();
+        bcf.exportfile();
 
-			// TODO use the correct __AIEARCH__ value
+        prx.setOption("cpp.define", "__AIENGINE__ __AIEARCH__=20", "1", "");
+        prx.setOption("llvm.xargs",
+                      "-fno-jump-tables -fno-discard-value-names -mllvm -chess-collapse-struct-types-during-linking=0",
+                      "1", "");
+        prx.setOption("llvm.lang", "Follow file extension", "", "");
+        prx.setOption("bridge.cfg", bcf.getfilename(), "", "./");
+        prx.setOption("project.dir", "&lt;CONFIG&gt;./", "", "");
+        prx.setOption("project.name", "kernel", "", "");
+        prx.setOption("project.type", "exe", "", "");
+        prx.exportfile();
+
+        if (use_llvm_aie) {
+            LdScript ldscript(bcf);
+            ldscript.setstack(0x7e000, 0x400);
+            ldscript.exportfile();
+        } else {
+            bcf.exportfile();
+
+            // TODO use the correct __AIEARCH__ value
 			prx.setOption("cpp.define", "__AIENGINE__ __AIEARCH__=20", "1","");
 			prx.setOption("llvm.xargs", "-fno-jump-tables -fno-discard-value-names -mllvm -chess-collapse-struct-types-during-linking=0", "1","");
 			prx.setOption("llvm.lang", "Follow file extension", "", "");
 			prx.setOption("bridge.cfg", bcf.getfilename(), "", "./");
-			prx.setOption("cpp.include","&lt;XILINX_VITIS_AIETOOLS&gt;../TheHouseOfCommons ./ /proj/xbuilds/2023.1_daily_latest/installs/lin64/Vitis/2023.1//aietools//include/aie_api /proj/xbuilds/2023.1_daily_latest/installs/lin64/Vitis/2023.1/aietools//include/drivers/aiengine/ /proj/xbuilds/2023.1_daily_latest/installs/lin64/Vitis/2023.1//aietools//include/aie_api /proj/xbuilds/2023.1_daily_latest/installs/lin64/Vitis/2023.1//aietools//include/drivers/aiengine/","1","");
-			prx.setOption("project.dir", "&lt;CONFIG&gt;./", "", "");
-			prx.setOption("project.name", "kernel", "", "");
-			prx.setOption("project.type", "exe", "", "");
+            prx.setOption(
+                "cpp.include",
+                "&lt;XILINX_VITIS_AIETOOLS&gt;../TheHouseOfCommons ./ &lt;XILINX_VITIS_AIETOOLS&gt;/include/aie_api "
+                "&lt;XILINX_VITIS_AIETOOLS&gt;/include/drivers/aiengine/",
+                "1", "");
+            prx.setOption("project.dir", "&lt;CONFIG&gt;./", "", "");
+            prx.setOption("project.name", "kernel", "", "");
+            prx.setOption("project.type", "exe", "", "");
 			prx.exportfile();
-		}
-		Wrapper wrap(kname, fname);
+        }
+        Wrapper wrap(kname, fname);
         wrap.setbufsize(max_window_size);
         wrap.addkernelfuncparams(kfuncparams);
 		wrap.set_kernel_in_param_type(in_param_type);
@@ -150,7 +186,35 @@ void HybridPass::runOnOperation() {
         }
 
         wrap.exportfile();
-		llvm::outs() << "Exported files for " << kname << "\n";
-	}
+
+        {
+            static const uint32_t DM_BASE = 0x70000;
+
+            std::string dm_path = std::string(AOUT) + "./kernelcfg/" + kname + "/dm_offsets.h";
+            std::ofstream dm_offsets(dm_path);
+            if (dm_offsets.is_open()) {
+                dm_offsets << "// Auto-generated by aiehlc: DMA offsets for __global__ kernel '" << kname << "'\n";
+                dm_offsets << "// DMA offset = BCF chess_addr - 0x" << std::hex << DM_BASE << std::dec << "\n";
+                for (size_t i = 0; i < kfuncparams.size(); ++i) {
+                    const auto &param = kfuncparams[i];
+                    uint32_t chess_addr = kfuncparam_chess_addrs[i];
+                    uint32_t dma_offset = chess_addr - DM_BASE;
+                    std::string sym = param.getDirection() == 0 ? "IP" : "OP";
+                    dm_offsets << "// window[" << i << "] " << param.getPingName() << "  BCF chess=0x" << std::hex
+                               << chess_addr << "  DMA offset=0x" << dma_offset << std::dec << "\n";
+                    dm_offsets << "#ifndef CORE_" << sym << "_MEM\n";
+                    dm_offsets << "#define CORE_" << sym << "_MEM 0x" << std::hex << dma_offset << std::dec << "  /* "
+                               << param.getPingName() << " */\n";
+                    dm_offsets << "#endif\n";
+                }
+                dm_offsets.close();
+                llvm::outs() << "Generated dm_offsets.h for " << kname << " at " << dm_path << "\n";
+            } else {
+                llvm::errs() << "[aiehybrid] Warning: could not write dm_offsets.h to " << dm_path << "\n";
+            }
+        }
+
+        llvm::outs() << "Exported files for " << kname << "\n";
+    }
 }
 
