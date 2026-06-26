@@ -1073,6 +1073,18 @@ XAie_DmaDesc __Runtime_dma_bd_config_multidim_ooo(XAie_DevInst *dev, XAie_LocTyp
     XAie_DmaDescInit(dev, &DmaInst, tile);
     uint8_t tile_type = XAie_GetTileTypefromLoc(dev, tile);
     uint64_t dma_addr = (uint64_t)(uintptr_t)buffer;
+    if (__bd_is_shim(tile_type)) {
+        uint64_t offset = 0;
+        XAie_MemInst *mem = __vaddr_to_mem_offset(buffer, &offset);
+        if (mem) {
+#ifdef __AIESIM__
+            dma_addr = XAie_MemGetDevAddr(mem) + offset;
+            uint64_t gm_len = (iter_wrap > 1) ? ((uint64_t)iter_step_size * (uint64_t)(iter_wrap - 1) + (uint64_t)len)
+                                              : (uint64_t)len;
+            ess_WriteGM(dma_addr, buffer, gm_len);
+#endif
+        }
+    }
 
     /* Build address dimension descriptors (D0-D2 only, max 3) */
     int32_t strides[3] = {dim_stride0, dim_stride1, dim_stride2};
@@ -1307,10 +1319,18 @@ struct_kernel_group __Runtime_load_kernel_group(XAie_DevInst *dev, XAie_LocType 
         for (int i = 0; i < num_tiles; i++) {
             if (!__Runtime_is_aie_core_tile(tiles[i]))
                 continue;
+            // uncomment if sim hangs while executing kernels
+            // #ifdef __AIESIM__
+            //             XAie_CoreDisable(dev, tiles[i]);
+            //             XAie_CoreReset(dev, tiles[i]);
+            //             XAie_LoadElfMem(dev, tiles[i], elf_buffers[i]);
+            //             XAie_CoreUnreset(dev, tiles[i]);
+            // #else
             XAie_CoreDisable(dev, tiles[i]);
             XAie_CoreReset(dev, tiles[i]);
             XAie_LoadElfMem(dev, tiles[i], elf_buffers[i]);
             XAie_CoreUnreset(dev, tiles[i]);
+            // #endif
         }
     }
 
@@ -1334,10 +1354,18 @@ struct_kernel_group __Runtime_load_kernel_group_nt(XAie_DevInst *dev, XAie_LocTy
             continue;
         printf("[aie_runtime] loading kernel ELF into tile (%u,%u)\n", (unsigned)s_kernel_tiles[i].Col,
                (unsigned)s_kernel_tiles[i].Row);
+        // uncomment if sim hangs while executing kernels
+        // #ifdef __AIESIM__
+        //   XAie_CoreDisable(dev, s_kernel_tiles[i]);
+        //   XAie_CoreReset(dev, s_kernel_tiles[i]);
+        //   XAie_LoadElfMem(dev, s_kernel_tiles[i], s_active_kernel_elf);
+        //   XAie_CoreUnreset(dev, s_kernel_tiles[i]);
+        // #else
         XAie_CoreDisable(dev, s_kernel_tiles[i]);
         XAie_CoreReset(dev, s_kernel_tiles[i]);
         XAie_LoadElfMem(dev, s_kernel_tiles[i], s_active_kernel_elf);
         XAie_CoreUnreset(dev, s_kernel_tiles[i]);
+        // #endif
     }
     struct_kernel_group kg;
     kg.tiles = s_kernel_tiles;
@@ -1421,94 +1449,41 @@ void __Runtime_wait_event(XAie_DevInst *dev, struct_event event) {
 #ifdef __AIESIM__
     {
         const uint32_t WAIT_TIMEOUT_US = 1000;
-        const uint32_t HEARTBEAT_ITERS = 1;
-        const uint32_t KLOG_READ_ITERS = 1;
-        uint32_t timeout_iters = 120 * 1000;
+        const uint32_t timeout_iters = 120 * 1000;
         uint32_t iter = 0;
-        printf("[aie_runtime] wait_event entering poll loop (timeout_us=%u per iter)\n", WAIT_TIMEOUT_US);
-        fflush(stdout);
         do {
             allDone = 1;
             for (uint32_t i = 0; i < event.num_tiles; i++) {
                 if (!__Runtime_is_aie_core_tile(event.tiles[i]))
                     continue;
-                printf("[aie_runtime] polling tile(%u,%u)...\n", (unsigned)event.tiles[i].Row,
-                       (unsigned)event.tiles[i].Col);
-                fflush(stdout);
                 AieRC RC = XAie_CoreWaitForDone(dev, event.tiles[i], WAIT_TIMEOUT_US);
                 if (RC != XAIE_OK)
                     allDone = 0;
             }
             iter++;
-            if (iter % HEARTBEAT_ITERS == 0) {
-                printf("[aie_runtime] wait_event still running... iter=%u\n", iter);
-                fflush(stdout);
-            }
-            if (iter % KLOG_READ_ITERS == 0) {
-                printf("[aie_runtime] --- live klog snapshot (iter=%u) ---\n", iter);
-                fflush(stdout);
-                for (uint32_t i = 0; i < event.num_tiles; i++) {
-                    if (__Runtime_is_aie_core_tile(event.tiles[i]))
-                        __Runtime_read_kernel_log(dev, event.tiles[i]);
-                }
-            }
         } while (!allDone && iter < timeout_iters);
-
-        if (allDone)
-            printf("[aie_runtime] wait_event done after %u iters\n", iter);
-        else
-            printf("[aie_runtime] wait_event TIMEOUT after %u iters\n", iter);
     }
 #else
-    const uint32_t WAIT_TIMEOUT_US = 1000;
-    const uint32_t HEARTBEAT_ITERS = 1;
-    const uint32_t KLOG_READ_ITERS = 1;
-    uint32_t timeout_iters = 120 * 1000;
+    uint32_t timeout_iters = 100;
     uint32_t iter = 0;
-    printf("[aie_runtime] wait_event entering poll loop (timeout_us=%u per iter)\n", WAIT_TIMEOUT_US);
-    fflush(stdout);
     do {
         allDone = 1;
         for (uint32_t i = 0; i < event.num_tiles; i++) {
             if (!__Runtime_is_aie_core_tile(event.tiles[i])) {
                 continue;
             }
-            printf("[aie_runtime] polling tile(%u,%u)...\n", (unsigned)event.tiles[i].Row,
-                   (unsigned)event.tiles[i].Col);
-            fflush(stdout);
-            AieRC RC = XAie_CoreWaitForDone(dev, event.tiles[i], WAIT_TIMEOUT_US);
+            AieRC RC = XAie_CoreWaitForDone(dev, event.tiles[i], 0);
             if (RC != XAIE_OK) {
                 allDone = 0;
             }
         }
         iter++;
-        if (iter % HEARTBEAT_ITERS == 0) {
-            printf("[aie_runtime] wait_event still running... iter=%u\n", iter);
-            fflush(stdout);
-        }
-        if (iter % KLOG_READ_ITERS == 0) {
-            printf("[aie_runtime] --- live klog snapshot (iter=%u) ---\n", iter);
-            fflush(stdout);
-            for (uint32_t i = 0; i < event.num_tiles; i++) {
-                if (__Runtime_is_aie_core_tile(event.tiles[i]))
-                    __Runtime_read_kernel_log(dev, event.tiles[i]);
-            }
-        }
     } while (!allDone && iter < timeout_iters);
     if (allDone)
-        printf("[aie_runtime] wait_event done after %u iters\n", iter);
+        printf("[aie_runtime] wait_event done\n");
     else
         printf("[aie_runtime] wait_event TIMEOUT after %u iters - continuing to debug snapshot\n", iter);
-#endif /* __AIESIM__ */
-
-    /* Read kernel logs immediately after cores are done (or timed out).
-     * This must happen here rather than in auto_teardown because the
-     * console capture window may expire before teardown runs
-     * (wait_io timeouts + debug snapshot can exceed the capture budget). */
-    for (uint32_t i = 0; i < event.num_tiles; i++) {
-        if (__Runtime_is_aie_core_tile(event.tiles[i]))
-            __Runtime_read_kernel_log(dev, event.tiles[i]);
-    }
+#endif
 }
 
 /**
@@ -1526,11 +1501,6 @@ void __Runtime_wait_io(XAie_DevInst *dev, struct_ioevent io_event) {
         printf("[aie_runtime] wait_io tile(%u,%u) ch=%u dir=%d\n", (unsigned)tile.Col, (unsigned)tile.Row,
                (unsigned)channel, (int)dir);
 
-    const uint32_t poll_interval_us = 1000 * 1000;
-    const uint32_t max_iters = 120;
-    u8 numPendingBDs = 1;
-    uint32_t iter = 0;
-
     printf("aie runtime col = %d, row = %d, channel = %d, dir = %d\n", tile.Col, tile.Row, channel, dir);
     /* Read raw DMA channel status for diagnostic */
     {
@@ -1539,6 +1509,23 @@ void __Runtime_wait_io(XAie_DevInst *dev, struct_ioevent io_event) {
         printf("[aie_runtime] ch_status tile(%u,%u) ch=%u dir=%d raw=0x%08x rc=%d\n", (unsigned)tile.Col,
                (unsigned)tile.Row, (unsigned)channel, (int)dir, (unsigned)ch_status, (int)src);
     }
+#ifdef __AIESIM__
+    {
+        const uint32_t SIM_PER_CALL_US = 5000U;
+        const uint32_t max_iters = 400;
+        u8 numPendingBDs = 1;
+        for (uint32_t iter = 0; iter < max_iters; iter++) {
+            XAie_DmaWaitForDone(dev, tile, channel, dir, SIM_PER_CALL_US);
+            AieRC prc = XAie_DmaGetPendingBdCount(dev, tile, channel, dir, &numPendingBDs);
+            if (prc == XAIE_OK && numPendingBDs == 0)
+                break;
+        }
+    }
+#else
+    const uint32_t poll_interval_us = 1000 * 1000;
+    const uint32_t max_iters = 5;
+    u8 numPendingBDs = 1;
+    uint32_t iter = 0;
     while (numPendingBDs > 0) {
         AieRC rc = XAie_DmaGetPendingBdCount(dev, tile, channel, dir, &numPendingBDs);
         if (rc != XAIE_OK) {
@@ -1548,14 +1535,11 @@ void __Runtime_wait_io(XAie_DevInst *dev, struct_ioevent io_event) {
             return;
         }
         if (numPendingBDs > 0) {
-            printf("[aie_runtime] wait_io heartbeat iter=%u tile(%u,%u) ch=%u dir=%d pending=%u\n", iter,
-                   (unsigned)tile.Col, (unsigned)tile.Row, (unsigned)channel, (int)dir, (unsigned)numPendingBDs);
-            fflush(stdout);
             if (++iter >= max_iters) {
-                printf("[aie_runtime] wait_io TIMEOUT after %u iters "
+                printf("[aie_runtime] wait_io TIMEOUT after %u ms "
                        "tile(%u,%u) ch=%u dir=%d pending=%u\n",
-                       iter, (unsigned)tile.Col, (unsigned)tile.Row, (unsigned)channel, (int)dir,
-                       (unsigned)numPendingBDs);
+                       (unsigned)(max_iters * poll_interval_us / 1000), (unsigned)tile.Col, (unsigned)tile.Row,
+                       (unsigned)channel, (int)dir, (unsigned)numPendingBDs);
                 return;
             } else if (AIE_DEBUG_LEVEL(g_runtime_debug_level) >= 1) {
                 printf("[aie_runtime] wait_io pending tile(%u,%u) ch=%u dir=%d pending=%u iter=%u\n",
@@ -1565,6 +1549,7 @@ void __Runtime_wait_io(XAie_DevInst *dev, struct_ioevent io_event) {
             usleep(poll_interval_us);
         }
     }
+#endif
 
     if (AIE_DEBUG_LEVEL(g_runtime_debug_level) >= 1)
         printf("[aie_runtime] wait_io done tile(%u,%u) ch=%u dir=%d\n", (unsigned)tile.Col, (unsigned)tile.Row,

@@ -211,6 +211,13 @@ INCLUDE_PATH="-I$XILINX_VITIS_AIETOOLS/include \
 -I$include_base \
 -I${AIEHLC_ROOT_DIR}/src/mlir/runtime"
 
+if [ -n "$kernel_cc" ]; then
+    _kernel_src_dir="$(cd "$(dirname "$kernel_cc")" 2>/dev/null && pwd)"
+    if [ -n "$_kernel_src_dir" ]; then
+        INCLUDE_PATH="$INCLUDE_PATH -I$_kernel_src_dir"
+    fi
+fi
+
 if [ -n "$commons_dir" ]; then
     INCLUDE_PATH="$INCLUDE_PATH -I$commons_dir"
 fi
@@ -299,6 +306,12 @@ if [ $DEBUG_OUTPUT = 1 ]; then
 fi
 
 chess_elf_compiler="xchessmk $extra_chess_flag $silent_flag -s -C Release_LLVM -P $arch_model_dir +P 4 -DDEPLOYMENT_ELF=1 -D__LOCK_FENCE_MODE__=0 -DAIE_OPTION_SCALAR_FLOAT_ON_VECTOR -DAIE2_FP32_EMULATION_ACCURACY_FAST"
+
+if [[ "$platform" == "sim" ]]; then
+    compiler_flags_chess+=" -DAIEHLC_KERNEL_SIM"
+    compiler_flags_llvm_aie_sel+=" -DAIEHLC_KERNEL_SIM"
+    chess_elf_compiler+=" -DAIEHLC_KERNEL_SIM"
+fi
 
 # --- Create output directory ---
 

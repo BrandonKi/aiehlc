@@ -3716,12 +3716,16 @@ public:
                            "    if (DevInst == nullptr) {\n"
                            "        return;\n"
                            "    }\n"
-                           "    XAie_CoreDisable(DevInst, XAie_TileLoc(Col,Row));\n"
+                           //   "    XAie_CoreDisable(DevInst, XAie_TileLoc(Col,Row));\n"
+                           //   "    XAie_CoreReset(DevInst, XAie_TileLoc(Col,Row));\n"
+                           //   "    XAie_LoadElfMem(... _binary_kernel_" + x + "_start);\n"
+                           //   "    XAie_CoreUnreset(DevInst, XAie_TileLoc(Col,Row));\n"
+                           //   "    XAie_CoreEnable(DevInst, XAie_TileLoc(Col,Row));\n"
                            "    XAie_CoreReset(DevInst, XAie_TileLoc(Col,Row));\n"
+                           "    XAie_CoreUnreset(DevInst, XAie_TileLoc(Col,Row));\n"
                            "    XAie_LoadElfMem(DevInst, XAie_TileLoc(Col,Row), (unsigned char *)_binary_kernel_" +
                            x +
                            "_start);\n"
-                           "    XAie_CoreUnreset(DevInst, XAie_TileLoc(Col,Row));\n"
                            "    XAie_CoreEnable(DevInst, XAie_TileLoc(Col,Row));\n"
                            "    if (__aiehlc_launched_tile_count < AIEHLC_MAX_LAUNCHED_TILES) {\n"
                            "        __aiehlc_launched_tiles[__aiehlc_launched_tile_count++] = XAie_TileLoc(Col,Row);\n"
