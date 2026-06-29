@@ -2099,8 +2099,9 @@ static void emitDebugSnapshotVerbatim(OpBuilder &rewriter, Location loc, const C
         trows.push_back(std::to_string(t.row));
     }
 
-    rewriter.create<emitc::VerbatimOp>(loc, "/* AieRt debug snapshot */");
-    rewriter.create<emitc::VerbatimOp>(loc, "{");
+    rewriter.create<emitc::VerbatimOp>(loc, "/* AieRt debug snapshot (skipped at debug level 0 so it does not "
+                                            "pollute profiling timing / flood UART) */");
+    rewriter.create<emitc::VerbatimOp>(loc, "if (AIE_DEBUG_LEVEL(g_runtime_debug_level) >= 1) {");
     rewriter.create<emitc::VerbatimOp>(loc, "  " + buildArrayInit("uint8_t", "_dbg_io_cols", cols));
     rewriter.create<emitc::VerbatimOp>(loc, "  " + buildArrayInit("uint8_t", "_dbg_io_rows", rows));
     rewriter.create<emitc::VerbatimOp>(loc, "  " + buildArrayInit("uint8_t", "_dbg_io_chs", chs));

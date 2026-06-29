@@ -1,0 +1,28 @@
+{
+  "Placement": [
+    { "LogicalInstance": {"InstanceName":"ai_engine_0","PortName":"M00_AXI"},
+      "PhysicalInstance": [{"name":"AIE_ML_NOC_X6Y0_AIE_ML_NOC_M_AXI","column":14,"channel":0}], "IsSoft":true },
+    { "LogicalInstance": {"InstanceName":"ai_engine_0","PortName":"M01_AXI"},
+      "PhysicalInstance": [{"name":"AIE_ML_NOC_X2Y0_AIE_ML_NOC_M_AXI","column":6,"channel":0}],  "IsSoft":true },
+    { "LogicalInstance": {"InstanceName":"ai_engine_0","PortName":"M02_AXI"},
+      "PhysicalInstance": [{"name":"AIE_ML_NOC_X1Y0_AIE_ML_NOC_M_AXI","column":3,"channel":0}],  "IsSoft":true },
+    { "LogicalInstance": {"InstanceName":"ai_engine_0","PortName":"M03_AXI"},
+      "PhysicalInstance": [{"name":"AIE_ML_NOC_X15Y0_AIE_ML_NOC_M_AXI","column":31,"channel":0}],"IsSoft":true },
+    { "LogicalInstance": {"InstanceName":"ai_engine_0","PortName":"M04_AXI"},
+      "PhysicalInstance": [{"name":"AIE_ML_NOC_X16Y0_AIE_ML_NOC_M_AXI","column":34,"channel":0}],"IsSoft":true },
+    { "LogicalInstance": {"InstanceName":"ai_engine_0","PortName":"M05_AXI"},
+      "PhysicalInstance": [{"name":"AIE_ML_NOC_X0Y0_AIE_ML_NOC_M_AXI","column":2,"channel":0}],  "IsSoft":true },
+    { "LogicalInstance": {"InstanceName":"ai_engine_0","PortName":"M06_AXI"},
+      "PhysicalInstance": [{"name":"AIE_ML_NOC_X17Y0_AIE_ML_NOC_M_AXI","column":35,"channel":0}],"IsSoft":true },
+    { "LogicalInstance": {"InstanceName":"ai_engine_0","PortName":"M07_AXI"},
+      "PhysicalInstance": [{"name":"AIE_ML_NOC_X10Y0_AIE_ML_NOC_M_AXI","column":22,"channel":0}],"IsSoft":true },
+    { "LogicalInstance": {"InstanceName":"ai_engine_0","PortName":"M08_AXI"},
+      "PhysicalInstance": [{"name":"AIE_ML_NOC_X3Y0_AIE_ML_NOC_M_AXI","column":7,"channel":0}],  "IsSoft":true },
+    { "LogicalInstance": {"InstanceName":"ai_engine_0","PortName":"M09_AXI"},
+      "PhysicalInstance": [{"name":"AIE_ML_NOC_X11Y0_AIE_ML_NOC_M_AXI","column":23,"channel":0}],"IsSoft":true },
+    { "LogicalInstance": {"InstanceName":"ai_engine_0","PortName":"M10_AXI"},
+      "PhysicalInstance": [{"name":"AIE_ML_NOC_X7Y0_AIE_ML_NOC_M_AXI","column":15,"channel":0}], "IsSoft":true },
+    { "LogicalInstance": {"InstanceName":"ai_engine_0","PortName":"M11_AXI"},
+      "PhysicalInstance": [{"name":"AIE_ML_NOC_X14Y0_AIE_ML_NOC_M_AXI","column":30,"channel":0}],"IsSoft":true }
+  ]
+}

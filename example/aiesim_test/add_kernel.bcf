@@ -1,0 +1,9 @@
+// BCF for add_kernel — same layout as matmul_kernel.bcf
+_reserved DMb 0x0 0x40000
+
+_entry_point _main_no_exit_init
+_symbol      _main _after _main_no_exit_init
+_symbol      _main_no_exit_init 0x0
+
+_stack DM_stack 0x70000 0x1000
+_reserved DMb 0x80000 0x80000

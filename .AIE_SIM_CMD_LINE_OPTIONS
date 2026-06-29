@@ -1,0 +1,3 @@
+aiesimulator
+--pkg-dir /scratch/staff/bkirinci/aiehlc_aiesim/script/sim/Work_gen5
+--display-run-interval=100000

@@ -54,9 +54,25 @@ XAie_DevInst *getOrCreateDeviceInstance(void);
 // __Runtime_perfcnt_setup_mm2s_bd_finished_partition(); teardown reads them
 // back. These are the same counters aiegdb.py "dma counter" reads (0x11020/24).
 #define AIE_DEBUG_FLAG_MM2SBDFINISH_COUNTER (1 << 6)
-// bit 7 reserved
+// bit 7 reserved (AIE_DMA_ISSUE_COUNT in aiehlc flag map)
+/* When set, arm core-module perf counters (active/vec/stream-stall/lock-stall)
+ * on every compute tile at kernel launch, so a profiling host can read the
+ * per-tile cycle budget after the run via __Runtime_core_perf_read_probe(). */
+#define AIE_DEBUG_FLAG_CORE_PERF_COUNTER (1 << 8)
 #define AIE_DEBUG_HAS_FLAG(v, flag) (((v) & (flag)) != 0)
 extern int g_runtime_debug_level;
+
+/* Gate for high-volume informational runtime logs (per-BD / per-IO traces).
+ * At debug level 0 the runtime stays quiet so it does not flood the (slow)
+ * UART or pollute wall-clock profiling. Errors/failures stay unconditional.
+ * Usage:  AIE_RT_LOG(printf("...", ...)); */
+#define AIE_RT_LOG_ENABLED() (AIE_DEBUG_LEVEL(g_runtime_debug_level) >= 1)
+#define AIE_RT_LOG(stmt)                                                                                                \
+    do {                                                                                                               \
+        if (AIE_RT_LOG_ENABLED()) {                                                                                    \
+            stmt;                                                                                                      \
+        }                                                                                                              \
+    } while (0)
 
 // Type aliases for emitted host code (uses "io", "event", etc. without "struct" prefix)
 typedef struct_io io;
@@ -378,6 +394,28 @@ AieRC __Runtime_perfcnt_setup_mm2s_bd_finished_partition(XAie_DevInst *dev, uint
 // Read and print all MM2S BD finished perf counters across a partition.
 void __Runtime_perfcnt_read_mm2s_bd_finished_partition(XAie_DevInst *dev, uint8_t start_col, uint8_t end_col,
                                                        uint8_t start_row, uint8_t end_row);
+
+// ---------------------------------------------------------------------------
+// Core-module performance counters (cycle-budget profiling), mirroring the
+// AEG OOB profiling probe. Uses CORE_MOD counters 0..3 on a single core tile:
+//   0: active cycles      (ACTIVE_CORE   start -> DISABLED_CORE stop)
+//   1: vector instr count (INSTR_VECTOR_CORE self-counting)
+//   2: stream stall cycles(STREAM_STALL_CORE start -> ACTIVE_CORE stop)
+//   3: lock stall cycles  (LOCK_STALL_CORE  start -> ACTIVE_CORE stop)
+// Arm on a tile (resets the 4 counters to 0 and configures their events).
+AieRC __Runtime_core_perf_setup(XAie_DevInst *dev, XAie_LocType tile);
+// Read the 4 core-module counters from a tile (any out-param may be NULL).
+AieRC __Runtime_core_perf_read(XAie_DevInst *dev, XAie_LocType tile, uint32_t *active, uint32_t *vec_instr,
+                               uint32_t *stream_stall, uint32_t *lock_stall);
+// 1 if a probe tile was armed during the last kernel launch, else 0.
+int __Runtime_core_perf_probe_valid(void);
+// Read the 4 core-module counters from the armed probe tile (first compute
+// tile of the launched kernel group). Sets zeros if no probe tile is valid.
+void __Runtime_core_perf_read_probe(uint32_t *active, uint32_t *vec_instr, uint32_t *stream_stall,
+                                    uint32_t *lock_stall);
+// Read MM2S ch0/ch1 BD-finished counts (MEM_MOD counters 0/1) from the probe
+// tile. Requires AIE_DEBUG_FLAG_MM2SBDFINISH_COUNTER so they were set up.
+void __Runtime_perfcnt_read_mm2s_probe(uint32_t *ch0, uint32_t *ch1);
 
 // ---------------------------------------------------------------------------
 // DMA-capable buffer allocation with cache sync support

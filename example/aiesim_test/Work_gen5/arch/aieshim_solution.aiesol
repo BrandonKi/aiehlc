@@ -1,0 +1,6 @@
+{
+  "Placement": [
+    { "LogicalInstance": {"InstanceName":"ai_engine_0","PortName":"M00_AXI"},
+      "PhysicalInstance": [{"name":"AIE2PS_NOC_X4Y0_AIE2PS_NOC_M_AXI","column":4,"channel":0}], "IsSoft":true }
+  ]
+}

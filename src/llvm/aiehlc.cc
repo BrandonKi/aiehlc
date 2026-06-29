@@ -2928,7 +2928,9 @@ class AieDebugLevelPragmaHandler : public clang::PragmaHandler {
         static const std::unordered_map<std::string, int> knownFlags = {
             {"AIE_DEBUG_FLAG_DISABLE_MULTID_DIM_DMA", 1 << 4},
             {"AIE_DEBUG_FLAG_DISABLE_PARTITIONTEARDOWN", 1 << 5},
+            {"AIE_DEBUG_FLAG_MM2SBDFINISH_COUNTER", 1 << 6},
             {"AIE_DMA_ISSUE_COUNT", 1 << 7},
+            {"AIE_DEBUG_FLAG_CORE_PERF_COUNTER", 1 << 8},
         };
 
         clang::Token Tok;

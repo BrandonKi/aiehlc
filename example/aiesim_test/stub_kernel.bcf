@@ -1,0 +1,11 @@
+// BCF for stub_kernel: minimal tile activator.
+// Reserves low DM so the chess runtime doesn't place anything
+// below 0x40000 (required by the AIE-ML ISS address checker).
+_reserved DMb 0x0 0x40000
+
+_entry_point _main_no_exit_init
+_symbol      _main _after _main_no_exit_init
+_symbol      _main_no_exit_init 0x0
+
+_stack DM_stack 0x70000 0x400
+_reserved DMb 0x80000 0x80000

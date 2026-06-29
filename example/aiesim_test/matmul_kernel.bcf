@@ -1,0 +1,15 @@
+// BCF for matmul_kernel: direct DM access (no ADF streaming).
+// Mirrors the AEG testkernel BCF layout so printf() format strings
+// are placed at DM addresses >= 0x40000, which the ISS accepts.
+_reserved DMb 0x0 0x40000         // low addresses invalid in this tile
+
+_entry_point _main_no_exit_init
+_symbol      _main _after _main_no_exit_init
+_symbol      _main_no_exit_init 0x0
+
+// Input / output matrices and done flag live in DM above 0x70000
+// (host-side DM offsets: 0x2000, 0x2040, 0x2080, 0x20C0 → absolute 0x72000 etc.)
+_stack DM_stack 0x70000 0x1000    // 4KB stack
+
+_reserved DMb 0x7f800 0x800       // klog region (not used here, but keep clear)
+_reserved DMb 0x80000 0x80000     // everything above the tile's DM

@@ -491,7 +491,7 @@ Examples:
     parser.add_argument(
         "-y", "--yes",
         action="store_true",
-        default=False,
+        default=True,
         help="Non-interactive mode: auto-confirm all prompts"
     )
     parser.add_argument(

@@ -1,0 +1,142 @@
+<ENTRY>
+{
+ "thisFile": "/scratch/staff/bkirinci/aiehlc_aiesim/aiesimulator_output/default.aierun_summary",
+ "connectId": "",
+ "serverToken": "",
+ "timestamp": "0"
+}
+</ENTRY>
+<ENTRY>
+{
+ "type": "ET_Report",
+ "dateTimestamp": "Fri Jun 26 11:08:03 2026",
+ "timestampMillis": "1782497283182",
+ "report": {
+  "path": "/scratch/staff/bkirinci/aiehlc_aiesim/script/sim/Work_gen5",
+  "name": "",
+  "fileType": "DIR",
+  "reportType": "AIE_COMPILER_WORKDIR",
+  "cmdId": ""
+ }
+}
+</ENTRY>
+<ENTRY>
+{
+ "type": "ET_CmdStep",
+ "dateTimestamp": "Fri Jun 26 11:08:03 2026",
+ "timestampMillis": "1782497283182",
+ "buildStep": {
+  "cmdId": "f20100b7-5843-4ac0-aaba-eb9a20a3f395",
+  "name": "aiesim",
+  "logFile": "/scratch/staff/bkirinci/aiehlc_aiesim/AIESimulator.log",
+  "commandLine": "aiesimulator --pkg-dir /scratch/staff/bkirinci/aiehlc_aiesim/script/sim/Work_gen5 --display-run-interval=100000 ",
+  "args": [
+   "aiesimulator",
+   "--pkg-dir /scratch/staff/bkirinci/aiehlc_aiesim/script/sim/Work_gen5",
+   "--display-run-interval=100000"
+  ],
+  "iniFiles": [],
+  "cwd": "/scratch/staff/bkirinci/aiehlc_aiesim"
+ }
+}
+</ENTRY>
+<ENTRY>
+{
+ "type": "ET_Status",
+ "dateTimestamp": "Fri Jun 26 11:08:03 2026",
+ "timestampMillis": "1782497283182",
+ "status": {
+  "cmdId": "f20100b7-5843-4ac0-aaba-eb9a20a3f395",
+  "state": "CS_RUNNING"
+ }
+}
+</ENTRY>
+<ENTRY>
+{
+ "type": "ET_FlowMetaData",
+ "dateTimestamp": "Fri Jun 26 11:08:03 2026",
+ "timestampMillis": "1782497283183",
+ "buildSummary": {
+  "hardwarePlatform": "",
+  "hardwareDsa": "",
+  "platformDirectory": "",
+  "runtime": "",
+  "systemConfig": "",
+  "flow": "BF_COMPILE",
+  "target": "TT_AIESIM",
+  "kernels": [
+   {
+    "base": {
+     "type": "KERNEL",
+     "name": "",
+     "file": "",
+     "reports": [],
+     "uuid": ""
+    },
+    "sources": [
+     ""
+    ],
+    "psSources": [],
+    "cuNames": [],
+    "type": "AIE",
+    "frequency": 0,
+    "freqUnits": ""
+   }
+  ],
+  "toolVersion": "2026.1"
+ }
+}
+</ENTRY>
+<ENTRY>
+{
+ "type": "ET_Report",
+ "dateTimestamp": "Fri Jun 26 11:08:03 2026",
+ "timestampMillis": "1782497283183",
+ "report": {
+  "path": "/scratch/staff/bkirinci/aiehlc_aiesim/throughput_info.json",
+  "name": "",
+  "fileType": "JSON",
+  "reportType": "AIE_THROUGHPUT",
+  "cmdId": ""
+ }
+}
+</ENTRY>
+<ENTRY>
+{
+ "type": "ET_Report",
+ "dateTimestamp": "Fri Jun 26 11:08:03 2026",
+ "timestampMillis": "1782497283184",
+ "report": {
+  "path": "/scratch/staff/bkirinci/aiehlc_aiesim/AIESim_FIFO_Guidance.json",
+  "name": "",
+  "fileType": "JSON",
+  "reportType": "AIE_SIM_FIFO_GUIDANCE",
+  "cmdId": ""
+ }
+}
+</ENTRY>
+<ENTRY>
+{
+ "type": "ET_Report",
+ "dateTimestamp": "Fri Jun 26 11:08:03 2026",
+ "timestampMillis": "1782497283184",
+ "report": {
+  "path": "/scratch/staff/bkirinci/aiehlc_aiesim/AIESim_Guidance.json",
+  "name": "",
+  "fileType": "JSON",
+  "reportType": "AIE_SIM_MEMORY_ACCESS_VIOLATION_GUIDANCE",
+  "cmdId": ""
+ }
+}
+</ENTRY>
+<ENTRY>
+{
+ "type": "ET_Status",
+ "dateTimestamp": "Fri Jun 26 11:08:34 2026",
+ "timestampMillis": "1782497314097",
+ "status": {
+  "cmdId": "f20100b7-5843-4ac0-aaba-eb9a20a3f395",
+  "state": "CS_PASSED"
+ }
+}
+</ENTRY>
