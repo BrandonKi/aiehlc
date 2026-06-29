@@ -365,19 +365,20 @@ def setup_second_connection():
     
     # Wait for shell prompt
     child.expect([r'\$\s*$', r'#\s*$', r'>\s*$'], timeout=60)
-    #print("[Connection 2] Connected, starting systest...")
-    
+    print("[Connection 2] Connected, starting systest...")
+
     # Step 2: Run systest
-    #child.sendline("/opt/systest/common/bin/systest-client")
-    #child.expect(r'Systest[#>]', timeout=60)
-    #print("[Connection 2] In systest, connecting to com0...")
-    
-    # Step 3: Connect to com0 (no output until ELF runs on first connection)
-    #child.sendline("connect com0")
-    child.sendline("telnet 10.10.71.1 4001")
-    child.expect(r'Versal PS UART0', timeout=60)
-    print("[Connection 2] Connected to com0, listening for output...")
-    
+    child.sendline("/opt/systest/common/bin/systest-client")
+    child.expect(r'Systest[#>]', timeout=60)
+    print("[Connection 2] In systest, connecting to com3...")
+
+    # Step 3: Connect to com3 (board console; no output until ELF runs on
+    # the first connection). Board-agnostic systest path (replaces the
+    # board-specific "telnet 10.10.71.1 4001" that only worked on portobello13).
+    child.sendline("connect com3")
+    child.expect(r'Connecting to device com3.*escape', timeout=60)
+    print("[Connection 2] Connected to com3, listening for output...")
+
     return child
 
 
