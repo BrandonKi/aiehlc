@@ -1518,25 +1518,65 @@ void __Runtime_wait_event(XAie_DevInst *dev, struct_event event) {
             printf("[aie_runtime] wait_event TIMEOUT after %u iters - continuing to debug snapshot\n", iter);
     }
 #else
-    uint32_t timeout_iters = 100;
-    uint32_t iter = 0;
-    do {
-        allDone = 1;
-        for (uint32_t i = 0; i < event.num_tiles; i++) {
-            if (!__Runtime_is_aie_core_tile(event.tiles[i])) {
-                continue;
-            }
-            AieRC RC = XAie_CoreWaitForDone(dev, event.tiles[i], 0);
-            if (RC != XAIE_OK) {
-                allDone = 0;
-            }
+    /* [exp10] Completion is gated by the downstream output-DMA drain (wait_io), NOT by
+     * Core_Done. exp09 proved (core status 0x201 = EN=1,LOCK_STALL_E=1, done=0 on all 16
+     * tiles; 99.94% lock stall) that these cores are delivery-bound: they only latch Done
+     * AFTER the output S2MM fully drains, which the host's subsequent wait_io enforces.
+     * Spinning on XAie_CoreWaitForDone here just burns a ~960ms spurious wait. So do ONE
+     * non-blocking poll for observability and return immediately — matching aieml_perf.cc's
+     * HW path (single CoreWaitForDone(...,0), then rely on the DMA drain) and AEG's
+     * DmaWaitForDone-based completion. */
+    allDone = 1;
+    for (uint32_t i = 0; i < event.num_tiles; i++) {
+        if (!__Runtime_is_aie_core_tile(event.tiles[i])) {
+            continue;
         }
-        iter++;
-    } while (!allDone && iter < timeout_iters);
+        AieRC RC = XAie_CoreWaitForDone(dev, event.tiles[i], 0);
+        if (RC != XAIE_OK) {
+            allDone = 0;
+        }
+    }
     if (allDone)
-        printf("[aie_runtime] wait_event done\n");
+        printf("[aie_runtime] wait_event done (cores already at Done)\n");
     else
-        printf("[aie_runtime] wait_event TIMEOUT after %u iters - continuing to debug snapshot\n", iter);
+        printf("[aie_runtime] wait_event: cores not yet at Done (expected - completion is gated"
+               " on output-DMA drain in wait_io); not spinning\n");
+    /* Verbose per-tile core-status snapshot (exp09 decoder) only at debug level >=1. */
+    if (!allDone && AIE_DEBUG_LEVEL(g_runtime_debug_level) >= 1) {
+        for (uint32_t i = 0; i < event.num_tiles; i++) {
+            if (!__Runtime_is_aie_core_tile(event.tiles[i]))
+                continue;
+            u32 cs = 0;
+            u8 doneb = 0;
+            u32 pc = 0;
+            AieRC rcs = XAie_CoreGetStatus(dev, event.tiles[i], &cs);
+            XAie_CoreReadDoneBit(dev, event.tiles[i], &doneb);
+            XAie_CoreGetPCValue(dev, event.tiles[i], &pc);
+            printf("[corestat] tile(%u,%u) rc=%d status=0x%08x done=%u pc=0x%08x"
+                   " [EN=%u RST=%u DONE=%u LOCK_S=%u LOCK_W=%u LOCK_N=%u LOCK_E=%u"
+                   " STREAM_SS0=%u STREAM_SS1=%u STREAM_MS0=%u STREAM_MS1=%u"
+                   " MEM_S=%u MEM_W=%u MEM_N=%u MEM_E=%u ERR_HALT=%u DBG_HALT=%u]\n",
+                   (unsigned)event.tiles[i].Col, (unsigned)event.tiles[i].Row, (int)rcs,
+                   (unsigned)cs, (unsigned)doneb, (unsigned)pc,
+                   (unsigned)!!(cs & XAIE_CORE_STATUS_ENABLE),
+                   (unsigned)!!(cs & XAIE_CORE_STATUS_RESET),
+                   (unsigned)!!(cs & XAIE_CORE_STATUS_DONE),
+                   (unsigned)!!(cs & XAIE_CORE_STATUS_LOCK_STALL_S),
+                   (unsigned)!!(cs & XAIE_CORE_STATUS_LOCK_STALL_W),
+                   (unsigned)!!(cs & XAIE_CORE_STATUS_LOCK_STALL_N),
+                   (unsigned)!!(cs & XAIE_CORE_STATUS_LOCK_STALL_E),
+                   (unsigned)!!(cs & XAIE_CORE_STATUS_STREAM_STALL_SS0),
+                   (unsigned)!!(cs & XAIE_CORE_STATUS_STREAM_STALL_SS1),
+                   (unsigned)!!(cs & XAIE_CORE_STATUS_STREAM_STALL_MS0),
+                   (unsigned)!!(cs & XAIE_CORE_STATUS_STREAM_STALL_MS1),
+                   (unsigned)!!(cs & XAIE_CORE_STATUS_MEM_STALL_S),
+                   (unsigned)!!(cs & XAIE_CORE_STATUS_MEM_STALL_W),
+                   (unsigned)!!(cs & XAIE_CORE_STATUS_MEM_STALL_N),
+                   (unsigned)!!(cs & XAIE_CORE_STATUS_MEM_STALL_E),
+                   (unsigned)!!(cs & XAIE_CORE_STATUS_ERROR_HALT),
+                   (unsigned)!!(cs & XAIE_CORE_STATUS_DEBUG_HALT));
+        }
+    }
 #endif
 }
 

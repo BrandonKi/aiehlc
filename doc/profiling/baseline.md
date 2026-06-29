@@ -35,9 +35,19 @@ flows can be compared on the same problem and the same number of tiles.
 The compute tiles are **99.97 % lock/DMA-stalled** — they perform only ~381k
 cycles of real work (~0.3 ms) inside a ~1.1-billion-cycle enabled window. Per
 active compute cycle they are reasonably efficient (**5.5 FLOP/cycle**), but the
-kernel is **scalar** (`vec instrs = 0`) and almost entirely **data-starved** by
-host-driven DMA orchestration. Wall throughput (0.035 GOPS) is therefore
-dominated by data delivery, not arithmetic.
+kernel is **scalar** (`vec instrs = 0`) and almost entirely **data-starved**.
+Wall throughput (0.035 GOPS) is therefore dominated by data delivery, not arithmetic.
+
+> **⚠️ The ~961 ms is a spurious `wait_event` timeout, not real execution time
+> (exp05+exp07, 2026-06-29).** The workload DOES compute correct output (exp07 poison
+> test: a `0x5A` pattern flushed to device `C` is overwritten by the correct result), so
+> this is NOT a deadlock and NOT stale-DDR. But `__Runtime_wait_event` never sees
+> `Core_Done` and always `TIMEOUT`s after its 100-iteration budget (~957 ms), so the wall
+> is pinned to that budget regardless of actual compute time — which is why every
+> optimization experiment was null. (An earlier exp06 "deadlock" reading was an
+> instrumentation artifact and is retracted.) Next: test whether the long `wait_event` is
+> pure waste vs. needed, then replace `CoreWaitForDone` with a real completion signal so
+> the metric becomes meaningful. Details: `autoperf/results/experiments/0{5,6,7}-*.md`.
 
 **Directly comparable rows vs AEG:** wall GOPS, compute-% of cycle budget, and
 FLOP/active-cycle.

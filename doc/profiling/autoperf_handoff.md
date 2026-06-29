@@ -5,6 +5,46 @@ You are taking over an autonomous performance-optimization run. Your job: use th
 faster, one experiment at a time, keeping wins and reverting losses, **never stopping
 until interrupted**.
 
+## 🔑 KEY FINDING (2026-06-29, exp09 CONFIRMED) — READ FIRST: THE METRIC IS A SPURIOUS WAIT
+
+**exp09 ground truth (core-status register, all 16 tiles identical):**
+`status=0x00000201` → `EN=1 RST=0 DONE=0 LOCK_STALL_E=1` (every other bit 0),
+Layer 3 lock-stall = 99.94%. The cores are **enabled and running but lock-stalled on an
+east input-window lock** (delivery-starved), NOT done and NOT deadlocked. `wait_event`
+polls `Core_Done` long before compute finishes, then burns its iter budget. Output S2MM
+drains to `RESULT: PASS`, so the cores DO finish later — we just poll too early.
+**Fix:** gate completion on output-DMA drain (`wait_io`) + single non-blocking
+`CoreWaitForDone(...,0)` poll (matches `aieml_perf.cc` HW path + AEG `DmaWaitForDone`).
+Underlying perf bottleneck = delivery starvation (lock-credit / BD-chain), per AEG backlog.
+
+
+
+**The workload computes CORRECT output, but the ~961 ms "wall" is a spurious
+`wait_event` timeout, not real execution time.** Corrected understanding (exp06's
+"deadlock/stale" claim was WRONG — an instrumentation artifact; disproved by exp07):
+
+- **exp07 (ground truth):** poison device `C` with `0x5A`, flush to DDR, run → output is
+  the CORRECT GEMM result (`PASS`, no `got 90`). So the kernel really runs and writes
+  fresh correct output. **Not deadlocked, not stale-DDR.**
+- **exp05 phase timing:** the entire ~961 ms is in `__Runtime_wait_event`; everything else
+  (load, launch, BD config, startio, wait_io) is ≈0–4 ms.
+- **But `wait_event` always ends in `TIMEOUT after 100 iters`**: `XAie_CoreWaitForDone`
+  never reports `Core_Done` for these cores, so the loop burns its full
+  100-iter × ~0.6 ms/CoreWaitForDone(timeout=0)-default ≈ 957 ms budget **regardless of
+  real compute time**. The metric is pinned to this timeout ⇒ every experiment
+  (exp01/02/03/04) was null.
+
+**Open question being tested (exp08):** since the output is already correct and the
+host's `wait_io` (output-DMA drain) completes in ~4 ms, is the 957 ms `wait_event` pure
+waste? If cutting `timeout_iters` (100→small) keeps `PASS`-over-poison and drops the
+wall, that is a real ~Nx win AND it unblocks a *meaningful* metric. If it breaks
+correctness, the cores genuinely need the time and we need a proper completion signal
+(output-drain wait) instead of `CoreWaitForDone`.
+
+> Keep the exp07 poison harness change while iterating — `PASS`-over-poison is the only
+> trustworthy correctness gate (`-nonreboot` keeps prior correct `C` in DRAM, so a plain
+> `RESULT: PASS` can be stale). See `autoperf/results/experiments/0{5,6,7}-*.md`.
+
 ## TL;DR
 
 1. Read `autoperf/SKILL.md` (the loop) and `autoperf/PROJECT.md` (what to optimize).

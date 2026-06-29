@@ -173,8 +173,16 @@ int main() {
         A[i] = (int8_t)((i % 7) - 3);
     for (int i = 0; i < K * N; i++)
         B[i] = (int8_t)((i % 5) - 2);
+    // [exp07 poison] forward-decl (front-end only declares sync_for_cpu, not sync_for_dev)
+    extern void __Runtime_sync_for_dev(XAie_DevInst *dev, void *ptr, __SIZE_TYPE__ size);
+    // Write a poison pattern to C AND FLUSH it to device DRAM before the
+    // launch. If the kernel actually computes, it overwrites C with the correct result
+    // (PASS). If the workload deadlocks (suspected), the poison survives in device DRAM
+    // and verification FAILS showing "got 90" — proving prior PASSes were stale-DDR.
     for (int i = 0; i < M * N; i++)
-        C[i] = 0;
+        C[i] = (int8_t)0x5A; /* 90 */
+    __Runtime_sync_for_dev(device._dev, C, M * N * sizeof(int8_t) * 4);
+    printf("[exp07] poisoned device C with 0x5A and flushed to DDR\n");
 
     // ── Layer 1: time the whole launch (kernel load + DMA cfg + compute + drain).
     XTime t0, t1;
