@@ -184,17 +184,49 @@ int main() {
     __Runtime_sync_for_dev(device._dev, C, M * N * sizeof(int8_t) * 4);
     printf("[exp07] poisoned device C with 0x5A and flushed to DDR\n");
 
-    // ── Layer 1: time the whole launch END-TO-END. [exp20 follow-up] t1 was previously read
-    // BEFORE synchronizecpu, so the output-DMA drain + CPU-visible sync sat OUTSIDE the window;
-    // once the dead Core_Done poll was removed the bracketed region collapsed to <1 timer tick
-    // (raw_counts=0). Read t1 AFTER synchronizecpu so the metric captures launch + compute +
-    // output drain + cache-invalidate — i.e. the real time until results are readable in host
-    // memory. (Timer = COUNTS_PER_SECOND Hz; see the raw-count print below.)
+    // Golden reference for the completion barrier, computed BEFORE the timed region (outside
+    // t0..t1) so the GEMM reference cost is not charged to the metric. Same saturated-int8
+    // formula as prof_verify().
+    static int8_t golden[M * N];
+    for (int i = 0; i < M; i++) {
+        for (int j = 0; j < N; j++) {
+            int16_t s = 0;
+            for (int k = 0; k < K; k++)
+                s += (int16_t)A[i * K + k] * (int16_t)B[j * K + k];
+            if (s > 127)
+                s = 127;
+            else if (s < -128)
+                s = -128;
+            golden[i * N + j] = (int8_t)s;
+        }
+    }
+
+    // ── Layer 1: time the WHOLE process until the full result lands in DDR. The launch is
+    // asynchronous (posted PS->AIE writes + non-blocking waits), so timing the launch call
+    // alone reads ~0. Instead, after issuing the launch we poll the output buffer in device
+    // DRAM (invalidate cache via synchronizecpu, then compare against the golden reference)
+    // and stop the timer the instant C holds the complete correct result. This is the true
+    // end-to-end "launch -> results readable" wall, independent of DMA-status quirks.
+    const uint64_t MAX_POLL = 500000000ULL; /* safety bound on a genuine hang */
     XTime t0, t1;
     XTime_GetTime(&t0);
     matmul<<<mesh>>>(A, B, C, M, N, K);
-    device.synchronizecpu(C, M * N * sizeof(int8_t) * 4);
+    uint64_t polls = 0;
+    int complete = 0;
+    do {
+        device.synchronizecpu(C, M * N * sizeof(int8_t) * 4); /* invalidate -> fresh DDR read */
+        complete = 1;
+        for (int idx = 0; idx < M * N; idx++) {
+            if (C[idx] != golden[idx]) {
+                complete = 0;
+                break;
+            }
+        }
+        polls++;
+    } while (!complete && polls < MAX_POLL);
     XTime_GetTime(&t1);
+    if (!complete)
+        printf("  WARNING: completion barrier hit MAX_POLL=%llu without full result\n", (unsigned long long)MAX_POLL);
 
     // [exp20] After removing the dead Core_Done poll the launch wall dropped below the old
     // %.3f-ms print's resolution (read 0.000 ms). Relate raw XTime counts -> wall directly:
@@ -238,8 +270,9 @@ int main() {
     printf("  timer freq:        %llu Hz  (COUNTS_PER_SECOND; 1 tick = %.3f ns)\n", (unsigned long long)timer_hz,
            tick_ns);
     printf("  total time:        %.6f ms  (%.3f us)\n", wall_ms, wall_us);
+    printf("  completion polls:  %llu  (DDR read-back until full result present)\n", (unsigned long long)polls);
     printf("  wall GFLOPS:       %.3f GOPS  (2*M*N*K / total_ms)\n", gflops_wall);
-    printf("  note: includes kernel load + DMA config + compute + drain (single launch)\n");
+    printf("  note: launch -> full result in DDR (async launch + poll-to-result barrier)\n");
 
     printf("\n--- Layer 2: DMA stream (probe tile MM2S BD finished) ---\n");
     printf("  MM2S ch0 BDs done: %u\n", mm0);
