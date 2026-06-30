@@ -1632,12 +1632,13 @@ void __Runtime_wait_io(XAie_DevInst *dev, struct_ioevent io_event) {
         }
     }
 #else
-    /* Poll at 1 ms granularity (5 s total budget). A coarse 1 s poll used to
-     * dominate wall-clock time and inflated core lock-stall cycles, since the
-     * compute tiles sat blocked on buffer locks waiting for the host to push the
-     * next DMA chunk between polls. */
-    const uint32_t poll_interval_us = 1000;
-    const uint32_t max_iters = 5000;
+    /* [exp19] Busy-poll DmaGetPendingBdCount instead of sleeping 1 ms between checks.
+     * exp17 showed the per-chunk wait_io drains were ~4.1 ms of the 4.832 ms wall: the
+     * output S2MM DMA drains in microseconds, but the old usleep(1000) made every
+     * not-yet-done wait block a FULL millisecond before re-checking. A tight poll returns
+     * the instant the channel drains. A large iteration cap bounds a genuine stall.
+     * (exp02 tried 1ms->100us but was masked by the then-dominant wait_event spin.) */
+    const uint32_t max_iters = 50000000U; /* ~seconds of busy-poll worst case */
     u8 numPendingBDs = 1;
     uint32_t iter = 0;
     while (numPendingBDs > 0) {
@@ -1650,17 +1651,11 @@ void __Runtime_wait_io(XAie_DevInst *dev, struct_ioevent io_event) {
         }
         if (numPendingBDs > 0) {
             if (++iter >= max_iters) {
-                printf("[aie_runtime] wait_io TIMEOUT after %u ms "
-                       "tile(%u,%u) ch=%u dir=%d pending=%u\n",
-                       (unsigned)(max_iters * poll_interval_us / 1000), (unsigned)tile.Col, (unsigned)tile.Row,
-                       (unsigned)channel, (int)dir, (unsigned)numPendingBDs);
+                printf("[aie_runtime] wait_io TIMEOUT tile(%u,%u) ch=%u dir=%d pending=%u\n", (unsigned)tile.Col,
+                       (unsigned)tile.Row, (unsigned)channel, (int)dir, (unsigned)numPendingBDs);
                 return;
-            } else if (AIE_DEBUG_LEVEL(g_runtime_debug_level) >= 1) {
-                printf("[aie_runtime] wait_io pending tile(%u,%u) ch=%u dir=%d pending=%u iter=%u\n",
-                       (unsigned)tile.Col, (unsigned)tile.Row, (unsigned)channel, (int)dir, (unsigned)numPendingBDs,
-                       (unsigned)iter);
             }
-            usleep(poll_interval_us);
+            /* busy-poll: no usleep — drain is sub-millisecond */
         }
     }
 #endif
