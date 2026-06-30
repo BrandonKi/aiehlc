@@ -1348,14 +1348,18 @@ struct_kernel_group __Runtime_load_kernel_group(XAie_DevInst *dev, XAie_LocType 
 /** Array-based variant: copies caller-provided tile array into the static buffer
  *  and loads the kernel ELF into each core tile. Supports up to MAX_KERNEL_TILES. */
 struct_kernel_group __Runtime_load_kernel_group_nt(XAie_DevInst *dev, XAie_LocType *tiles, int n) {
-    printf("[aie_runtime] load_kernel_group_nt n=%d\n", n);
+    /* [exp15] gate hot-path log: this runs inside the profiled launch window; an
+     * unconditional printf blocks on UART backpressure (~73us/char) and inflates the
+     * L1 metric. Silent at debug level 0 (profiling). */
+    AIE_RT_LOG(printf("[aie_runtime] load_kernel_group_nt n=%d\n", n));
     if (n > MAX_KERNEL_TILES) {
         printf("[aie_runtime] WARNING: tile count %d exceeds MAX_KERNEL_TILES %d, clamping\n", n, MAX_KERNEL_TILES);
         n = MAX_KERNEL_TILES;
     }
     for (int i = 0; i < n; i++) {
         s_kernel_tiles[i] = tiles[i];
-        printf("[aie_runtime]   tile[%d] = (%u,%u)\n", i, (unsigned)tiles[i].Col, (unsigned)tiles[i].Row);
+        /* [exp15] gated: 16x per-tile UART printf in the profiled window ruins the metric. */
+        AIE_RT_LOG(printf("[aie_runtime]   tile[%d] = (%u,%u)\n", i, (unsigned)tiles[i].Col, (unsigned)tiles[i].Row));
     }
     for (int i = 0; i < n; i++) {
         if (!__Runtime_is_aie_core_tile(s_kernel_tiles[i]))
@@ -1440,7 +1444,8 @@ struct_event __Runtime_launch_kernel_group(XAie_DevInst *dev, struct_kernel_grou
     evt.num_tiles = kg.num_tiles;
     evt.timeout_us = 100000;
 
-    printf("[aie_runtime] launch_kernel_group num_tiles=%u\n", (unsigned)kg.num_tiles);
+    /* [exp15] gated: profiled-window UART printf inflates the L1 metric (see exp14). */
+    AIE_RT_LOG(printf("[aie_runtime] launch_kernel_group num_tiles=%u\n", (unsigned)kg.num_tiles));
 
     /* Arm core-module perf counters AFTER kernel load (which does CoreReset and
      * would clear them) and just BEFORE CoreEnable, so they count from the
@@ -1483,10 +1488,13 @@ struct_event __Runtime_launch_kernel_group(XAie_DevInst *dev, struct_kernel_grou
 void __Runtime_wait_event(XAie_DevInst *dev, struct_event event) {
     uint8_t allDone = 0;
 
-    printf("[aie_runtime] wait_event num_tiles=%u tiles=(%u,%u)(%u,%u)(%u,%u)(%u,%u)\n", (unsigned)event.num_tiles,
-           (unsigned)event.tiles[0].Row, (unsigned)event.tiles[0].Col, (unsigned)event.tiles[1].Row,
-           (unsigned)event.tiles[1].Col, (unsigned)event.tiles[2].Row, (unsigned)event.tiles[2].Col,
-           (unsigned)event.tiles[3].Row, (unsigned)event.tiles[3].Col);
+    /* [exp15] gated: this printf is the LAST in the profiled window, so it blocks while
+     * the whole UART FIFO drains (~13.9ms in exp14) and dominated the L1 metric. Silent
+     * at debug level 0. */
+    AIE_RT_LOG(printf("[aie_runtime] wait_event num_tiles=%u tiles=(%u,%u)(%u,%u)(%u,%u)(%u,%u)\n",
+                      (unsigned)event.num_tiles, (unsigned)event.tiles[0].Row, (unsigned)event.tiles[0].Col,
+                      (unsigned)event.tiles[1].Row, (unsigned)event.tiles[1].Col, (unsigned)event.tiles[2].Row,
+                      (unsigned)event.tiles[2].Col, (unsigned)event.tiles[3].Row, (unsigned)event.tiles[3].Col));
 
 #ifdef __AIESIM__
     {
@@ -1543,11 +1551,12 @@ void __Runtime_wait_event(XAie_DevInst *dev, struct_event event) {
         }
         break; /* one representative tile only */
     }
+    /* [exp15] gated: profiled-window UART printf inflates the L1 metric (see exp14). */
     if (allDone)
-        printf("[aie_runtime] wait_event done (cores already at Done)\n");
+        AIE_RT_LOG(printf("[aie_runtime] wait_event done (cores already at Done)\n"));
     else
-        printf("[aie_runtime] wait_event: cores not yet at Done (expected - completion is gated"
-               " on output-DMA drain in wait_io); not spinning\n");
+        AIE_RT_LOG(printf("[aie_runtime] wait_event: cores not yet at Done (expected - completion is gated"
+                          " on output-DMA drain in wait_io); not spinning\n"));
     /* Verbose per-tile core-status snapshot (exp09 decoder) only at debug level >=1. */
     if (!allDone && AIE_DEBUG_LEVEL(g_runtime_debug_level) >= 1) {
         for (uint32_t i = 0; i < event.num_tiles; i++) {
