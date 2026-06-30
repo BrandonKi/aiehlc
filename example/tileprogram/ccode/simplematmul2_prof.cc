@@ -191,7 +191,15 @@ int main() {
     XTime_GetTime(&t1);
     device.synchronizecpu(C, M * N * sizeof(int8_t) * 4);
 
-    double wall_ms = 1000.0 * (double)(t1 - t0) / (double)COUNTS_PER_SECOND;
+    // [exp20] After removing the dead Core_Done poll the launch wall dropped below the old
+    // %.3f-ms print's resolution (read 0.000 ms). Relate raw XTime counts -> wall directly:
+    // wall_seconds = counts / COUNTS_PER_SECOND. We print the raw delta + the tick frequency
+    // so the true sub-ms wall (and the timer's own resolution = 1/freq) is always recoverable.
+    uint64_t raw_counts = (uint64_t)(t1 - t0);
+    uint64_t timer_hz = (uint64_t)COUNTS_PER_SECOND;
+    double wall_ms = 1000.0 * (double)raw_counts / (double)timer_hz;
+    double wall_us = 1.0e6 * (double)raw_counts / (double)timer_hz;
+    double tick_ns = 1.0e9 / (double)timer_hz;                           // one count in ns
     double total_flops = 2.0 * (double)M * (double)N * (double)K;        // MACs counted as 2 ops
     double gflops_wall = (wall_ms > 0.0) ? total_flops / (wall_ms * 1e-3) / 1e9 : 0.0;
 
@@ -221,7 +229,10 @@ int main() {
     double util_pct = array_peak_gops ? 100.0 * gflops_wall / array_peak_gops : 0.0;
 
     printf("\n--- Layer 1: PS wall-clock (end-to-end launch) ---\n");
-    printf("  total time:        %.3f ms\n", wall_ms);
+    printf("  raw counts:        %llu  (t1 - t0)\n", (unsigned long long)raw_counts);
+    printf("  timer freq:        %llu Hz  (COUNTS_PER_SECOND; 1 tick = %.3f ns)\n", (unsigned long long)timer_hz,
+           tick_ns);
+    printf("  total time:        %.6f ms  (%.3f us)\n", wall_ms, wall_us);
     printf("  wall GFLOPS:       %.3f GOPS  (2*M*N*K / total_ms)\n", gflops_wall);
     printf("  note: includes kernel load + DMA config + compute + drain (single launch)\n");
 
