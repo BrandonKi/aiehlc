@@ -184,12 +184,17 @@ int main() {
     __Runtime_sync_for_dev(device._dev, C, M * N * sizeof(int8_t) * 4);
     printf("[exp07] poisoned device C with 0x5A and flushed to DDR\n");
 
-    // ── Layer 1: time the whole launch (kernel load + DMA cfg + compute + drain).
+    // ── Layer 1: time the whole launch END-TO-END. [exp20 follow-up] t1 was previously read
+    // BEFORE synchronizecpu, so the output-DMA drain + CPU-visible sync sat OUTSIDE the window;
+    // once the dead Core_Done poll was removed the bracketed region collapsed to <1 timer tick
+    // (raw_counts=0). Read t1 AFTER synchronizecpu so the metric captures launch + compute +
+    // output drain + cache-invalidate — i.e. the real time until results are readable in host
+    // memory. (Timer = COUNTS_PER_SECOND Hz; see the raw-count print below.)
     XTime t0, t1;
     XTime_GetTime(&t0);
     matmul<<<mesh>>>(A, B, C, M, N, K);
-    XTime_GetTime(&t1);
     device.synchronizecpu(C, M * N * sizeof(int8_t) * 4);
+    XTime_GetTime(&t1);
 
     // [exp20] After removing the dead Core_Done poll the launch wall dropped below the old
     // %.3f-ms print's resolution (read 0.000 ms). Relate raw XTime counts -> wall directly:
