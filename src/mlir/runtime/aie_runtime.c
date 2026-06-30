@@ -1526,6 +1526,12 @@ void __Runtime_wait_event(XAie_DevInst *dev, struct_event event) {
      * non-blocking poll for observability and return immediately — matching aieml_perf.cc's
      * HW path (single CoreWaitForDone(...,0), then rely on the DMA drain) and AEG's
      * DmaWaitForDone-based completion. */
+    /* [exp12] exp11 phase timing showed the wait is ~20.5ms of the 24.756ms wall: each
+     * XAie_CoreWaitForDone(dev,tile,0) burns the driver's DEFAULT timeout (~1.28ms) because
+     * these delivery-bound cores never latch Done, and we did it for all 16 tiles. exp09
+     * proved all 16 tiles report identical status, so poll only ONE representative core
+     * tile — the 15 other polls are pure waste. The single poll's settle time still gives
+     * the output S2MM margin to drain before the post-launch synchronizecpu. */
     allDone = 1;
     for (uint32_t i = 0; i < event.num_tiles; i++) {
         if (!__Runtime_is_aie_core_tile(event.tiles[i])) {
@@ -1535,6 +1541,7 @@ void __Runtime_wait_event(XAie_DevInst *dev, struct_event event) {
         if (RC != XAIE_OK) {
             allDone = 0;
         }
+        break; /* one representative tile only */
     }
     if (allDone)
         printf("[aie_runtime] wait_event done (cores already at Done)\n");
