@@ -1534,31 +1534,22 @@ void __Runtime_wait_event(XAie_DevInst *dev, struct_event event) {
      * non-blocking poll for observability and return immediately — matching aieml_perf.cc's
      * HW path (single CoreWaitForDone(...,0), then rely on the DMA drain) and AEG's
      * DmaWaitForDone-based completion. */
-    /* [exp12] exp11 phase timing showed the wait is ~20.5ms of the 24.756ms wall: each
-     * XAie_CoreWaitForDone(dev,tile,0) burns the driver's DEFAULT timeout (~1.28ms) because
-     * these delivery-bound cores never latch Done, and we did it for all 16 tiles. exp09
-     * proved all 16 tiles report identical status, so poll only ONE representative core
-     * tile — the 15 other polls are pure waste. The single poll's settle time still gives
-     * the output S2MM margin to drain before the post-launch synchronizecpu. */
-    allDone = 1;
-    for (uint32_t i = 0; i < event.num_tiles; i++) {
-        if (!__Runtime_is_aie_core_tile(event.tiles[i])) {
-            continue;
-        }
-        AieRC RC = XAie_CoreWaitForDone(dev, event.tiles[i], 0);
-        if (RC != XAIE_OK) {
-            allDone = 0;
-        }
-        break; /* one representative tile only */
-    }
+    /* [exp20] Remove the Core_Done poll entirely. exp12 cut it to one tile, but a single
+     * XAie_CoreWaitForDone(dev,tile,0) still spins the driver DEFAULT timeout
+     * (TimeOut==0 -> XAIETILE_CORE_STATUS_DEF_WAIT_USECS = 500us, xaie_core.c:305-308,:42)
+     * via XAie_MaskPoll, because these delivery-bound cores never latch Done (exp09: status
+     * 0x201 = EN=1/LOCK_STALL_E=1/DONE=0 on all 16). Since wait_event runs INSIDE the L1-timed
+     * matmul<<<mesh>>> window, that ~0.5ms was pure waste against the 0.595ms BEST. The poll
+     * was observational only — it never gated the launch (its result merely picked a log line).
+     * Completion is enforced downstream by the output-DMA drain in __Runtime_wait_io (an S2MM
+     * channel cannot drain unless the producing tiles executed) and verified by the exp07
+     * poison gate. So: no poll. */
+    (void)allDone;
     /* [exp15] gated: profiled-window UART printf inflates the L1 metric (see exp14). */
-    if (allDone)
-        AIE_RT_LOG(printf("[aie_runtime] wait_event done (cores already at Done)\n"));
-    else
-        AIE_RT_LOG(printf("[aie_runtime] wait_event: cores not yet at Done (expected - completion is gated"
-                          " on output-DMA drain in wait_io); not spinning\n"));
+    AIE_RT_LOG(printf("[aie_runtime] wait_event: not polling Core_Done (completion gated on"
+                      " output-DMA drain in wait_io)\n"));
     /* Verbose per-tile core-status snapshot (exp09 decoder) only at debug level >=1. */
-    if (!allDone && AIE_DEBUG_LEVEL(g_runtime_debug_level) >= 1) {
+    if (AIE_DEBUG_LEVEL(g_runtime_debug_level) >= 1) {
         for (uint32_t i = 0; i < event.num_tiles; i++) {
             if (!__Runtime_is_aie_core_tile(event.tiles[i]))
                 continue;
