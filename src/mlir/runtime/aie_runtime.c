@@ -990,7 +990,7 @@ XAie_DmaDesc __Runtime_dma_bd_config(XAie_DevInst *dev, XAie_LocType tile, void 
 
     if (out_of_order_bd_id >= 0) {
         XAie_DmaSetOutofOrderBdId(&DmaInst, (uint8_t)out_of_order_bd_id);
-        printf("[aie_runtime] bd_config: set out_of_order_bd_id=%d\n", out_of_order_bd_id);
+        AIE_RT_LOG(printf("[aie_runtime] bd_config: set out_of_order_bd_id=%d\n", out_of_order_bd_id));
     }
 
     unsigned long long __en0 = __rt_pmccntr(); /* [exp48] */
@@ -1152,7 +1152,7 @@ XAie_DmaDesc __Runtime_dma_bd_config_multidim(XAie_DevInst *dev, XAie_LocType ti
 
     if (out_of_order_bd_id >= 0) {
         XAie_DmaSetOutofOrderBdId(&DmaInst, (uint8_t)out_of_order_bd_id);
-        printf("[aie_runtime] bd_config_multidim: set out_of_order_bd_id=%d\n", out_of_order_bd_id);
+        AIE_RT_LOG(printf("[aie_runtime] bd_config_multidim: set out_of_order_bd_id=%d\n", out_of_order_bd_id));
     }
 
     unsigned long long __en0 = __rt_pmccntr(); /* [exp48] */
@@ -1290,7 +1290,7 @@ XAie_DmaDesc __Runtime_dma_bd_config_multidim_ooo(XAie_DevInst *dev, XAie_LocTyp
 
     if (out_of_order_bd_id >= 0) {
         XAie_DmaSetOutofOrderBdId(&DmaInst, (uint8_t)out_of_order_bd_id);
-        printf("[aie_runtime] bd_config_multidim_ooo: set out_of_order_bd_id=%d\n", out_of_order_bd_id);
+        AIE_RT_LOG(printf("[aie_runtime] bd_config_multidim_ooo: set out_of_order_bd_id=%d\n", out_of_order_bd_id));
     }
 
     unsigned long long __en0 = __rt_pmccntr(); /* [exp48] */
