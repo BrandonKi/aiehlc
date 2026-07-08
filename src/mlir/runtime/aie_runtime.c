@@ -67,6 +67,26 @@ void __Runtime_wait_io_cycles(unsigned long long *cycles, unsigned int *calls) {
         *calls = g_wait_io_calls;
 }
 
+/* [exp45] setup-phase PMU accumulators (÷1 CPU cycles, same PMCCNTR as exp44).
+ * exp44 localised 98.3% of the launch to host-side setup BEFORE wait_io; split that
+ * setup into kernel-load / BD-config / core-enable / input-DMA-kickoff phases. */
+enum { PH_KLOAD = 0, PH_BDCFG = 1, PH_COREEN = 2, PH_STARTIO = 3, PH_N = 4 };
+static unsigned long long g_ph_cyc[PH_N] = {0, 0, 0, 0};
+static unsigned int g_ph_calls[PH_N] = {0, 0, 0, 0};
+static inline void __rt_ph_add(int ph, unsigned long long t0) {
+    g_ph_cyc[ph] += (__rt_pmccntr() - t0);
+    g_ph_calls[ph]++;
+}
+void __Runtime_phase_cycles(unsigned long long *cyc, unsigned int *calls) {
+    /* caller passes two arrays of length 4 [KLOAD, BDCFG, COREEN, STARTIO] */
+    for (int i = 0; i < PH_N; i++) {
+        if (cyc)
+            cyc[i] = g_ph_cyc[i];
+        if (calls)
+            calls[i] = g_ph_calls[i];
+    }
+}
+
 // Global routing instance (kept for legacy path)
 XAie_RoutingInstance *g_RoutingInst = NULL;
 
@@ -863,6 +883,7 @@ XAie_DmaDesc __Runtime_dma_bd_config(XAie_DevInst *dev, XAie_LocType tile, void 
                                      int32_t next_bd, int32_t enable_packet, int32_t packet_id, int32_t acquire_lock_id,
                                      int32_t acquire_lock_val, int32_t release_lock_id, int32_t release_lock_val,
                                      int32_t out_of_order_bd_id) {
+    unsigned long long __t0 = __rt_pmccntr(); /* [exp45] BD-config phase */
     XAie_DmaDesc DmaInst;
     XAie_DmaDescInit(dev, &DmaInst, tile);
     uint8_t tile_type = XAie_GetTileTypefromLoc(dev, tile);
@@ -963,6 +984,7 @@ XAie_DmaDesc __Runtime_dma_bd_config(XAie_DevInst *dev, XAie_LocType tile, void 
         }
     }
 
+    __rt_ph_add(PH_BDCFG, __t0); /* [exp45] */
     return DmaInst;
 }
 
@@ -980,7 +1002,7 @@ XAie_DmaDesc __Runtime_dma_bd_config_multidim(XAie_DevInst *dev, XAie_LocType ti
                                               int32_t dim_wrap0, int32_t dim_stride1, int32_t dim_wrap1,
                                               int32_t dim_stride2, int32_t dim_wrap2, int32_t dim_stride3,
                                               int32_t dim_wrap3) {
-
+    unsigned long long __t0 = __rt_pmccntr(); /* [exp45] BD-config phase */
     XAie_DmaDesc DmaInst;
     XAie_DmaDescInit(dev, &DmaInst, tile);
     uint8_t tile_type = XAie_GetTileTypefromLoc(dev, tile);
@@ -1074,6 +1096,7 @@ XAie_DmaDesc __Runtime_dma_bd_config_multidim(XAie_DevInst *dev, XAie_LocType ti
         e->next_bd = (int8_t)next_bd;
     }
 
+    __rt_ph_add(PH_BDCFG, __t0); /* [exp45] */
     return DmaInst;
 }
 
@@ -1096,7 +1119,7 @@ XAie_DmaDesc __Runtime_dma_bd_config_multidim_ooo(XAie_DevInst *dev, XAie_LocTyp
                                                   int32_t dim_wrap0, int32_t dim_stride1, int32_t dim_wrap1,
                                                   int32_t dim_stride2, int32_t dim_wrap2, int32_t iter_step_size,
                                                   int32_t iter_wrap) {
-
+    unsigned long long __t0 = __rt_pmccntr(); /* [exp45] BD-config phase */
     XAie_DmaDesc DmaInst;
     XAie_DmaDescInit(dev, &DmaInst, tile);
     uint8_t tile_type = XAie_GetTileTypefromLoc(dev, tile);
@@ -1191,6 +1214,7 @@ XAie_DmaDesc __Runtime_dma_bd_config_multidim_ooo(XAie_DevInst *dev, XAie_LocTyp
         e->next_bd = (int8_t)next_bd;
     }
 
+    __rt_ph_add(PH_BDCFG, __t0); /* [exp45] */
     return DmaInst;
 }
 
@@ -1273,6 +1297,7 @@ void __Runtime_dma_channel_enable_ooo(XAie_DevInst *dev, XAie_LocType tile, int3
  *         pass it to __Runtime_wait_io/__Runtime_wait to block until completion.
  */
 struct_ioevent __Runtime_startio(XAie_DevInst *dev, struct_io io, int32_t bd_id, int32_t repeat) {
+    unsigned long long __t0 = __rt_pmccntr(); /* [exp45] input/output DMA-kickoff phase */
     struct_ioevent evt;
     evt.io = io;
     evt.timeout_us = 10000;
@@ -1321,6 +1346,7 @@ struct_ioevent __Runtime_startio(XAie_DevInst *dev, struct_io io, int32_t bd_id,
                (unsigned)io.bd_id);
     }
 
+    __rt_ph_add(PH_STARTIO, __t0); /* [exp45] */
     return evt;
 }
 
@@ -1339,6 +1365,7 @@ struct_ioevent _Runtime_startio_ooo(XAie_DevInst *dev, struct_io io, int32_t bd_
  */
 struct_kernel_group __Runtime_load_kernel_group(XAie_DevInst *dev, XAie_LocType *tiles, int32_t num_tiles,
                                                 unsigned char **elf_buffers) {
+    unsigned long long __t0 = __rt_pmccntr(); /* [exp45] kernel-load phase (ELF -> program memory) */
     struct_kernel_group kg;
     kg.tiles = tiles;
     kg.num_tiles = num_tiles;
@@ -1363,12 +1390,14 @@ struct_kernel_group __Runtime_load_kernel_group(XAie_DevInst *dev, XAie_LocType 
         }
     }
 
+    __rt_ph_add(PH_KLOAD, __t0); /* [exp45] */
     return kg;
 }
 
 /** Array-based variant: copies caller-provided tile array into the static buffer
  *  and loads the kernel ELF into each core tile. Supports up to MAX_KERNEL_TILES. */
 struct_kernel_group __Runtime_load_kernel_group_nt(XAie_DevInst *dev, XAie_LocType *tiles, int n) {
+    unsigned long long __t0 = __rt_pmccntr(); /* [exp45] kernel-load phase (ELF -> program memory) */
     /* [exp15] gate hot-path log: this runs inside the profiled launch window; an
      * unconditional printf blocks on UART backpressure (~73us/char) and inflates the
      * L1 metric. Silent at debug level 0 (profiling). */
@@ -1404,6 +1433,7 @@ struct_kernel_group __Runtime_load_kernel_group_nt(XAie_DevInst *dev, XAie_LocTy
     kg.tiles = s_kernel_tiles;
     kg.num_tiles = n;
     kg.elf_buffers = NULL;
+    __rt_ph_add(PH_KLOAD, __t0); /* [exp45] */
     return kg;
 }
 
@@ -1437,6 +1467,7 @@ struct_kernel_group __Runtime_load_kernel_group_16t(XAie_DevInst *dev, XAie_LocT
  * Reference: aeg_runtime_api.cpp graph_api::run() lines 176-181
  */
 void __Runtime_core_run(XAie_DevInst *dev, XAie_LocType *tiles, uint32_t num_tiles) {
+    unsigned long long __t0 = __rt_pmccntr(); /* [exp45] core-enable phase */
     XAie_StartTransaction(dev, XAIE_TRANSACTION_ENABLE_AUTO_FLUSH);
     for (uint32_t i = 0; i < num_tiles; i++) {
         if (__Runtime_is_aie_core_tile(tiles[i])) {
@@ -1447,8 +1478,7 @@ void __Runtime_core_run(XAie_DevInst *dev, XAie_LocType *tiles, uint32_t num_til
         }
     }
     XAie_SubmitTransaction(dev, NULL);
-    // printf("[aie_runtime] core_run submitted %u tiles  WAIT HEAR FIXME\n", (unsigned)num_tiles);
-    // while(1);
+    __rt_ph_add(PH_COREEN, __t0); /* [exp45] */
 }
 
 /* Profiling probe tile state (armed at launch when CORE_PERF flag is set). */

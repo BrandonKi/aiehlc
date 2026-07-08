@@ -41,6 +41,8 @@ extern void __Runtime_perfcnt_read_mm2s_probe(uint32_t *ch0, uint32_t *ch1);
 extern int __Runtime_core_perf_probe_valid(void);
 /* [exp44] accumulated PS PMU cycles spent inside wait_io (output-DMA drain, gates completion) */
 extern void __Runtime_wait_io_cycles(unsigned long long *cycles, unsigned int *calls);
+/* [exp45] setup-phase PMU cycles [KLOAD, BDCFG, COREEN, STARTIO]; caller passes len-4 arrays */
+extern void __Runtime_phase_cycles(unsigned long long *cyc, unsigned int *calls);
 
 // Composition-based spatial spaces (per-port 2D iteration space), identical in
 // structure to simplematmul2.cc; only the tile/full sizes scale to 4x4 / 256^3.
@@ -315,6 +317,15 @@ int main() {
         __Runtime_wait_io_cycles(&wio_cyc, &wio_calls);
         double wio_pct = (pc_launch > 0) ? 100.0 * (double)wio_cyc / (double)pc_launch : 0.0;
         printf("  [phase] wait_io:   %llu cycles over %u calls  (=%.1f%% of launch)\n", wio_cyc, wio_calls, wio_pct);
+        /* [exp45] split the ~98% setup portion of the launch into runtime sub-phases. */
+        unsigned long long ph[4] = {0, 0, 0, 0};
+        unsigned int phc[4] = {0, 0, 0, 0};
+        __Runtime_phase_cycles(ph, phc);
+        const char *phn[4] = {"kload  ", "bdcfg  ", "coreen ", "startio"};
+        for (int i = 0; i < 4; i++) {
+            double p = (pc_launch > 0) ? 100.0 * (double)ph[i] / (double)pc_launch : 0.0;
+            printf("  [phase] %s: %llu cycles over %u calls  (=%.1f%% of launch)\n", phn[i], ph[i], phc[i], p);
+        }
     }
 
     printf("\n--- Layer 2: DMA stream (probe tile MM2S BD finished) ---\n");
