@@ -43,6 +43,9 @@ extern int __Runtime_core_perf_probe_valid(void);
 extern void __Runtime_wait_io_cycles(unsigned long long *cycles, unsigned int *calls);
 /* [exp45] setup-phase PMU cycles [KLOAD, BDCFG, COREEN, STARTIO]; caller passes len-4 arrays */
 extern void __Runtime_phase_cycles(unsigned long long *cyc, unsigned int *calls);
+/* [exp46] sub-split bdcfg: DmaDescInit vs DmaWriteBd cycles */
+extern void __Runtime_bd_subphase_cycles(unsigned long long *init_cyc, unsigned int *init_n,
+                                         unsigned long long *write_cyc, unsigned int *write_n);
 
 // Composition-based spatial spaces (per-port 2D iteration space), identical in
 // structure to simplematmul2.cc; only the tile/full sizes scale to 4x4 / 256^3.
@@ -326,6 +329,14 @@ int main() {
             double p = (pc_launch > 0) ? 100.0 * (double)ph[i] / (double)pc_launch : 0.0;
             printf("  [phase] %s: %llu cycles over %u calls  (=%.1f%% of launch)\n", phn[i], ph[i], phc[i], p);
         }
+        /* [exp46] which XAie call dominates bdcfg: DmaDescInit (HW config read) or DmaWriteBd? */
+        unsigned long long bi = 0ULL, bw = 0ULL;
+        unsigned int bin = 0U, bwn = 0U;
+        __Runtime_bd_subphase_cycles(&bi, &bin, &bw, &bwn);
+        double bip = (ph[1] > 0) ? 100.0 * (double)bi / (double)ph[1] : 0.0;
+        double bwp = (ph[1] > 0) ? 100.0 * (double)bw / (double)ph[1] : 0.0;
+        printf("  [bdcfg] descinit: %llu cyc over %u  (=%.1f%% of bdcfg)\n", bi, bin, bip);
+        printf("  [bdcfg] writebd:  %llu cyc over %u  (=%.1f%% of bdcfg)\n", bw, bwn, bwp);
     }
 
     printf("\n--- Layer 2: DMA stream (probe tile MM2S BD finished) ---\n");

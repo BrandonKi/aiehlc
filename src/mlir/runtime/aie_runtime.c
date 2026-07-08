@@ -87,6 +87,22 @@ void __Runtime_phase_cycles(unsigned long long *cyc, unsigned int *calls) {
     }
 }
 
+/* [exp46] sub-split the dominant bdcfg phase: which XAie call costs the ~740us/BD —
+ * XAie_DmaDescInit (reads tile config from HW) or XAie_DmaWriteBd (writes BD regs)? */
+static unsigned long long g_bd_init_cyc = 0ULL, g_bd_write_cyc = 0ULL;
+static unsigned int g_bd_init_n = 0U, g_bd_write_n = 0U;
+void __Runtime_bd_subphase_cycles(unsigned long long *init_cyc, unsigned int *init_n, unsigned long long *write_cyc,
+                                  unsigned int *write_n) {
+    if (init_cyc)
+        *init_cyc = g_bd_init_cyc;
+    if (init_n)
+        *init_n = g_bd_init_n;
+    if (write_cyc)
+        *write_cyc = g_bd_write_cyc;
+    if (write_n)
+        *write_n = g_bd_write_n;
+}
+
 // Global routing instance (kept for legacy path)
 XAie_RoutingInstance *g_RoutingInst = NULL;
 
@@ -885,7 +901,10 @@ XAie_DmaDesc __Runtime_dma_bd_config(XAie_DevInst *dev, XAie_LocType tile, void 
                                      int32_t out_of_order_bd_id) {
     unsigned long long __t0 = __rt_pmccntr(); /* [exp45] BD-config phase */
     XAie_DmaDesc DmaInst;
+    unsigned long long __bi0 = __rt_pmccntr(); /* [exp46] */
     XAie_DmaDescInit(dev, &DmaInst, tile);
+    g_bd_init_cyc += (__rt_pmccntr() - __bi0); /* [exp46] */
+    g_bd_init_n++;
     uint8_t tile_type = XAie_GetTileTypefromLoc(dev, tile);
     /* Both shim and core tiles: buffer is a byte address.
      * Shim tiles: buffer IS the DDR physical address.
@@ -929,7 +948,10 @@ XAie_DmaDesc __Runtime_dma_bd_config(XAie_DevInst *dev, XAie_LocType tile, void 
     }
 
     XAie_DmaEnableBd(&DmaInst);
+    unsigned long long __bw0 = __rt_pmccntr(); /* [exp46] */
     AieRC bd_rc = XAie_DmaWriteBd(dev, &DmaInst, tile, (uint8_t)bd_id);
+    g_bd_write_cyc += (__rt_pmccntr() - __bw0); /* [exp46] */
+    g_bd_write_n++;
     AIE_RT_LOG(printf("[aie_runtime] bd_config tile(%u,%u) bd=%d addr=0x%lx len=%d next=%d lock_acq=%d/%d lock_rel=%d/%d "
                       "pkt=%d/%d ooo_bd=%d rc=%d\n",
                       (unsigned)tile.Col, (unsigned)tile.Row, bd_id, (unsigned long)dma_addr, len, next_bd,
@@ -1004,7 +1026,10 @@ XAie_DmaDesc __Runtime_dma_bd_config_multidim(XAie_DevInst *dev, XAie_LocType ti
                                               int32_t dim_wrap3) {
     unsigned long long __t0 = __rt_pmccntr(); /* [exp45] BD-config phase */
     XAie_DmaDesc DmaInst;
+    unsigned long long __bi0 = __rt_pmccntr(); /* [exp46] */
     XAie_DmaDescInit(dev, &DmaInst, tile);
+    g_bd_init_cyc += (__rt_pmccntr() - __bi0); /* [exp46] */
+    g_bd_init_n++;
     uint8_t tile_type = XAie_GetTileTypefromLoc(dev, tile);
     uint64_t dma_addr = (uint64_t)(uintptr_t)buffer;
     if (__bd_is_shim(tile_type)) {
@@ -1070,7 +1095,10 @@ XAie_DmaDesc __Runtime_dma_bd_config_multidim(XAie_DevInst *dev, XAie_LocType ti
     }
 
     XAie_DmaEnableBd(&DmaInst);
+    unsigned long long __bw0 = __rt_pmccntr(); /* [exp46] */
     AieRC bd_rc = XAie_DmaWriteBd(dev, &DmaInst, tile, (uint8_t)bd_id);
+    g_bd_write_cyc += (__rt_pmccntr() - __bw0); /* [exp46] */
+    g_bd_write_n++;
     AIE_RT_LOG(printf("[aie_runtime] bd_config_multidim tile(%u,%u) bd=%d addr=0x%lx len=%d next=%d "
                       "lock_acq=%d/%d lock_rel=%d/%d pkt=%d/%d ooo_bd=%d num_dims=%d rc=%d\n",
                       (unsigned)tile.Col, (unsigned)tile.Row, bd_id, (unsigned long)dma_addr, len, next_bd,
@@ -1121,7 +1149,10 @@ XAie_DmaDesc __Runtime_dma_bd_config_multidim_ooo(XAie_DevInst *dev, XAie_LocTyp
                                                   int32_t iter_wrap) {
     unsigned long long __t0 = __rt_pmccntr(); /* [exp45] BD-config phase */
     XAie_DmaDesc DmaInst;
+    unsigned long long __bi0 = __rt_pmccntr(); /* [exp46] */
     XAie_DmaDescInit(dev, &DmaInst, tile);
+    g_bd_init_cyc += (__rt_pmccntr() - __bi0); /* [exp46] */
+    g_bd_init_n++;
     uint8_t tile_type = XAie_GetTileTypefromLoc(dev, tile);
     uint64_t dma_addr = (uint64_t)(uintptr_t)buffer;
     if (__bd_is_shim(tile_type)) {
@@ -1187,7 +1218,10 @@ XAie_DmaDesc __Runtime_dma_bd_config_multidim_ooo(XAie_DevInst *dev, XAie_LocTyp
     }
 
     XAie_DmaEnableBd(&DmaInst);
+    unsigned long long __bw0 = __rt_pmccntr(); /* [exp46] */
     AieRC bd_rc = XAie_DmaWriteBd(dev, &DmaInst, tile, (uint8_t)bd_id);
+    g_bd_write_cyc += (__rt_pmccntr() - __bw0); /* [exp46] */
+    g_bd_write_n++;
     AIE_RT_LOG(printf("[aie_runtime] bd_config_multidim_ooo tile(%u,%u) bd=%d addr=0x%lx len=%d next=%d "
                       "lock_acq=%d/%d lock_rel=%d/%d pkt=%d/%d ooo_bd=%d num_dims=%d "
                       "iter_step=%d iter_wrap=%d rc=%d\n",
