@@ -590,10 +590,11 @@ void __Runtime_sync_for_dev(XAie_DevInst *dev, void *ptr, size_t size) {
 void __Runtime_sync_for_cpu(XAie_DevInst *dev, void *ptr, size_t size) {
     if (dev) {
         AieRC rc = XAie_MemSyncForCPUVAddr(dev, ptr, (uint64_t)size);
-        printf("[aie_runtime] sync_for_cpu(%p, %zu) via VAddr rc=%d\n", ptr, size, rc);
+        AIE_RT_LOG(
+            printf("[aie_runtime] sync_for_cpu(%p, %zu) via VAddr rc=%d\n", ptr, size, rc)); /* [exp53] gate UART */
     } else {
         Xil_DCacheInvalidateRange((UINTPTR)ptr, size);
-        printf("[aie_runtime] sync_for_cpu(%p, %zu) via DCacheInvalidateRange\n", ptr, size);
+        AIE_RT_LOG(printf("[aie_runtime] sync_for_cpu(%p, %zu) via DCacheInvalidateRange\n", ptr, size)); /* [exp53] */
     }
 }
 
