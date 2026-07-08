@@ -46,6 +46,27 @@ XAie_DevInst *g_DevInst = NULL;
 
 XAie_DevInst *getOrCreateDeviceInstance(void) { return g_DevInst; }
 
+/* [exp44] PS PMU cycle accumulator for wait_io (the output-DMA drain that gates async-launch
+ * completion). Same ÷1 CPU-cycle unit as prof.cc's PMCCNTR wall (prof.cc enables PMCR.D=0
+ * before the launch, so this reads the identical counter). aarch64 host only; no-op under sim. */
+#if defined(__aarch64__) && !defined(__AIESIM__)
+static inline unsigned long long __rt_pmccntr(void) {
+    unsigned long long v;
+    __asm__ volatile("mrs %0, pmccntr_el0" : "=r"(v));
+    return v;
+}
+#else
+static inline unsigned long long __rt_pmccntr(void) { return 0ULL; }
+#endif
+static unsigned long long g_wait_io_cycles = 0ULL;
+static unsigned int g_wait_io_calls = 0U;
+void __Runtime_wait_io_cycles(unsigned long long *cycles, unsigned int *calls) {
+    if (cycles)
+        *cycles = g_wait_io_cycles;
+    if (calls)
+        *calls = g_wait_io_calls;
+}
+
 // Global routing instance (kept for legacy path)
 XAie_RoutingInstance *g_RoutingInst = NULL;
 
@@ -1594,6 +1615,7 @@ void __Runtime_wait_event(XAie_DevInst *dev, struct_event event) {
  * Reference: aeg_runtime_api.cpp waitDMAChannelTaskQueue / waitDMAChannelDone
  */
 void __Runtime_wait_io(XAie_DevInst *dev, struct_ioevent io_event) {
+    unsigned long long __wio_t0 = __rt_pmccntr(); /* [exp44] bracket the drain in ÷1 CPU cycles */
     XAie_LocType tile = io_event.io.tile_loc;
     uint8_t channel = io_event.io.channel_id;
     XAie_DmaDirection dir = io_event.io.direction;
@@ -1674,6 +1696,9 @@ void __Runtime_wait_io(XAie_DevInst *dev, struct_ioevent io_event) {
         }
     }
 #endif
+    /* [exp44] normal-path drain cost (error/timeout early-returns are failure paths, excluded) */
+    g_wait_io_cycles += (__rt_pmccntr() - __wio_t0);
+    g_wait_io_calls++;
 }
 
 /**

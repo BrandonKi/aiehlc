@@ -39,6 +39,8 @@ extern void __Runtime_core_perf_read_probe(uint32_t *active, uint32_t *vec_instr
                                            uint32_t *lock_stall);
 extern void __Runtime_perfcnt_read_mm2s_probe(uint32_t *ch0, uint32_t *ch1);
 extern int __Runtime_core_perf_probe_valid(void);
+/* [exp44] accumulated PS PMU cycles spent inside wait_io (output-DMA drain, gates completion) */
+extern void __Runtime_wait_io_cycles(unsigned long long *cycles, unsigned int *calls);
 
 // Composition-based spatial spaces (per-port 2D iteration space), identical in
 // structure to simplematmul2.cc; only the tile/full sizes scale to 4x4 / 256^3.
@@ -307,6 +309,12 @@ int main() {
         unsigned long long pc_launch = (pc_mid >= pc0) ? (pc_mid - pc0) : 0ULL;
         unsigned long long pc_poll = (pc1 >= pc_mid) ? (pc1 - pc_mid) : 0ULL;
         printf("  [pmccntr] launch:  %llu cycles  poll: %llu cycles\n", pc_launch, pc_poll);
+        /* [exp44] how much of the launch is the wait_io output-DMA drain (array-gated)? */
+        unsigned long long wio_cyc = 0ULL;
+        unsigned int wio_calls = 0U;
+        __Runtime_wait_io_cycles(&wio_cyc, &wio_calls);
+        double wio_pct = (pc_launch > 0) ? 100.0 * (double)wio_cyc / (double)pc_launch : 0.0;
+        printf("  [phase] wait_io:   %llu cycles over %u calls  (=%.1f%% of launch)\n", wio_cyc, wio_calls, wio_pct);
     }
 
     printf("\n--- Layer 2: DMA stream (probe tile MM2S BD finished) ---\n");
