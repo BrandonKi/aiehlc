@@ -209,6 +209,15 @@ int main() {
     // end-to-end "launch -> results readable" wall, independent of DMA-status quirks.
     const uint64_t MAX_POLL = 500000000ULL; /* safety bound on a genuine hang */
     XTime t0, t1;
+    /* [exp40] Independent wall counter (CNTVCT_EL0) bracketing the SAME window, in case
+     * XTime's xiltimer source is frozen this boot (raw counts read 0). Read-only. */
+    unsigned long long cv0 = __ps_cntvct();
+    /* [exp41] PMU cycle counter (PMCCNTR_EL0) — CPU-core-clock, independent of the frozen
+     * system generic timer that stalls both XTime and CNTVCT. One-time enable, then bracket
+     * the SAME window. If [pmccntr] raw advances while XTime+CNTVCT read 0, the host-side
+     * wall is measurable again. (Enable is a system-register write; safe at EL1+.) */
+    __ps_pmccntr_enable();
+    unsigned long long pc0 = __ps_pmccntr();
     XTime_GetTime(&t0);
     matmul<<<mesh>>>(A, B, C, M, N, K);
     uint64_t polls = 0;
@@ -225,6 +234,8 @@ int main() {
         polls++;
     } while (!complete && polls < MAX_POLL);
     XTime_GetTime(&t1);
+    unsigned long long cv1 = __ps_cntvct();  /* [exp40] */
+    unsigned long long pc1 = __ps_pmccntr(); /* [exp41] */
     if (!complete)
         printf("  WARNING: completion barrier hit MAX_POLL=%llu without full result\n", (unsigned long long)MAX_POLL);
 
@@ -273,6 +284,21 @@ int main() {
     printf("  completion polls:  %llu  (DDR read-back until full result present)\n", (unsigned long long)polls);
     printf("  wall GFLOPS:       %.3f GOPS  (2*M*N*K / total_ms)\n", gflops_wall);
     printf("  note: launch -> full result in DDR (async launch + poll-to-result barrier)\n");
+    {
+        /* [exp40] Independent CNTVCT_EL0 wall — bypasses a frozen xiltimer source. */
+        unsigned long long cv_raw = (cv1 >= cv0) ? (cv1 - cv0) : 0ULL;
+        unsigned long long cv_hz = __ps_cntfrq();
+        double cv_ms = cv_hz ? 1000.0 * (double)cv_raw / (double)cv_hz : 0.0;
+        printf("  [cntvct] raw:      %llu counts  freq: %llu Hz  wall: %.6f ms\n", cv_raw, cv_hz, cv_ms);
+    }
+    {
+        /* [exp41] PMU cycle-counter wall — CPU-core-clock, survives a frozen generic timer.
+         * Primary signal is raw cycles (nonzero => the PS-side wall is finally measurable).
+         * ms = raw / CPU_Hz done offline (CPU_Hz not known at compile time); raw is enough
+         * to decide alive-vs-frozen and to compare host-side levers relatively. */
+        unsigned long long pc_raw = (pc1 >= pc0) ? (pc1 - pc0) : 0ULL;
+        printf("  [pmccntr] raw:     %llu cycles  (nonzero => PS wall alive; ms = raw / CPU_Hz offline)\n", pc_raw);
+    }
 
     printf("\n--- Layer 2: DMA stream (probe tile MM2S BD finished) ---\n");
     printf("  MM2S ch0 BDs done: %u\n", mm0);
