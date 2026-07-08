@@ -52,6 +52,9 @@ extern void __Runtime_bd_midtail_cycles(unsigned long long *mid_cyc, unsigned in
 /* [exp48] split the mid region into GetTileTypefromLoc / DmaSetAddr / DmaEnableBd */
 extern void __Runtime_bd_mid3_cycles(unsigned long long *gtt_cyc, unsigned int *gtt_n, unsigned long long *saddr_cyc,
                                      unsigned int *saddr_n, unsigned long long *en_cyc, unsigned int *en_n);
+/* [exp51] split the dominant kload phase: XAie_LoadElfMem (elf) vs Core Disable/Reset/Unreset (rst) */
+extern void __Runtime_kload_split_cycles(unsigned long long *elf_cyc, unsigned int *elf_n, unsigned long long *rst_cyc,
+                                         unsigned int *rst_n);
 
 // Composition-based spatial spaces (per-port 2D iteration space), identical in
 // structure to simplematmul2.cc; only the tile/full sizes scale to 4x4 / 256^3.
@@ -367,6 +370,14 @@ int main() {
         printf("  [mid] setaddr:     %llu cyc over %u  (=%.1f%% of mid)\n", bsa, bsan, sap);
         printf("  [mid] enablebd:    %llu cyc over %u  (=%.1f%% of mid)\n", ben, benn, enp);
         printf("  [mid] residual (setlock/nextbd/pkt/ooo+printf): %llu cyc  (=%.1f%% of mid)\n", bres, resp);
+        /* [exp51] split the dominant kload phase: XAie_LoadElfMem vs Core Disable/Reset/Unreset */
+        unsigned long long kelf = 0ULL, krst = 0ULL;
+        unsigned int kelfn = 0U, krstn = 0U;
+        __Runtime_kload_split_cycles(&kelf, &kelfn, &krst, &krstn);
+        double kep = (ph[0] > 0) ? 100.0 * (double)kelf / (double)ph[0] : 0.0;
+        double krp = (ph[0] > 0) ? 100.0 * (double)krst / (double)ph[0] : 0.0;
+        printf("  [kload] loadelf:  %llu cyc over %u  (=%.1f%% of kload)\n", kelf, kelfn, kep);
+        printf("  [kload] corerst:  %llu cyc over %u  (=%.1f%% of kload)\n", krst, krstn, krp);
     }
 
     printf("\n--- Layer 2: DMA stream (probe tile MM2S BD finished) ---\n");

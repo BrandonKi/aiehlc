@@ -142,6 +142,25 @@ void __Runtime_bd_mid3_cycles(unsigned long long *gtt_cyc, unsigned int *gtt_n, 
         *en_n = g_bd_en_n;
 }
 
+/* [exp51] kload is now the dominant launch phase (71.8%, 15.67M cyc over 1 nt call). All its
+ * printfs are already AIE_RT_LOG-gated, so it is genuine HW work: 16x (CoreDisable + CoreReset +
+ * XAie_LoadElfMem + CoreUnreset). Split the loop into the ELF write (elf) vs the core state
+ * changes (rst = Disable+Reset+Unreset) to confirm XAie_LoadElfMem is the lever before attempting
+ * a transaction-batching / broadcast rewrite. */
+static unsigned long long g_kl_elf_cyc = 0ULL, g_kl_rst_cyc = 0ULL;
+static unsigned int g_kl_elf_n = 0U, g_kl_rst_n = 0U;
+void __Runtime_kload_split_cycles(unsigned long long *elf_cyc, unsigned int *elf_n, unsigned long long *rst_cyc,
+                                  unsigned int *rst_n) {
+    if (elf_cyc)
+        *elf_cyc = g_kl_elf_cyc;
+    if (elf_n)
+        *elf_n = g_kl_elf_n;
+    if (rst_cyc)
+        *rst_cyc = g_kl_rst_cyc;
+    if (rst_n)
+        *rst_n = g_kl_rst_n;
+}
+
 // Global routing instance (kept for legacy path)
 XAie_RoutingInstance *g_RoutingInst = NULL;
 
@@ -1541,10 +1560,18 @@ struct_kernel_group __Runtime_load_kernel_group_nt(XAie_DevInst *dev, XAie_LocTy
         //   XAie_LoadElfMem(dev, s_kernel_tiles[i], s_active_kernel_elf);
         //   XAie_CoreUnreset(dev, s_kernel_tiles[i]);
         // #else
+        unsigned long long __kr0 = __rt_pmccntr(); /* [exp51] core state changes */
         XAie_CoreDisable(dev, s_kernel_tiles[i]);
         XAie_CoreReset(dev, s_kernel_tiles[i]);
+        g_kl_rst_cyc += (__rt_pmccntr() - __kr0);
+        g_kl_rst_n++;
+        unsigned long long __ke0 = __rt_pmccntr(); /* [exp51] ELF write to program memory */
         XAie_LoadElfMem(dev, s_kernel_tiles[i], s_active_kernel_elf);
+        g_kl_elf_cyc += (__rt_pmccntr() - __ke0);
+        g_kl_elf_n++;
+        unsigned long long __ku0 = __rt_pmccntr(); /* [exp51] core unreset */
         XAie_CoreUnreset(dev, s_kernel_tiles[i]);
+        g_kl_rst_cyc += (__rt_pmccntr() - __ku0);
         // #endif
     }
     struct_kernel_group kg;
