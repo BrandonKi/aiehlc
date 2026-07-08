@@ -46,6 +46,9 @@ extern void __Runtime_phase_cycles(unsigned long long *cyc, unsigned int *calls)
 /* [exp46] sub-split bdcfg: DmaDescInit vs DmaWriteBd cycles */
 extern void __Runtime_bd_subphase_cycles(unsigned long long *init_cyc, unsigned int *init_n,
                                          unsigned long long *write_cyc, unsigned int *write_n);
+/* [exp47] localize the rest of bdcfg: mid (post-descinit->pre-writebd) + tail (post-writebd->return) */
+extern void __Runtime_bd_midtail_cycles(unsigned long long *mid_cyc, unsigned int *mid_n, unsigned long long *tail_cyc,
+                                        unsigned int *tail_n);
 
 // Composition-based spatial spaces (per-port 2D iteration space), identical in
 // structure to simplematmul2.cc; only the tile/full sizes scale to 4x4 / 256^3.
@@ -337,6 +340,17 @@ int main() {
         double bwp = (ph[1] > 0) ? 100.0 * (double)bw / (double)ph[1] : 0.0;
         printf("  [bdcfg] descinit: %llu cyc over %u  (=%.1f%% of bdcfg)\n", bi, bin, bip);
         printf("  [bdcfg] writebd:  %llu cyc over %u  (=%.1f%% of bdcfg)\n", bw, bwn, bwp);
+        /* [exp47] localize the ~99.85% that is neither descinit nor writebd */
+        unsigned long long bmid = 0ULL, btail = 0ULL;
+        unsigned int bmidn = 0U, btailn = 0U;
+        __Runtime_bd_midtail_cycles(&bmid, &bmidn, &btail, &btailn);
+        double bmp = (ph[1] > 0) ? 100.0 * (double)bmid / (double)ph[1] : 0.0;
+        double btp = (ph[1] > 0) ? 100.0 * (double)btail / (double)ph[1] : 0.0;
+        unsigned long long bacct = bi + bw + bmid + btail;
+        double bap = (ph[1] > 0) ? 100.0 * (double)bacct / (double)ph[1] : 0.0;
+        printf("  [bdcfg] mid:      %llu cyc over %u  (=%.1f%% of bdcfg)\n", bmid, bmidn, bmp);
+        printf("  [bdcfg] tail:     %llu cyc over %u  (=%.1f%% of bdcfg)\n", btail, btailn, btp);
+        printf("  [bdcfg] accounted (init+write+mid+tail): %llu cyc  (=%.1f%% of bdcfg)\n", bacct, bap);
     }
 
     printf("\n--- Layer 2: DMA stream (probe tile MM2S BD finished) ---\n");
