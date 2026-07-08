@@ -220,6 +220,7 @@ int main() {
     unsigned long long pc0 = __ps_pmccntr();
     XTime_GetTime(&t0);
     matmul<<<mesh>>>(A, B, C, M, N, K);
+    unsigned long long pc_mid = __ps_pmccntr(); /* [exp43] boundary: launch-call vs poll-loop */
     uint64_t polls = 0;
     int complete = 0;
     do {
@@ -301,6 +302,11 @@ int main() {
         unsigned int d_bit = (unsigned int)((pmcr >> 3) & 1ULL);
         printf("  [pmccntr] raw:     %llu cycles  pmcr:0x%llx (D=%u, %s)\n", pc_raw, pmcr, d_bit,
                d_bit ? "counts=CPUcyc/64" : "counts=CPUcyc");
+        /* [exp43] split: launch = matmul<<<>>> call (input-DMA+load+config+enable+wait_io drain);
+         * poll = DDR poll-to-result loop. */
+        unsigned long long pc_launch = (pc_mid >= pc0) ? (pc_mid - pc0) : 0ULL;
+        unsigned long long pc_poll = (pc1 >= pc_mid) ? (pc1 - pc_mid) : 0ULL;
+        printf("  [pmccntr] launch:  %llu cycles  poll: %llu cycles\n", pc_launch, pc_poll);
     }
 
     printf("\n--- Layer 2: DMA stream (probe tile MM2S BD finished) ---\n");
