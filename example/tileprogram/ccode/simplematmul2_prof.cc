@@ -83,23 +83,36 @@ constexpr aie::GemmSpace LtoR_Merge = {
     .d2 = {.tile_size = TILE_N, .stride = TILE_N, .fullsize = N}};
 
 // ─── KERNEL: per-tile int8 GEMM (cache-A / stream-B), no debug logging ───────
+/* [exp56] Vectorized matmul: SIMD dot-product inner loop using aie::mac.
+ * Replaces scalar triple-loop (0% vec util) with 16-wide int8 SIMD.
+ *
+ * Layout: A[tile_rows][eff_k] row-major; B[cols_per_round][eff_k] col-major
+ * (B col j starts at B_ptr + j*eff_k, consistent with scalar kernel).
+ *
+ * Vectorization: for each output C[i][j], compute
+ *   sum = reduce_add(mac(A[i][kk*16..(kk+1)*16], B[j][kk*16..(kk+1)*16]))
+ * over eff_k/16 = 4 SIMD steps. Each step is a 16-wide int8 mul-acc.
+ * The 256-element tile uses 256 × 4 = 1024 16-wide MACs vs 256×64=16384 scalar muls.
+ */
 __global__ void matmul(aie::port<input_window_int8 *, RowBA> win_a, aie::port<input_window_int8 *, ColBB> win_b,
                        aie::port<output_window_int8 *, LtoR_Merge> win_c) {
-    const int tile_rows = aie::get_tile_rows();
-    const int tile_cols = aie::get_tile_cols();
-    const int eff_k = aie::get_effective_k();
-    const int k_rounds = aie::get_k_rounds();
+    const int tile_rows = aie::get_tile_rows(); // 16
+    const int tile_cols = aie::get_tile_cols(); // 16
+    const int eff_k = aie::get_effective_k();   // 64
+    const int k_rounds = aie::get_k_rounds();   // 4
     const int num_a_rounds = aie::get_num_rounds(win_a);
     const int num_b_rounds = aie::get_num_rounds(win_b);
     const int num_c_rounds = aie::get_num_rounds(win_c);
-    const int buf_sz_a = aie::get_buffer_size(win_a);
-    const int buf_sz_c = aie::get_buffer_size(win_c);
+    const int buf_sz_a = aie::get_buffer_size(win_a); // 1024
+    const int buf_sz_c = aie::get_buffer_size(win_c); // 256
     const int m_rounds = aie::get_spatial_multiple_rounds(win_a);
     const int n_rounds = aie::get_spatial_multiple_rounds(win_b);
-    const int cols_per_round = aie::get_buffer_size(win_b) / eff_k;
+    const int cols_per_round = aie::get_buffer_size(win_b) / eff_k; // 16
 
-    int8_t all_A[tile_rows * eff_k];
-    int16_t accum[tile_rows * tile_cols];
+    // [exp56] A tile buffer — aligned for 16-wide int8 vector loads
+    alignas(aie::vector_decl_align) int8_t all_A[tile_rows * eff_k]; // 16×64 = 1024 bytes
+    // [exp56] int32 accumulator per output element (avoids int16 overflow from k_rounds)
+    int32_t accum[tile_rows * tile_cols]; // 16×16 int32
     int8_t local_out[tile_rows * tile_cols];
 
     for (int mr = 0; mr < m_rounds * n_rounds; mr++) {
@@ -107,28 +120,42 @@ __global__ void matmul(aie::port<input_window_int8 *, RowBA> win_a, aie::port<in
             accum[i] = 0;
 
         for (int kr = 0; kr < k_rounds; kr++) {
+            // Load A tile (tile_rows × eff_k) into all_A
             for (int ra = 0; ra < num_a_rounds; ra++) {
                 int8_t *A_ptr = (int8_t *)acquire_input_window(win_a);
                 for (int i = 0; i < buf_sz_a; i++)
                     all_A[ra * buf_sz_a + i] = A_ptr[i];
                 release_input_window(win_a);
             }
+
             for (int rb = 0; rb < num_b_rounds; rb++) {
                 int8_t *B_ptr = (int8_t *)acquire_input_window(win_b);
+
+                // [exp56] Vectorized: for each (row i, col j), dot-product over K
+                // using 16-wide int8 SIMD (eff_k=64 → 4 SIMD steps per dot product)
                 for (int i = 0; i < tile_rows; i++) {
                     for (int j = 0; j < cols_per_round; j++) {
-                        int16_t sum = 0;
-                        for (int k = 0; k < eff_k; k++)
-                            sum += (int16_t)all_A[i * eff_k + k] * (int16_t)B_ptr[j * eff_k + k];
-                        accum[i * tile_cols + rb * cols_per_round + j] += sum;
+                        // dot(A[i][*], B[j][*]) vectorized over K in steps of 16
+                        aie::accum<acc32, 16> vacc = aie::zeros<acc32, 16>();
+                        const int8_t *a_row = all_A + i * eff_k;
+                        const int8_t *b_col = B_ptr + j * eff_k;
+                        for (int kk = 0; kk < eff_k / 16; kk++) {
+                            aie::vector<int8, 16> av = aie::load_v<16>(a_row + kk * 16);
+                            aie::vector<int8, 16> bv = aie::load_v<16>(b_col + kk * 16);
+                            vacc = aie::mac(vacc, av, bv);
+                        }
+                        // Horizontal sum of 16 partial products → scalar int32
+                        int32_t dot = aie::reduce_add(vacc.template to_vector<int32>());
+                        accum[i * tile_cols + rb * cols_per_round + j] += dot;
                     }
                 }
                 release_input_window(win_b);
             }
         }
 
+        // Saturate-clamp int32 → int8 and write output
         for (int i = 0; i < tile_rows * tile_cols; i++) {
-            int16_t val = accum[i];
+            int32_t val = accum[i];
             if (val > 127)
                 val = 127;
             else if (val < -128)
