@@ -408,6 +408,25 @@ int main() {
         double krp = (ph[0] > 0) ? 100.0 * (double)krst / (double)ph[0] : 0.0;
         printf("  [kload] loadelf:  %llu cyc over %u  (=%.1f%% of kload)\n", kelf, kelfn, kep);
         printf("  [kload] corerst:  %llu cyc over %u  (=%.1f%% of kload)\n", krst, krstn, krp);
+        /* [exp55] unaccounted launch cycles = lock_init + host.cc glue not in any phase */
+        unsigned long long ph_total = ph[0] + ph[1] + ph[2] + ph[3] + wio_cyc;
+        unsigned long long unacct = (pc_launch > ph_total) ? (pc_launch - ph_total) : 0ULL;
+        double unacct_p = (pc_launch > 0) ? 100.0 * (double)unacct / (double)pc_launch : 0.0;
+        printf("  [launch] unaccounted (lock_init+glue): %llu cyc  (=%.1f%% of launch)\n", unacct, unacct_p);
+        /* [exp55] full launch budget table */
+        printf("  [launch] BUDGET SUMMARY (all in cycles):\n");
+        printf("    kload    %10llu  (%.1f%%)\n", ph[0],
+               (pc_launch > 0) ? 100.0 * (double)ph[0] / (double)pc_launch : 0.0);
+        printf("    bdcfg    %10llu  (%.1f%%)\n", ph[1],
+               (pc_launch > 0) ? 100.0 * (double)ph[1] / (double)pc_launch : 0.0);
+        printf("    lockinit %10llu  (%.1f%%) [unaccounted proxy]\n", unacct, unacct_p);
+        printf("    startio  %10llu  (%.1f%%)\n", ph[3],
+               (pc_launch > 0) ? 100.0 * (double)ph[3] / (double)pc_launch : 0.0);
+        printf("    coreen   %10llu  (%.1f%%)\n", ph[2],
+               (pc_launch > 0) ? 100.0 * (double)ph[2] / (double)pc_launch : 0.0);
+        printf("    wait_io  %10llu  (%.1f%%)\n", wio_cyc,
+               (pc_launch > 0) ? 100.0 * (double)wio_cyc / (double)pc_launch : 0.0);
+        printf("    TOTAL    %10llu  (launch=%llu)\n", ph_total + unacct, pc_launch);
     }
 
     printf("\n--- Layer 2: DMA stream (probe tile MM2S BD finished) ---\n");
@@ -434,11 +453,20 @@ int main() {
     printf("  measured (wall):   %.3f GOPS  ->  %.4f %% of array peak\n", gflops_wall, util_pct);
 
     printf("\n--- Correctness ---\n");
+    unsigned long long pc_verify0 = __ps_pmccntr(); /* [exp55] */
     int result = prof_verify(A, B, C);
+    unsigned long long pc_verify1 = __ps_pmccntr(); /* [exp55] */
 
+    unsigned long long pc_free0 = __ps_pmccntr(); /* [exp55] */
     device.free(A);
     device.free(B);
     device.free(C);
+    unsigned long long pc_free1 = __ps_pmccntr(); /* [exp55] */
+
+    printf("\n--- Layer 0 (post-launch): out-of-timed-window teardown ---\n"); /* [exp55] */
+    printf("  [pmccntr] verify:      %llu cyc  (prof_verify 256x256 CPU golden compare)\n",
+           (unsigned long long)(pc_verify1 - pc_verify0));
+    printf("  [pmccntr] device.free: %llu cyc  (free A+B+C)\n", (unsigned long long)(pc_free1 - pc_free0));
 
     // Sentinel so the board harness (appvek385.py) detects completion promptly
     // even though partition teardown is disabled for profiling.
