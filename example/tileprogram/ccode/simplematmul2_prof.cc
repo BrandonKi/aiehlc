@@ -55,6 +55,8 @@ extern void __Runtime_bd_mid3_cycles(unsigned long long *gtt_cyc, unsigned int *
 /* [exp51] split the dominant kload phase: XAie_LoadElfMem (elf) vs Core Disable/Reset/Unreset (rst) */
 extern void __Runtime_kload_split_cycles(unsigned long long *elf_cyc, unsigned int *elf_n, unsigned long long *rst_cyc,
                                          unsigned int *rst_n);
+/* [exp52] total DmaGetPendingBdCount busy-poll iterations across all wait_io calls */
+extern void __Runtime_wait_io_iters(unsigned long long *iters);
 
 // Composition-based spatial spaces (per-port 2D iteration space), identical in
 // structure to simplematmul2.cc; only the tile/full sizes scale to 4x4 / 256^3.
@@ -177,11 +179,16 @@ int main() {
     printf("  C[%dx%d] = A[%dx%d] * B^T[%dx%d], int8, %dx%d mesh (%d tiles)\n", M, N, M, K, N, K, HW_ROWS, HW_COLS,
            HW_ROWS * HW_COLS);
 
+    /* [exp52] enable PMU counter early so we can bracket device init + data setup */
+    __ps_pmccntr_enable();
+    unsigned long long pc_init0 = __ps_pmccntr();
     aieSetDevice(0);
     aieArray device;
     // 4x4 mesh: cols 0-3, rows 0-5 (shim row0, memtile row1, 4 compute rows 2-5).
     aieMesh mesh = device.partition({0, 3, 0, 5}, HW_ROWS, HW_COLS);
+    unsigned long long pc_init1 = __ps_pmccntr(); /* [exp52] end of device init */
 
+    unsigned long long pc_setup0 = __ps_pmccntr(); /* [exp52] start of data setup */
     int8_t *A = (int8_t *)device.alloc(M * K * sizeof(int8_t) * 4);
     int8_t *B = (int8_t *)device.alloc(K * N * sizeof(int8_t) * 4);
     int8_t *C = (int8_t *)device.alloc(M * N * sizeof(int8_t) * 4);
@@ -217,6 +224,8 @@ int main() {
         }
     }
 
+    unsigned long long pc_setup1 = __ps_pmccntr(); /* [exp52] end of data setup (golden computed) */
+
     // ── Layer 1: time the WHOLE process until the full result lands in DDR. The launch is
     // asynchronous (posted PS->AIE writes + non-blocking waits), so timing the launch call
     // alone reads ~0. Instead, after issuing the launch we poll the output buffer in device
@@ -228,19 +237,19 @@ int main() {
     /* [exp40] Independent wall counter (CNTVCT_EL0) bracketing the SAME window, in case
      * XTime's xiltimer source is frozen this boot (raw counts read 0). Read-only. */
     unsigned long long cv0 = __ps_cntvct();
-    /* [exp41] PMU cycle counter (PMCCNTR_EL0) — CPU-core-clock, independent of the frozen
-     * system generic timer that stalls both XTime and CNTVCT. One-time enable, then bracket
-     * the SAME window. If [pmccntr] raw advances while XTime+CNTVCT read 0, the host-side
-     * wall is measurable again. (Enable is a system-register write; safe at EL1+.) */
-    __ps_pmccntr_enable();
+    /* [exp41] PMU cycle counter already enabled at top of main [exp52]; re-read start. */
     unsigned long long pc0 = __ps_pmccntr();
     XTime_GetTime(&t0);
     matmul<<<mesh>>>(A, B, C, M, N, K);
     unsigned long long pc_mid = __ps_pmccntr(); /* [exp43] boundary: launch-call vs poll-loop */
     uint64_t polls = 0;
     int complete = 0;
+    unsigned long long poll_sync_cyc = 0ULL, poll_cmp_cyc = 0ULL; /* [exp52] poll breakdown */
     do {
+        unsigned long long __ps0 = __ps_pmccntr();            /* [exp52] */
         device.synchronizecpu(C, M * N * sizeof(int8_t) * 4); /* invalidate -> fresh DDR read */
+        poll_sync_cyc += (__ps_pmccntr() - __ps0);            /* [exp52] */
+        unsigned long long __pc0 = __ps_pmccntr();            /* [exp52] */
         complete = 1;
         for (int idx = 0; idx < M * N; idx++) {
             if (C[idx] != golden[idx]) {
@@ -248,6 +257,7 @@ int main() {
                 break;
             }
         }
+        poll_cmp_cyc += (__ps_pmccntr() - __pc0); /* [exp52] */
         polls++;
     } while (!complete && polls < MAX_POLL);
     XTime_GetTime(&t1);
@@ -293,6 +303,12 @@ int main() {
     double array_peak_gops = DEVICE_INT8_TOPS * 1000.0 * (double)array_tiles / (double)DEVICE_TILES;
     double util_pct = array_peak_gops ? 100.0 * gflops_wall / array_peak_gops : 0.0;
 
+    printf("\n--- Layer 0: pre-launch setup (outside timed window) ---\n"); /* [exp52] */
+    printf("  [pmccntr] device_init: %llu cyc  (aieSetDevice + partition)\n",
+           (unsigned long long)(pc_init1 - pc_init0));
+    printf("  [pmccntr] data_setup:  %llu cyc  (alloc + A/B init + poison-C + golden compute)\n",
+           (unsigned long long)(pc_setup1 - pc_setup0));
+
     printf("\n--- Layer 1: PS wall-clock (end-to-end launch) ---\n");
     printf("  raw counts:        %llu  (t1 - t0)\n", (unsigned long long)raw_counts);
     printf("  timer freq:        %llu Hz  (COUNTS_PER_SECOND; 1 tick = %.3f ns)\n", (unsigned long long)timer_hz,
@@ -329,6 +345,20 @@ int main() {
         __Runtime_wait_io_cycles(&wio_cyc, &wio_calls);
         double wio_pct = (pc_launch > 0) ? 100.0 * (double)wio_cyc / (double)pc_launch : 0.0;
         printf("  [phase] wait_io:   %llu cycles over %u calls  (=%.1f%% of launch)\n", wio_cyc, wio_calls, wio_pct);
+        /* [exp52] wait_io sub-detail: busy-poll iteration count -> cyc/iter = cost per DmaGetPendingBdCount */
+        unsigned long long wio_iters = 0ULL;
+        __Runtime_wait_io_iters(&wio_iters);
+        double wio_cyc_per_iter = (wio_iters > 0) ? (double)wio_cyc / (double)wio_iters : 0.0;
+        double wio_cyc_per_call = (wio_calls > 0) ? (double)wio_cyc / (double)wio_calls : 0.0;
+        printf("  [wait_io] poll iters: %llu total  (%.1f cyc/iter avg, %.0f avg cyc/call)\n", wio_iters,
+               wio_cyc_per_iter, wio_cyc_per_call);
+        /* [exp52] poll loop split: synchronizecpu vs golden-compare */
+        double sync_pct = (pc_poll > 0) ? 100.0 * (double)poll_sync_cyc / (double)pc_poll : 0.0;
+        double cmp_pct = (pc_poll > 0) ? 100.0 * (double)poll_cmp_cyc / (double)pc_poll : 0.0;
+        printf("  [poll] synchronizecpu: %llu cyc over %llu calls  (=%.1f%% of poll)\n", poll_sync_cyc,
+               (unsigned long long)polls, sync_pct);
+        printf("  [poll] compare (C vs golden): %llu cyc over %llu calls  (=%.1f%% of poll)\n", poll_cmp_cyc,
+               (unsigned long long)polls, cmp_pct);
         /* [exp45] split the ~98% setup portion of the launch into runtime sub-phases. */
         unsigned long long ph[4] = {0, 0, 0, 0};
         unsigned int phc[4] = {0, 0, 0, 0};

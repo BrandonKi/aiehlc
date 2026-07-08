@@ -60,11 +60,16 @@ static inline unsigned long long __rt_pmccntr(void) { return 0ULL; }
 #endif
 static unsigned long long g_wait_io_cycles = 0ULL;
 static unsigned int g_wait_io_calls = 0U;
+static unsigned long long g_wait_io_iters = 0ULL; /* [exp52] total DmaGetPendingBdCount poll iterations */
 void __Runtime_wait_io_cycles(unsigned long long *cycles, unsigned int *calls) {
     if (cycles)
         *cycles = g_wait_io_cycles;
     if (calls)
         *calls = g_wait_io_calls;
+}
+void __Runtime_wait_io_iters(unsigned long long *iters) { /* [exp52] */
+    if (iters)
+        *iters = g_wait_io_iters;
 }
 
 /* [exp45] setup-phase PMU accumulators (÷1 CPU cycles, same PMCCNTR as exp44).
@@ -1830,6 +1835,7 @@ void __Runtime_wait_io(XAie_DevInst *dev, struct_ioevent io_event) {
     u8 numPendingBDs = 1;
     uint32_t iter = 0;
     while (numPendingBDs > 0) {
+        g_wait_io_iters++; /* [exp52] count each DmaGetPendingBdCount poll */
         AieRC rc = XAie_DmaGetPendingBdCount(dev, tile, channel, dir, &numPendingBDs);
         if (rc != XAIE_OK) {
             printf("[aie_runtime] wait_io ERROR: XAie_DmaGetPendingBdCount "
