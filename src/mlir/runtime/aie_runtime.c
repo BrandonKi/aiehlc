@@ -2031,7 +2031,8 @@ AieRC __Runtime_perfcnt_setup_mm2s_bd_finished(XAie_DevInst *dev, XAie_LocType t
     if (rc != XAIE_OK)
         return rc;
 
-    printf("[aie_runtime] perfcnt_setup_mm2s_bd_finished OK tile(%u,%u)\n", (unsigned)tile.Col, (unsigned)tile.Row);
+    AIE_RT_LOG(printf("[aie_runtime] perfcnt_setup_mm2s_bd_finished OK tile(%u,%u)\n", (unsigned)tile.Col,
+                      (unsigned)tile.Row));
     return XAIE_OK;
 }
 
