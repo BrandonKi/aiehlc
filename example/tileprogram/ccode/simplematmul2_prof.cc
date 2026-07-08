@@ -297,7 +297,10 @@ int main() {
          * ms = raw / CPU_Hz done offline (CPU_Hz not known at compile time); raw is enough
          * to decide alive-vs-frozen and to compare host-side levers relatively. */
         unsigned long long pc_raw = (pc1 >= pc0) ? (pc1 - pc0) : 0ULL;
-        printf("  [pmccntr] raw:     %llu cycles  (nonzero => PS wall alive; ms = raw / CPU_Hz offline)\n", pc_raw);
+        unsigned long long pmcr = __ps_pmcr(); /* [exp42] */
+        unsigned int d_bit = (unsigned int)((pmcr >> 3) & 1ULL);
+        printf("  [pmccntr] raw:     %llu cycles  pmcr:0x%llx (D=%u, %s)\n", pc_raw, pmcr, d_bit,
+               d_bit ? "counts=CPUcyc/64" : "counts=CPUcyc");
     }
 
     printf("\n--- Layer 2: DMA stream (probe tile MM2S BD finished) ---\n");

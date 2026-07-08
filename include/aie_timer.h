@@ -54,6 +54,8 @@ static inline void __ps_pmccntr_enable(void) {
     unsigned long long v;
     __asm__ volatile("mrs %0, pmcr_el0" : "=r"(v));
     v |= (1ULL << 0) | (1ULL << 2); /* E: enable counters, C: reset cycle counter */
+    v &= ~(1ULL << 3);              /* [exp42] D=0: count every CPU cycle (no /64 divide) so
+                                     * the raw delta is unambiguous cycles (not ÷64). */
     __asm__ volatile("msr pmcr_el0, %0" : : "r"(v));
     __asm__ volatile("msr pmcntenset_el0, %0" : : "r"(1ULL << 31)); /* enable dedicated cycle counter */
     __asm__ volatile("isb");
@@ -63,9 +65,15 @@ static inline unsigned long long __ps_pmccntr(void) {
     __asm__ volatile("mrs %0, pmccntr_el0" : "=r"(v));
     return v;
 }
+static inline unsigned long long __ps_pmcr(void) { /* [exp42] read back PMCR_EL0 (D bit @ 3) */
+    unsigned long long v;
+    __asm__ volatile("mrs %0, pmcr_el0" : "=r"(v));
+    return v;
+}
 #else
 static inline void __ps_pmccntr_enable(void) {}
 static inline unsigned long long __ps_pmccntr(void) { return 0ULL; }
+static inline unsigned long long __ps_pmcr(void) { return 0ULL; }
 #endif
 
 #endif /* AIE_TIMER_H */
