@@ -121,6 +121,27 @@ void __Runtime_bd_midtail_cycles(unsigned long long *mid_cyc, unsigned int *mid_
         *tail_n = g_bd_tail_n;
 }
 
+/* [exp48] split the dominant bdcfg `mid` region (exp47: 99.9%) into the 3 XAie calls that run on
+ * every path — GetTileTypefromLoc (gtt), DmaSet{AddrLen,MultiDimAddr} (saddr), DmaEnableBd (en).
+ * Whatever the residual (mid - gtt - saddr - en) is = the Set{Lock,NextBd,Pkt,Ooo}+printf block. */
+static unsigned long long g_bd_gtt_cyc = 0ULL, g_bd_saddr_cyc = 0ULL, g_bd_en_cyc = 0ULL;
+static unsigned int g_bd_gtt_n = 0U, g_bd_saddr_n = 0U, g_bd_en_n = 0U;
+void __Runtime_bd_mid3_cycles(unsigned long long *gtt_cyc, unsigned int *gtt_n, unsigned long long *saddr_cyc,
+                              unsigned int *saddr_n, unsigned long long *en_cyc, unsigned int *en_n) {
+    if (gtt_cyc)
+        *gtt_cyc = g_bd_gtt_cyc;
+    if (gtt_n)
+        *gtt_n = g_bd_gtt_n;
+    if (saddr_cyc)
+        *saddr_cyc = g_bd_saddr_cyc;
+    if (saddr_n)
+        *saddr_n = g_bd_saddr_n;
+    if (en_cyc)
+        *en_cyc = g_bd_en_cyc;
+    if (en_n)
+        *en_n = g_bd_en_n;
+}
+
 // Global routing instance (kept for legacy path)
 XAie_RoutingInstance *g_RoutingInst = NULL;
 
@@ -924,7 +945,10 @@ XAie_DmaDesc __Runtime_dma_bd_config(XAie_DevInst *dev, XAie_LocType tile, void 
     g_bd_init_cyc += (__rt_pmccntr() - __bi0); /* [exp46] */
     g_bd_init_n++;
     unsigned long long __md0 = __rt_pmccntr(); /* [exp47] mid start */
+    unsigned long long __gt0 = __rt_pmccntr(); /* [exp48] */
     uint8_t tile_type = XAie_GetTileTypefromLoc(dev, tile);
+    g_bd_gtt_cyc += (__rt_pmccntr() - __gt0); /* [exp48] */
+    g_bd_gtt_n++;
     /* Both shim and core tiles: buffer is a byte address.
      * Shim tiles: buffer IS the DDR physical address.
      * Core tiles: buffer is a DMA-view byte address (core_proc_addr - 0x70000),
@@ -946,7 +970,10 @@ XAie_DmaDesc __Runtime_dma_bd_config(XAie_DevInst *dev, XAie_LocType tile, void 
 #endif
         }
     }
+    unsigned long long __sa0 = __rt_pmccntr(); /* [exp48] */
     XAie_DmaSetAddrLen(&DmaInst, dma_addr, (uint32_t)len);
+    g_bd_saddr_cyc += (__rt_pmccntr() - __sa0); /* [exp48] */
+    g_bd_saddr_n++;
 
     if (acquire_lock_id >= 0 && release_lock_id >= 0) {
         XAie_DmaSetLock(&DmaInst, XAie_LockInit(acquire_lock_id, acquire_lock_val),
@@ -966,7 +993,10 @@ XAie_DmaDesc __Runtime_dma_bd_config(XAie_DevInst *dev, XAie_LocType tile, void 
         printf("[aie_runtime] bd_config: set out_of_order_bd_id=%d\n", out_of_order_bd_id);
     }
 
+    unsigned long long __en0 = __rt_pmccntr(); /* [exp48] */
     XAie_DmaEnableBd(&DmaInst);
+    g_bd_en_cyc += (__rt_pmccntr() - __en0); /* [exp48] */
+    g_bd_en_n++;
     g_bd_mid_cyc += (__rt_pmccntr() - __md0); /* [exp47] mid end */
     g_bd_mid_n++;
     unsigned long long __bw0 = __rt_pmccntr(); /* [exp46] */
@@ -1055,7 +1085,10 @@ XAie_DmaDesc __Runtime_dma_bd_config_multidim(XAie_DevInst *dev, XAie_LocType ti
     g_bd_init_cyc += (__rt_pmccntr() - __bi0); /* [exp46] */
     g_bd_init_n++;
     unsigned long long __md0 = __rt_pmccntr(); /* [exp47] mid start */
+    unsigned long long __gt0 = __rt_pmccntr(); /* [exp48] */
     uint8_t tile_type = XAie_GetTileTypefromLoc(dev, tile);
+    g_bd_gtt_cyc += (__rt_pmccntr() - __gt0); /* [exp48] */
+    g_bd_gtt_n++;
     uint64_t dma_addr = (uint64_t)(uintptr_t)buffer;
     if (__bd_is_shim(tile_type)) {
         uint64_t offset = 0;
@@ -1090,7 +1123,10 @@ XAie_DmaDesc __Runtime_dma_bd_config_multidim(XAie_DevInst *dev, XAie_LocType ti
     XAie_DmaTensor tensor;
     tensor.NumDim = (uint8_t)addrDims;
     tensor.Dim = dimDescs;
+    unsigned long long __sa0 = __rt_pmccntr(); /* [exp48] */
     XAie_DmaSetMultiDimAddr(&DmaInst, &tensor, dma_addr, (uint32_t)len);
+    g_bd_saddr_cyc += (__rt_pmccntr() - __sa0); /* [exp48] */
+    g_bd_saddr_n++;
 
     /* Iteration dimension: 4th dim if present */
     if (num_dims == 4) {
@@ -1119,7 +1155,10 @@ XAie_DmaDesc __Runtime_dma_bd_config_multidim(XAie_DevInst *dev, XAie_LocType ti
         printf("[aie_runtime] bd_config_multidim: set out_of_order_bd_id=%d\n", out_of_order_bd_id);
     }
 
+    unsigned long long __en0 = __rt_pmccntr(); /* [exp48] */
     XAie_DmaEnableBd(&DmaInst);
+    g_bd_en_cyc += (__rt_pmccntr() - __en0); /* [exp48] */
+    g_bd_en_n++;
     g_bd_mid_cyc += (__rt_pmccntr() - __md0); /* [exp47] mid end */
     g_bd_mid_n++;
     unsigned long long __bw0 = __rt_pmccntr(); /* [exp46] */
@@ -1184,7 +1223,10 @@ XAie_DmaDesc __Runtime_dma_bd_config_multidim_ooo(XAie_DevInst *dev, XAie_LocTyp
     g_bd_init_cyc += (__rt_pmccntr() - __bi0); /* [exp46] */
     g_bd_init_n++;
     unsigned long long __md0 = __rt_pmccntr(); /* [exp47] mid start */
+    unsigned long long __gt0 = __rt_pmccntr(); /* [exp48] */
     uint8_t tile_type = XAie_GetTileTypefromLoc(dev, tile);
+    g_bd_gtt_cyc += (__rt_pmccntr() - __gt0); /* [exp48] */
+    g_bd_gtt_n++;
     uint64_t dma_addr = (uint64_t)(uintptr_t)buffer;
     if (__bd_is_shim(tile_type)) {
         uint64_t offset = 0;
@@ -1219,7 +1261,10 @@ XAie_DmaDesc __Runtime_dma_bd_config_multidim_ooo(XAie_DevInst *dev, XAie_LocTyp
     XAie_DmaTensor tensor;
     tensor.NumDim = (uint8_t)num_dims;
     tensor.Dim = dimDescs;
+    unsigned long long __sa0 = __rt_pmccntr(); /* [exp48] */
     XAie_DmaSetMultiDimAddr(&DmaInst, &tensor, dma_addr, (uint32_t)len);
+    g_bd_saddr_cyc += (__rt_pmccntr() - __sa0); /* [exp48] */
+    g_bd_saddr_n++;
 
     /* Iteration dimension: BD re-executes iter_wrap times with address
      * advancing by iter_step_size bytes between each OOO packet trigger. */
@@ -1248,7 +1293,10 @@ XAie_DmaDesc __Runtime_dma_bd_config_multidim_ooo(XAie_DevInst *dev, XAie_LocTyp
         printf("[aie_runtime] bd_config_multidim_ooo: set out_of_order_bd_id=%d\n", out_of_order_bd_id);
     }
 
+    unsigned long long __en0 = __rt_pmccntr(); /* [exp48] */
     XAie_DmaEnableBd(&DmaInst);
+    g_bd_en_cyc += (__rt_pmccntr() - __en0); /* [exp48] */
+    g_bd_en_n++;
     g_bd_mid_cyc += (__rt_pmccntr() - __md0); /* [exp47] mid end */
     g_bd_mid_n++;
     unsigned long long __bw0 = __rt_pmccntr(); /* [exp46] */
@@ -1779,7 +1827,10 @@ void __Runtime_wait_io(XAie_DevInst *dev, struct_ioevent io_event) {
 
 #ifdef __AIESIM__
     if (__bd_is_shim(XAie_GetTileTypefromLoc(dev, tile)) && dir == DMA_S2MM) {
+        unsigned long long __gt0 = __rt_pmccntr(); /* [exp48] */
         uint8_t tile_type = XAie_GetTileTypefromLoc(dev, tile);
+        g_bd_gtt_cyc += (__rt_pmccntr() - __gt0); /* [exp48] */
+        g_bd_gtt_n++;
         for (int bi = 0; bi < g_bd_track_count; bi++) {
             BdTrackEntry *e = &g_bd_track[bi];
             if (e->col != tile.Col || e->row != tile.Row)

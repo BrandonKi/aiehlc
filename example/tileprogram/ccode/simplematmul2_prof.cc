@@ -49,6 +49,9 @@ extern void __Runtime_bd_subphase_cycles(unsigned long long *init_cyc, unsigned 
 /* [exp47] localize the rest of bdcfg: mid (post-descinit->pre-writebd) + tail (post-writebd->return) */
 extern void __Runtime_bd_midtail_cycles(unsigned long long *mid_cyc, unsigned int *mid_n, unsigned long long *tail_cyc,
                                         unsigned int *tail_n);
+/* [exp48] split the mid region into GetTileTypefromLoc / DmaSetAddr / DmaEnableBd */
+extern void __Runtime_bd_mid3_cycles(unsigned long long *gtt_cyc, unsigned int *gtt_n, unsigned long long *saddr_cyc,
+                                     unsigned int *saddr_n, unsigned long long *en_cyc, unsigned int *en_n);
 
 // Composition-based spatial spaces (per-port 2D iteration space), identical in
 // structure to simplematmul2.cc; only the tile/full sizes scale to 4x4 / 256^3.
@@ -351,6 +354,19 @@ int main() {
         printf("  [bdcfg] mid:      %llu cyc over %u  (=%.1f%% of bdcfg)\n", bmid, bmidn, bmp);
         printf("  [bdcfg] tail:     %llu cyc over %u  (=%.1f%% of bdcfg)\n", btail, btailn, btp);
         printf("  [bdcfg] accounted (init+write+mid+tail): %llu cyc  (=%.1f%% of bdcfg)\n", bacct, bap);
+        /* [exp48] split mid into GetTileTypefromLoc / DmaSetAddr / DmaEnableBd (+ residual = Set*+printf) */
+        unsigned long long bgtt = 0ULL, bsa = 0ULL, ben = 0ULL;
+        unsigned int bgttn = 0U, bsan = 0U, benn = 0U;
+        __Runtime_bd_mid3_cycles(&bgtt, &bgttn, &bsa, &bsan, &ben, &benn);
+        double gttp = (bmid > 0) ? 100.0 * (double)bgtt / (double)bmid : 0.0;
+        double sap = (bmid > 0) ? 100.0 * (double)bsa / (double)bmid : 0.0;
+        double enp = (bmid > 0) ? 100.0 * (double)ben / (double)bmid : 0.0;
+        unsigned long long bres = (bmid > bgtt + bsa + ben) ? (bmid - bgtt - bsa - ben) : 0ULL;
+        double resp = (bmid > 0) ? 100.0 * (double)bres / (double)bmid : 0.0;
+        printf("  [mid] gettiletype: %llu cyc over %u  (=%.1f%% of mid)\n", bgtt, bgttn, gttp);
+        printf("  [mid] setaddr:     %llu cyc over %u  (=%.1f%% of mid)\n", bsa, bsan, sap);
+        printf("  [mid] enablebd:    %llu cyc over %u  (=%.1f%% of mid)\n", ben, benn, enp);
+        printf("  [mid] residual (setlock/nextbd/pkt/ooo+printf): %llu cyc  (=%.1f%% of mid)\n", bres, resp);
     }
 
     printf("\n--- Layer 2: DMA stream (probe tile MM2S BD finished) ---\n");
