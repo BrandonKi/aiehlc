@@ -83,16 +83,30 @@ constexpr aie::GemmSpace LtoR_Merge = {
     .d2 = {.tile_size = TILE_N, .stride = TILE_N, .fullsize = N}};
 
 // ─── KERNEL: per-tile int8 GEMM (cache-A / stream-B), no debug logging ───────
-/* [exp56] Vectorized matmul: SIMD dot-product inner loop using aie::mac.
- * Replaces scalar triple-loop (0% vec util) with 16-wide int8 SIMD.
+/* [exp58] mac+reduce_add with 4-accumulator K-unrolling to hide MAC latency.
  *
- * Layout: A[tile_rows][eff_k] row-major; B[cols_per_round][eff_k] col-major
- * (B col j starts at B_ptr + j*eff_k, consistent with scalar kernel).
+ * exp56 baseline: single accumulator per output element — 1 mac per K-step.
+ * AIE2PS integer MAC has ~8-cycle result latency; with a single acc chain the
+ * pipeline stalls waiting for the previous result before issuing the next mac.
  *
- * Vectorization: for each output C[i][j], compute
- *   sum = reduce_add(mac(A[i][kk*16..(kk+1)*16], B[j][kk*16..(kk+1)*16]))
- * over eff_k/16 = 4 SIMD steps. Each step is a 16-wide int8 mul-acc.
- * The 256-element tile uses 256 × 4 = 1024 16-wide MACs vs 256×64=16384 scalar muls.
+ * Fix: unroll the K loop ×4 so 4 independent accumulators are in flight
+ * simultaneously.  The compiler/scheduler can overlap their latencies and keep
+ * the MAC unit fed.  K is a multiple of 64 (eff_k) and each mac advances 16
+ * K-elements, giving 4 macs per eff_k/16 = 4 steps → unroll ×4 exhausts K
+ * for one (i,j) output in a single pass with 4 live accumulators.
+ *
+ * Layout unchanged from exp56:
+ *   A[tile_rows=16][eff_k=64] row-major, cached in all_A
+ *   B[cols_per_round=16][eff_k=64] col-major: B_ptr[col*eff_k + k]
+ *
+ * Per output element:
+ *   acc0 += mac(A[i][0:16],  B[j][0:16])
+ *   acc1 += mac(A[i][16:32], B[j][16:32])
+ *   acc2 += mac(A[i][32:48], B[j][32:48])
+ *   acc3 += mac(A[i][48:64], B[j][48:64])
+ *   C[i][j] = saturate(reduce_add(acc0 + acc1 + acc2 + acc3))
+ *
+ * All 4 accumulators are independent → 4× MAC pipeline utilization vs exp56.
  */
 __global__ void matmul(aie::port<input_window_int8 *, RowBA> win_a, aie::port<input_window_int8 *, ColBB> win_b,
                        aie::port<output_window_int8 *, LtoR_Merge> win_c) {
@@ -109,18 +123,20 @@ __global__ void matmul(aie::port<input_window_int8 *, RowBA> win_a, aie::port<in
     const int n_rounds = aie::get_spatial_multiple_rounds(win_b);
     const int cols_per_round = aie::get_buffer_size(win_b) / eff_k; // 16
 
-    // [exp56] A tile buffer — aligned for 16-wide int8 vector loads
+    // A tile: full 16×64 row-major tile cached locally so we iterate over j
+    // without re-acquiring the A window per (i,j) pair.
     alignas(aie::vector_decl_align) int8_t all_A[tile_rows * eff_k]; // 16×64 = 1024 bytes
-    // [exp56] int32 accumulator per output element (avoids int16 overflow from k_rounds)
-    int32_t accum[tile_rows * tile_cols]; // 16×16 int32
-    int8_t local_out[tile_rows * tile_cols];
+    // int32 accumulator buffer — accumulate across all k_rounds and b_rounds without
+    // losing precision; saturate to int8 only once at the very end.
+    int32_t acc_buf[tile_rows * tile_cols];
 
     for (int mr = 0; mr < m_rounds * n_rounds; mr++) {
-        for (int i = 0; i < tile_rows * tile_cols; i++)
-            accum[i] = 0;
+        // Zero int32 accumulator buffer for this output tile
+        for (int idx = 0; idx < tile_rows * tile_cols; idx++)
+            acc_buf[idx] = 0;
 
         for (int kr = 0; kr < k_rounds; kr++) {
-            // Load A tile (tile_rows × eff_k) into all_A
+            // Cache full A tile for this K-round
             for (int ra = 0; ra < num_a_rounds; ra++) {
                 int8_t *A_ptr = (int8_t *)acquire_input_window(win_a);
                 for (int i = 0; i < buf_sz_a; i++)
@@ -130,44 +146,49 @@ __global__ void matmul(aie::port<input_window_int8 *, RowBA> win_a, aie::port<in
 
             for (int rb = 0; rb < num_b_rounds; rb++) {
                 int8_t *B_ptr = (int8_t *)acquire_input_window(win_b);
+                // B_ptr layout: col-major B[cols_per_round=16][eff_k=64]
+                //   B_ptr[col * eff_k + k]
+                // eff_k/16 = 4 → 4 independent 16-wide K slices per output element
 
-                // [exp56] Vectorized: for each (row i, col j), dot-product over K
-                // using 16-wide int8 SIMD (eff_k=64 → 4 SIMD steps per dot product)
                 for (int i = 0; i < tile_rows; i++) {
+                    // Load 4 independent 16-wide A slices for row i (never dependent)
+                    const int8_t *Arow = all_A + i * eff_k;
+                    aie::vector<int8, 16> a0 = aie::load_v<16>(Arow);
+                    aie::vector<int8, 16> a1 = aie::load_v<16>(Arow + 16);
+                    aie::vector<int8, 16> a2 = aie::load_v<16>(Arow + 32);
+                    aie::vector<int8, 16> a3 = aie::load_v<16>(Arow + 48);
+
                     for (int j = 0; j < cols_per_round; j++) {
-                        // dot(A[i][*], B[j][*]) vectorized over K in steps of 16
-                        aie::accum<acc32, 16> vacc = aie::zeros<acc32, 16>();
-                        const int8_t *a_row = all_A + i * eff_k;
-                        const int8_t *b_col = B_ptr + j * eff_k;
-                        for (int kk = 0; kk < eff_k / 16; kk++) {
-                            aie::vector<int8, 16> av = aie::load_v<16>(a_row + kk * 16);
-                            aie::vector<int8, 16> bv = aie::load_v<16>(b_col + kk * 16);
-                            vacc = aie::mac(vacc, av, bv);
-                        }
-                        // Horizontal sum of 16 partial products → scalar int32
-                        int32_t dot = aie::reduce_add(vacc.template to_vector<int32>());
-                        accum[i * tile_cols + rb * cols_per_round + j] += dot;
+                        const int8_t *Bcol = B_ptr + j * eff_k;
+                        // 4 independent accumulator chains — hides ~8-cyc MAC latency
+                        aie::accum<acc32, 16> acc0 = aie::mul(a0, aie::load_v<16>(Bcol));
+                        aie::accum<acc32, 16> acc1 = aie::mul(a1, aie::load_v<16>(Bcol + 16));
+                        aie::accum<acc32, 16> acc2 = aie::mul(a2, aie::load_v<16>(Bcol + 32));
+                        aie::accum<acc32, 16> acc3 = aie::mul(a3, aie::load_v<16>(Bcol + 48));
+                        // Pair-reduce, then sum into int32 buffer (no saturation mid-K)
+                        aie::accum<acc32, 16> acc01 = aie::add(acc0, acc1);
+                        aie::accum<acc32, 16> acc23 = aie::add(acc2, acc3);
+                        aie::accum<acc32, 16> acc_all = aie::add(acc01, acc23);
+                        acc_buf[i * tile_cols + j] += aie::reduce_add(acc_all.to_vector<int32>());
                     }
                 }
                 release_input_window(win_b);
             }
         }
 
-        // Saturate-clamp int32 → int8 and write output
-        for (int i = 0; i < tile_rows * tile_cols; i++) {
-            int32_t val = accum[i];
-            if (val > 127)
-                val = 127;
-            else if (val < -128)
-                val = -128;
-            local_out[i] = (int8_t)val;
+        // Saturate accumulated int32 → int8 for output
+        int8_t local_out[tile_rows * tile_cols];
+        for (int idx = 0; idx < tile_rows * tile_cols; idx++) {
+            int32_t v = acc_buf[idx];
+            local_out[idx] = (int8_t)(v > 127 ? 127 : (v < -128 ? -128 : v));
         }
+
         for (int rc = 0; rc < num_c_rounds; rc++) {
             int8_t *out = (int8_t *)acquire_output_window(win_c);
             const int rows_per_c_round = buf_sz_c / tile_cols;
             for (int i = 0; i < rows_per_c_round; i++)
                 for (int j = 0; j < tile_cols; j++)
-                    out[i * tile_cols + j] = local_out[rc * buf_sz_c + i * tile_cols + j];
+                    out[i * tile_cols + j] = local_out[rc * rows_per_c_round * tile_cols + i * tile_cols + j];
             release_output_window(win_c);
         }
     }
@@ -494,6 +515,41 @@ int main() {
     printf("  [pmccntr] verify:      %llu cyc  (prof_verify 256x256 CPU golden compare)\n",
            (unsigned long long)(pc_verify1 - pc_verify0));
     printf("  [pmccntr] device.free: %llu cyc  (free A+B+C)\n", (unsigned long long)(pc_free1 - pc_free0));
+
+    // ── Compact machine-parseable PERF summary — one key=value per line.
+    // Grep for "[PERF]" across experiment logs to compare without retiming.
+    {
+        unsigned long long ph[4] = {0, 0, 0, 0};
+        unsigned int phc[4] = {0, 0, 0, 0};
+        __Runtime_phase_cycles(ph, phc);
+        unsigned long long wio_cyc2 = 0ULL;
+        unsigned int wio_calls2 = 0U;
+        __Runtime_wait_io_cycles(&wio_cyc2, &wio_calls2);
+        unsigned long long pc_launch2 = (pc_mid >= pc0) ? (pc_mid - pc0) : 0ULL;
+        double kp = pc_launch2 ? 100.0 * (double)ph[0] / (double)pc_launch2 : 0.0;
+        double bp = pc_launch2 ? 100.0 * (double)ph[1] / (double)pc_launch2 : 0.0;
+        double wp = pc_launch2 ? 100.0 * (double)wio_cyc2 / (double)pc_launch2 : 0.0;
+        double vp = active ? 100.0 * (double)vec / (double)active : 0.0;
+        double tb2 = (double)active + (double)sstall + (double)lstall;
+        double lsp = tb2 ? 100.0 * (double)lstall / tb2 : 0.0;
+        double ssp = tb2 ? 100.0 * (double)sstall / tb2 : 0.0;
+        unsigned long long ph_tot = ph[0] + ph[1] + ph[2] + ph[3] + wio_cyc2;
+        unsigned long long unacct2 = pc_launch2 > ph_tot ? pc_launch2 - ph_tot : 0ULL;
+        printf("\n[PERF] launch_cyc=%llu\n", pc_launch2);
+        printf("[PERF] kload_cyc=%llu kload_pct=%.1f\n", ph[0], kp);
+        printf("[PERF] bdcfg_cyc=%llu bdcfg_pct=%.1f\n", ph[1], bp);
+        printf("[PERF] lockinit_cyc=%llu lockinit_pct=%.1f\n", unacct2,
+               pc_launch2 ? 100.0 * (double)unacct2 / (double)pc_launch2 : 0.0);
+        printf("[PERF] coreen_cyc=%llu coreen_pct=%.1f\n", ph[2],
+               pc_launch2 ? 100.0 * (double)ph[2] / (double)pc_launch2 : 0.0);
+        printf("[PERF] startio_cyc=%llu startio_pct=%.1f\n", ph[3],
+               pc_launch2 ? 100.0 * (double)ph[3] / (double)pc_launch2 : 0.0);
+        printf("[PERF] wait_io_cyc=%llu wait_io_pct=%.1f\n", wio_cyc2, wp);
+        printf("[PERF] core_active=%u core_sstall=%u core_lstall=%u\n", active, sstall, lstall);
+        printf("[PERF] vec_instr=%u vec_util_pct=%.1f\n", vec, vp);
+        printf("[PERF] lock_stall_pct=%.1f stream_stall_pct=%.1f\n", lsp, ssp);
+        printf("[PERF] result=%s\n", result == 0 ? "PASS" : "FAIL");
+    }
 
     // Sentinel so the board harness (appvek385.py) detects completion promptly
     // even though partition teardown is disabled for profiling.
