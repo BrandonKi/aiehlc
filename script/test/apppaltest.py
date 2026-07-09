@@ -359,16 +359,11 @@ def setup_first_connection(nonreboot=False):
     child.expect([r'\$\s*$', r'#\s*$', r'>\s*$'], timeout=60)
     log.debug("setup_first_connection: shell prompt received")
 
-    # Use systest-client in nonreboot mode so the session doesn't hold the
-    # systest server lock, allowing other users/tools to connect.
-    if nonreboot:
-        print("[Connection 1] Connected, starting systest-client (nonreboot mode)...")
-        log.debug("setup_first_connection: sending systest-client")
-        child.sendline("/opt/systest/common/bin/systest-client")
-    else:
-        print("[Connection 1] Connected, starting systest...")
-        log.debug("setup_first_connection: sending systest")
-        child.sendline("/bin/systest")
+    # Always use systest-client: it has xsdb on PATH (unlike /bin/systest which uses a
+    # Tcl-only environment where xsdb is not registered as an alias).
+    print("[Connection 1] Connected, starting systest-client...")
+    log.debug("setup_first_connection: sending systest-client")
+    child.sendline("/opt/systest/common/bin/systest-client")
     child.expect(r'Systest[#>]', timeout=60)
     log.debug("setup_first_connection: systest prompt received")
 
@@ -397,6 +392,9 @@ def setup_first_connection(nonreboot=False):
     print("[Connection 1] Power on complete, sourcing Vitis and starting xsdb...")
 
     # Step 5b: Source Vitis environment so xsdb is on PATH
+    # Note: on some systest controllers (e.g. cpg-lab-06/palmyra) the Tcl
+    # shell cannot interpret bash source scripts.  The source may fail silently
+    # (token errors printed but Systest# prompt still returned).
     child.sendline(f"source {VITIS_SETTINGS}")
     child.expect(r'Systest[#>]', timeout=30)
 
@@ -404,31 +402,74 @@ def setup_first_connection(nonreboot=False):
     child.sendline("xsdb")
     index = child.expect([r'xsdb%', r'command not found', r'Unrecognized', pexpect.TIMEOUT], timeout=15)
 
+    # Track whether we exited systest. If we did, the hw_server that systest was managing
+    # is gone — we must use 'conn' to start a fresh one. If xsdb launched inside systest,
+    # the hw_server is still alive and we connect to it via URL.
+    exited_systest = False
+
     if index != 0:
         print("[Connection 1] xsdb not found, trying alternative path...")
         child.sendline(XSDB_ALT_PATH)
-        child.expect(r'xsdb%', timeout=60)
-    
+        index2 = child.expect([r'xsdb%', pexpect.TIMEOUT], timeout=30)
+        if index2 != 0:
+            # cpg-lab systest Tcl shell cannot run paths with /; exit systest
+            # and launch xsdb directly from the login shell on this host.
+            # NOTE: exiting systest tears down the managed hw_server on :3121, so
+            # we must use 'conn' afterward to start a fresh local hw_server.
+            print("[Connection 1] xsdb not launchable from systest Tcl; exiting systest to run from shell...")
+            child.sendline("exit")
+            child.expect([r'\$\s*$', r'#\s*$', r'>\s*$'], timeout=30)
+            print("[Connection 1] Back to login shell, launching xsdb via bash -c for-loop...")
+            # The board's login shell is tcsh; bash for-loop syntax fails there.
+            # The Vitis install dir has a space in its name (e.g. "2025.2" or "HE AD"),
+            # so a plain glob word-splits. Use 'bash -c' with a for-loop so bash assigns
+            # the full (space-containing) path to the loop variable and quotes it correctly.
+            child.sendline(
+                "bash -c '"
+                "for _xp in /proj/xbuilds/2025.2_daily_latest/installs/lin64/*/Vitis/bin/xsdb; "
+                "do echo XSDB_FOUND:$_xp; \"$_xp\"; break; done"
+                "'"
+            )
+            child.expect(r'xsdb%', timeout=120)
+            exited_systest = True
+
     print("[Connection 1] In xsdb, connecting...")
-    
+
     # Step 7: Connect
-    if nonreboot:
-        #child.sendline("hw_server -stcp:0.0.0.0:3121 &")
-        #child.expect(r'xsdb%', timeout=60)
-        child.sendline("connect -url TCP:10.23.224.213:3121")
-    else:
+    if exited_systest:
+        # We exited systest so the managed hw_server on :3121 is gone.
+        # Use 'conn' to start a fresh local hw_server on this machine.
+        print("[Connection 1] Using 'conn' (fresh hw_server, systest exited)...")
         child.sendline("conn")
+    else:
+        # xsdb launched inside systest — hw_server still running on :3121.
+        print("[Connection 1] Using connect-url (systest-managed hw_server)...")
+        child.sendline("connect -url TCP:10.23.224.213:3121")
     child.expect(r'xsdb%', timeout=60)
+    # Drain any extra output that arrived during conn (e.g. delayed prompts,
+    # connection banners).  Without this drain the first xsdb% from 'conn'
+    # may still be buffered when 'device program' is sent, causing the script
+    # to match a stale prompt and skip the actual programming.
+    time.sleep(0.5)
+    try:
+        child.read_nonblocking(size=4096, timeout=1)
+    except pexpect.TIMEOUT:
+        pass
     print("[Connection 1] Connected, targeting device 1...")
-    
+
     # Step 8: Target 1
     child.sendline("tar 1")
     child.expect(r'xsdb%', timeout=60)
     print("[Connection 1] Programming Palboard.BIN...")
-    
-    # Step 9: Program device – detect PLM stall and abort early
+
+    # Step 9: Program device – wait for '100%' to confirm the full BOOT.BIN
+    # was transferred before continuing.  Matching only 'xsdb%' is unsafe: after
+    # 'conn' there may be stale prompts buffered from the connection handshake
+    # that get matched at 0%, leaving device program still running in the
+    # background when tar 20 / rst -proc / dow are sent, which causes
+    # "Failed to download / core is held in reset".
     child.sendline(f"device program {PALBOARD_BIN}")
-    index = child.expect([r'xsdb%', r'PLM stalled'], timeout=120)
+    index = child.expect([r'100%', r'PLM stalled'], timeout=180)
     if index == 1:
         # Consume the rest of the error output up to the prompt
         child.expect(r'xsdb%', timeout=60)
@@ -436,14 +477,22 @@ def setup_first_connection(nonreboot=False):
             "PLM stalled during BOOT.BIN programming. "
             "The board may need a power cycle. Run 'plm log' for details."
         )
-    time.sleep(5)  # allow PLM to fully initialise before continuing
-    print("[Connection 1] Device programmed, targeting device 20...")
-    
+    # '100%' matched — wait for the xsdb% prompt that follows
+    child.expect(r'xsdb%', timeout=60)
+    # PLM still needs to run after the bitstream transfer completes: it initialises
+    # PS clocks, releases the A78 core from reset, and sets up DDR.  On Versal,
+    # this boot sequence takes ~10-15 seconds after the 100% mark.  If we issue
+    # rst -proc too early the core is still in reset and xsdb returns
+    # "Cannot halt processor core: reset detected / Failed to download".
+    print("[Connection 1] Device programmed — waiting 15s for PLM boot sequence...")
+    time.sleep(15)
+    print("[Connection 1] Targeting device 20...")
+
     # Step 10: Target 20
     child.sendline("tar 20")
     child.expect(r'xsdb%', timeout=60)
     print("[Connection 1] Resetting processor...")
-    
+
     # Step 11: Reset processor
     child.sendline("rst -proc")
     child.expect(r'xsdb%', timeout=60)
@@ -487,11 +536,26 @@ def setup_second_connection():
     print("[Connection 2] In systest, connecting to com0...")
 
     # Step 3: Connect to com0 (no output until ELF runs on first connection)
+    # On some systest controllers (cpg-lab-06/palmyra), 'connect com0' returns
+    # Systest# immediately without opening the serial port.  Detect this and
+    # fall back to reading /dev/ttyUSB1 directly via SSH cat.
     log.debug("setup_second_connection: sending 'connect com0'")
     child.sendline("connect com0")
-    child.expect(r'Connecting to device com0.*escape', timeout=60)
-    log.debug("setup_second_connection: com0 connected")
-    print("[Connection 2] Connected to com0, listening for output...")
+    idx = child.expect([r'Connecting to device com0.*escape', r'Systest[#>]', pexpect.TIMEOUT], timeout=10)
+    if idx == 0:
+        log.debug("setup_second_connection: com0 connected via systest")
+        print("[Connection 2] Connected to com0, listening for output...")
+    else:
+        # Systest com0 not available; exit systest and read serial port directly
+        log.debug("setup_second_connection: com0 unavailable, falling back to /dev/ttyUSB1")
+        print("[Connection 2] com0 not available in systest; falling back to /dev/ttyUSB1 direct read...")
+        child.sendline("exit")
+        child.expect([r'\$\s*$', r'#\s*$', r'>\s*$'], timeout=30)
+        print("[Connection 2] Back to bash, starting cat on /dev/ttyUSB1...")
+        # stty configures the UART at 115200 baud 8N1; cat streams output to us
+        child.sendline("stty -F /dev/ttyUSB1 115200 cs8 -cstopb -parenb raw && cat /dev/ttyUSB1")
+        log.debug("setup_second_connection: /dev/ttyUSB1 stream started")
+        print("[Connection 2] Streaming from /dev/ttyUSB1...")
 
     return child
 
@@ -526,7 +590,7 @@ def download_elf_and_continue(child, elf_path):
     # UART/PS peripherals are never initialized so we get zero console output
     # and waste 120 seconds waiting.
     log.debug("download_elf_and_continue: waiting for download result...")
-    index = child.expect([r'Successfully downloaded', r'PLM stalled'], timeout=120)
+    index = child.expect([r'Successfully downloaded', r'PLM stalled', r'Failed to download', r'core is held in reset'], timeout=120)
     if index == 1:
         # Consume remaining output up to the prompt
         child.expect(r'xsdb%', timeout=60)
@@ -534,6 +598,13 @@ def download_elf_and_continue(child, elf_path):
         print("BOOT.BIN did not initialize PS peripherals (UART etc.).")
         print("The board needs a full power cycle and re-programming of BOOT.BIN.")
         print("Run 'plm log' in xsdb for details.")
+        return False
+    if index >= 2:
+        # "Failed to download" or "core is held in reset" — rst -proc did not
+        # bring the A72 out of reset before we tried to download the ELF.
+        child.expect(r'xsdb%', timeout=60)
+        print("\n[ERROR] ELF download failed: core still in reset after rst -proc.")
+        print("Possible cause: BOOT.BIN device program was not fully complete before proceeding.")
         return False
     child.expect(r'xsdb%', timeout=60)
     log.debug("download_elf_and_continue: download complete")
