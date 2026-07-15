@@ -4,41 +4,51 @@ App Writing and Deployment Tutorial: [tutorial.md](tutorial/tutorial.md)
 
 ## What is the aiehlc?
 
-AIEHLC(AIE high‑level compiler) is a lightweight, efficient high level compilation integration solution for AIE (AI Engine) applications on Versal AI Core Series. It integrates with pre-built hardware designs (PDI) to effectively decouple hardware and software application development, providing a comprehensive end-to-end deployment solution.
+AIEHLC (AIE High‑Level Compiler) is an LLVM & MLIR-based, lightweight, and efficient high-level
+compiler tailored for AIE (AI Engine) applications on the Versal AI Core Series. By leveraging spatial types and policies declared within the kernel code, the compiler automatically generates routing, tiling, and scheduling logic, eliminating the need to manually construct spatial compute graph connections.
+
+Furthermore, the compiler features a high-level runtime that wraps the AIE driver API, ensuring seamless interoperability with CUDA/ROCm-compatible API use cases. This runtime solution integrates with bare-metal platforms to support direct ELF deployment on bare-metal hardware such as APUs and RPUs. It also co-operates with pre-built hardware designs (PDIs) to effectively decouple hardware and software application development, ultimately delivering a comprehensive, end-to-end deployment solution.
 
 Key features:
 
-> Integrate and Support the [Synopsys](https://www.synopsys.com/) chess compiler (from the [Vitis](https://www.amd.com/en/products/software/adaptive-socs-and-fpgas/vitis.html) package) for kernel code compilation
+> **Simplifies** the AIE application development learning curve for AIE development
 
-> It Also Integrate and Supports the opensource [LLVM-AIE](https://github.com/Xilinx/llvm-aie) compiler solution for kernel compilation
+> **Native provenance mapping** for easier debugging and handling abstraction leaks.
 
-> Simplifies the AIE application development learning curve for rapid prototyping
+> **Kernel-requirement-driven** programming with automatic routing, tiling, and scheduling.
+
+> **Automatic ping-pong** buffering and lock synchronization, overlaps DMA and compute without manual effort.
+
+> **Memory-aware auto scheduling**, validates per-tile buffer budgets at compile time, catching capacity violations before they reach hardware.
+
+> **Collective transfer primitives**, — built-in one-to-many broadcast and many-to-one gather for efficient multi-tile data distribution.
+
+> **Six-level progressive MLIR lowering**, letting developers tune at whichever abstraction layer matches their expertise.
 
 
-AIEHLC empowers users to develop straightforward AIE applications using only the AIE driver C API, eliminating the need to learn additional domain-specific languages (DSLs). This streamlined approach target to accelerates the development process and reduces barriers to entry for AIE application development.
+AIEHLC enables developers to easily build AIE applications by relying solely on the AIE driver C API and CUDA/ROCm-compatible APIs, eliminating the need to learn additional domain-specific languages (DSLs). This streamlined approach target to accelerates the development process and reduces barriers to entry for AIE application development.
 
 ### Architecture
 
-![architecture diagram](doc/diagram/architecture.png)
+![architecture diagram C frontend](doc/diagram/architecture.png)
+
+![architecture diagram 6 IR](doc/diagram/autorouting_ir_architecture.png)
 
 ### What it is Not
 
-1. It serves as a complementary solution and is not intended to replace the official AIE software application compilation tools.
+1. It is not a VLIW processor compiler; instead, it relies on Synopsys or llvm-aie to provide processor-level support.
 2. It focuses solely on software compilation and does not function as a hardware design compilation tool.
 3. It currently supports only Versal AI Core Series devices and does not provide compatibility with Ryzen AI SOCs.
 
 ### What are the Limitations
 
-Its primary goal is to help system engineers simplify the learning curve for AIE application development and enable quick prototyping. As a result, it may not be as feature-complete as the official tools available.
+Currently only support GMIO and no PLIO support yet.
 
 ### What are the Trade-Offs
 
 1. The pre-built PDI (hardware design) supports only GMIO interfaces. For PLIO (FPGA) support, users must implement a customized hardware design with the appropriate PLIO logic components.
 
-2. The pre-built hardware design (PDI) delivers adequate performance for most applications. However, for use cases requiring optimal Network-on-Chip (NOC) performance, the official Vitis hardware/software tools are recommended.
-
-3. Users must configure routing at runtime. For Ahead-of-Time (AOT) routing support, it is recommended to utilize Vitis or AIECompiler tools instead.
-
+2. The primary programming language is C. However, users who wish to perform low-level tuning can interact directly with the MLIR programming layer.
 
 ## Examples
 
