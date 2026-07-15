@@ -198,8 +198,10 @@ $(ROUTING_OBJ): $(ROUTING_SRC) | $(BUILD_DIR)
 endif
 
 ifneq ($(strip $(KERNEL_ELF_INIT_OBJ)),)
-$(BUILD_DIR)/kernel_elf_init.cc: | $(BUILD_DIR)
-	@echo "[gen] kernel_elf_init.cc  (sym=$(if $(KERNEL_FUNCNAME),_binary_kernel_$(KERNEL_FUNCNAME)_start,_binary_kernel_start))"
+.PHONY: FORCE
+FORCE:
+
+$(BUILD_DIR)/kernel_elf_init.cc: FORCE | $(BUILD_DIR)
 	@printf '#include "aie_runtime.h"\n\
 extern "C" {\n\
     extern unsigned char _binary_kernel_$(if $(KERNEL_FUNCNAME),$(KERNEL_FUNCNAME)_,)start[];\n\
@@ -212,7 +214,11 @@ static void _kernel_elf_register(void) {\n\
             _binary_kernel_$(if $(KERNEL_FUNCNAME),$(KERNEL_FUNCNAME)_,)end)\n\
         __Runtime_set_kernel_elf(\n\
             _binary_kernel_$(if $(KERNEL_FUNCNAME),$(KERNEL_FUNCNAME)_,)start);\n\
-}\n' > $@
+}\n' > $@.tmp
+	@if ! cmp -s $@.tmp $@ 2>/dev/null; then \
+	    mv $@.tmp $@; \
+	    echo "[gen] kernel_elf_init.cc  (sym=$(if $(KERNEL_FUNCNAME),_binary_kernel_$(KERNEL_FUNCNAME)_start,_binary_kernel_start))"; \
+	else rm -f $@.tmp; fi
 
 $(KERNEL_ELF_INIT_OBJ): $(BUILD_DIR)/kernel_elf_init.cc | $(BUILD_DIR)
 	@echo "[compile] kernel_elf_init.cc"

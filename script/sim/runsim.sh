@@ -78,7 +78,7 @@ if [ "$SKIP_BUILD" -eq 0 ]; then
         ${KERNEL_NAMES:+KERNEL_NAMES="${KERNEL_NAMES}"} \
         ${KERNEL_NAMES:+KERNEL_FUNCNAME="$(echo "${KERNEL_NAMES}" | cut -d' ' -f1)"} \
         USE_LLVM_AIE="${USE_LLVM_AIE}"
-    if [ "$STUB_ALL" -eq 1 ]; then
+    if [ "$STUB_ALL" -eq 1 ] || [ -n "$STUB_TILES" ]; then
         echo "  Building stub kernel..."
         make -C "${SIM_DIR}" \
             AIEHLC_HOST_SRC="${HOST_SRC_ABS}" \
