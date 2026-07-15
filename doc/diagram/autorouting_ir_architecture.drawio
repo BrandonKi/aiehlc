@@ -1,0 +1,158 @@
+<!--
+******************************************************************************
+* Copyright (C) 2025 Advanced Micro Devices, Inc. All Rights Reserved.
+* SPDX-License-Identifier: Apache-2.0
+******************************************************************************
+-->
+
+<mxfile host="app.diagrams.net">
+    <diagram id="6levelIR" name="6level-IR">
+        <mxGraphModel dx="1400" dy="800" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="2100" pageHeight="900" background="#ffffff" math="0" shadow="0">
+            <root>
+                <mxCell id="0"/>
+                <mxCell id="1" parent="0"/>
+
+                <!-- ================= TITLE ================= -->
+                <mxCell id="title" value="&lt;h2&gt;&lt;font face=&quot;Comic Sans MS&quot;&gt;AIEHLC &amp;#8226;  6-Level Progressive MLIR Lowering&lt;/font&gt;&lt;/h2&gt;" style="text;html=1;align=left;verticalAlign=middle;resizable=0;points=[];autosize=1;strokeColor=none;fillColor=none;" parent="1" vertex="1">
+                    <mxGeometry x="40" y="20" width="900" height="50" as="geometry"/>
+                </mxCell>
+                <mxCell id="subtitle" value="&lt;font face=&quot;Comic Sans MS&quot;&gt;Expansion of the &quot;AIE Frontend (MLIR-based)&quot; stage &amp;#8212; kernel-requirement-driven, with auto routing / tiling / scheduling&lt;/font&gt;" style="text;html=1;align=left;verticalAlign=middle;resizable=0;points=[];autosize=1;strokeColor=none;fillColor=none;fontSize=12;" parent="1" vertex="1">
+                    <mxGeometry x="42" y="66" width="1000" height="24" as="geometry"/>
+                </mxCell>
+
+                <!-- ================= LEVEL LABELS ================= -->
+                <mxCell id="lbl0" value="&lt;b&gt;&lt;font face=&quot;Comic Sans MS&quot;&gt;Input&lt;/font&gt;&lt;/b&gt;" style="text;html=1;align=center;strokeColor=none;fillColor=none;fontSize=13;" parent="1" vertex="1">
+                    <mxGeometry x="40" y="250" width="150" height="30" as="geometry"/>
+                </mxCell>
+                <mxCell id="lbl1" value="&lt;b&gt;&lt;font face=&quot;Comic Sans MS&quot;&gt;Level 1&lt;/font&gt;&lt;/b&gt;" style="text;html=1;align=center;strokeColor=none;fillColor=none;fontSize=13;" parent="1" vertex="1">
+                    <mxGeometry x="240" y="250" width="170" height="30" as="geometry"/>
+                </mxCell>
+                <mxCell id="lbl2" value="&lt;b&gt;&lt;font face=&quot;Comic Sans MS&quot;&gt;Level 2&lt;/font&gt;&lt;/b&gt;" style="text;html=1;align=center;strokeColor=none;fillColor=none;fontSize=13;" parent="1" vertex="1">
+                    <mxGeometry x="470" y="250" width="170" height="30" as="geometry"/>
+                </mxCell>
+                <mxCell id="lbl3" value="&lt;b&gt;&lt;font face=&quot;Comic Sans MS&quot;&gt;Level 3&lt;/font&gt;&lt;/b&gt;" style="text;html=1;align=center;strokeColor=none;fillColor=none;fontSize=13;" parent="1" vertex="1">
+                    <mxGeometry x="700" y="250" width="170" height="30" as="geometry"/>
+                </mxCell>
+                <mxCell id="lbl4" value="&lt;b&gt;&lt;font face=&quot;Comic Sans MS&quot;&gt;Level 4&lt;/font&gt;&lt;/b&gt;" style="text;html=1;align=center;strokeColor=none;fillColor=none;fontSize=13;" parent="1" vertex="1">
+                    <mxGeometry x="930" y="250" width="180" height="30" as="geometry"/>
+                </mxCell>
+                <mxCell id="lbl5" value="&lt;b&gt;&lt;font face=&quot;Comic Sans MS&quot;&gt;Level 5&lt;/font&gt;&lt;/b&gt;" style="text;html=1;align=center;strokeColor=none;fillColor=none;fontSize=13;" parent="1" vertex="1">
+                    <mxGeometry x="1160" y="250" width="170" height="30" as="geometry"/>
+                </mxCell>
+                <mxCell id="lbl6" value="&lt;b&gt;&lt;font face=&quot;Comic Sans MS&quot;&gt;Level 6&lt;/font&gt;&lt;/b&gt;" style="text;html=1;align=center;strokeColor=none;fillColor=none;fontSize=13;" parent="1" vertex="1">
+                    <mxGeometry x="1390" y="250" width="170" height="30" as="geometry"/>
+                </mxCell>
+                <mxCell id="lblB" value="&lt;b&gt;&lt;font face=&quot;Comic Sans MS&quot;&gt;Backend&lt;/font&gt;&lt;/b&gt;" style="text;html=1;align=center;strokeColor=none;fillColor=none;fontSize=13;" parent="1" vertex="1">
+                    <mxGeometry x="1620" y="250" width="170" height="30" as="geometry"/>
+                </mxCell>
+
+                <!-- ================= MAIN SPINE ================= -->
+                <!-- Input -->
+                <mxCell id="nInput" value="&lt;font face=&quot;Comic Sans MS&quot;&gt;&lt;b&gt; Kernel&lt;br&gt;Requirements&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:10px&quot;&gt;(compute + I/O intent)&lt;/font&gt;&lt;/font&gt;" style="ellipse;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;sketch=1;curveFitting=1;jiggle=1;shadow=0;strokeWidth=2;" parent="1" vertex="1">
+                    <mxGeometry x="40" y="305" width="150" height="100" as="geometry"/>
+                </mxCell>
+
+                <!-- L1 routing -->
+                <mxCell id="nL1" value="&lt;font face=&quot;Comic Sans MS&quot;&gt;&lt;b&gt;routing IR (UIR)&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:10px&quot;&gt;physical topology + logical dataflow co-exist, linked by SSA&lt;/font&gt;&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;sketch=1;curveFitting=1;jiggle=1;strokeWidth=2;arcSize=12;" parent="1" vertex="1">
+                    <mxGeometry x="240" y="305" width="170" height="100" as="geometry"/>
+                </mxCell>
+
+                <!-- L2 dmap -->
+                <mxCell id="nL2" value="&lt;font face=&quot;Comic Sans MS&quot;&gt;&lt;b&gt;dmap IR&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:10px&quot;&gt;logical dataflow: streams, ports, push/pull&lt;/font&gt;&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;sketch=1;curveFitting=1;jiggle=1;strokeWidth=2;arcSize=12;" parent="1" vertex="1">
+                    <mxGeometry x="470" y="305" width="170" height="100" as="geometry"/>
+                </mxCell>
+
+                <!-- L3 dmaphop -->
+                <mxCell id="nL3" value="&lt;font face=&quot;Comic Sans MS&quot;&gt;&lt;b&gt;dmaphop IR&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:10px&quot;&gt;physical path planning + MemTile caching&lt;/font&gt;&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;sketch=1;curveFitting=1;jiggle=1;strokeWidth=2;arcSize=12;" parent="1" vertex="1">
+                    <mxGeometry x="700" y="305" width="170" height="100" as="geometry"/>
+                </mxCell>
+
+                <!-- L4 dfscheblueprint -->
+                <mxCell id="nL4" value="&lt;font face=&quot;Comic Sans MS&quot;&gt;&lt;b&gt;dfscheblueprint IR&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:10px&quot;&gt;schedule blueprint: transfer manifests, resource groups, bindings&lt;/font&gt;&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;sketch=1;curveFitting=1;jiggle=1;strokeWidth=2;arcSize=12;" parent="1" vertex="1">
+                    <mxGeometry x="930" y="305" width="180" height="100" as="geometry"/>
+                </mxCell>
+
+                <!-- L5 dfschedule -->
+                <mxCell id="nL5" value="&lt;font face=&quot;Comic Sans MS&quot;&gt;&lt;b&gt;dfschedule IR&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:10px&quot;&gt;runtime schedule: ping-pong buffers, locks, DMA sync&lt;/font&gt;&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;sketch=1;curveFitting=1;jiggle=1;strokeWidth=2;arcSize=12;" parent="1" vertex="1">
+                    <mxGeometry x="1160" y="305" width="170" height="100" as="geometry"/>
+                </mxCell>
+
+                <!-- L6 host+kernel API -->
+                <mxCell id="nL6" value="&lt;font face=&quot;Comic Sans MS&quot;&gt;&lt;b&gt;Host + Kernel API&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:10px&quot;&gt;emitted host orchestration &amp;amp; device kernel code&lt;/font&gt;&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;sketch=1;curveFitting=1;jiggle=1;strokeWidth=2;arcSize=12;" parent="1" vertex="1">
+                    <mxGeometry x="1390" y="305" width="170" height="100" as="geometry"/>
+                </mxCell>
+
+                <!-- Backend -->
+                <mxCell id="nBackend" value="&lt;font face=&quot;Comic Sans MS&quot;&gt;&lt;b&gt;Backend&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:10px&quot;&gt;chess / llvm-aie / ARM linker&lt;br&gt;&amp;#8594; Baremetal &amp;amp; Linux ELF&lt;/font&gt;&lt;/font&gt;" style="ellipse;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;sketch=1;curveFitting=1;jiggle=1;shadow=0;strokeWidth=2;" parent="1" vertex="1">
+                    <mxGeometry x="1620" y="305" width="160" height="100" as="geometry"/>
+                </mxCell>
+
+                <!-- ================= SPINE EDGES (with pass labels) ================= -->
+                <mxCell id="e0" value="&lt;font face=&quot;Comic Sans MS&quot; style=&quot;font-size:10px&quot;&gt;build routing IR&lt;/font&gt;" style="edgeStyle=none;html=1;endArrow=classic;endSize=16;strokeWidth=2;curved=1;sketch=1;jiggle=1;curveFitting=1;exitX=1;exitY=0.5;entryX=0;entryY=0.5;labelBackgroundColor=#ffffff;" parent="1" source="nInput" target="nL1" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e1" value="&lt;font face=&quot;Comic Sans MS&quot; style=&quot;font-size:10px&quot;&gt;RoutingUnrolling&lt;br&gt;+ RoutingToDmap&lt;/font&gt;" style="edgeStyle=none;html=1;endArrow=classic;endSize=16;strokeWidth=2;curved=1;sketch=1;jiggle=1;curveFitting=1;exitX=1;exitY=0.5;entryX=0;entryY=0.5;labelBackgroundColor=#ffffff;" parent="1" source="nL1" target="nL2" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e2" value="&lt;font face=&quot;Comic Sans MS&quot; style=&quot;font-size:10px&quot;&gt;DmapToDmaphop&lt;/font&gt;" style="edgeStyle=none;html=1;endArrow=classic;endSize=16;strokeWidth=2;curved=1;sketch=1;jiggle=1;curveFitting=1;exitX=1;exitY=0.5;entryX=0;entryY=0.5;labelBackgroundColor=#ffffff;" parent="1" source="nL2" target="nL3" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e3" value="&lt;font face=&quot;Comic Sans MS&quot; style=&quot;font-size:10px&quot;&gt;DmaphopToBlueprint&lt;/font&gt;" style="edgeStyle=none;html=1;endArrow=classic;endSize=16;strokeWidth=2;curved=1;sketch=1;jiggle=1;curveFitting=1;exitX=1;exitY=0.5;entryX=0;entryY=0.5;labelBackgroundColor=#ffffff;" parent="1" source="nL3" target="nL4" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e4" value="&lt;font face=&quot;Comic Sans MS&quot; style=&quot;font-size:10px&quot;&gt;BlueprintToSchedule&lt;br&gt;(+ Canonicalize, WaitMerge)&lt;/font&gt;" style="edgeStyle=none;html=1;endArrow=classic;endSize=16;strokeWidth=2;curved=1;sketch=1;jiggle=1;curveFitting=1;exitX=1;exitY=0.5;entryX=0;entryY=0.5;labelBackgroundColor=#ffffff;" parent="1" source="nL4" target="nL5" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e5" value="&lt;font face=&quot;Comic Sans MS&quot; style=&quot;font-size:10px&quot;&gt;DfscheduleToApi /&lt;br&gt;DfscheduleToKernelApi&lt;/font&gt;" style="edgeStyle=none;html=1;endArrow=classic;endSize=16;strokeWidth=2;curved=1;sketch=1;jiggle=1;curveFitting=1;exitX=1;exitY=0.5;entryX=0;entryY=0.5;labelBackgroundColor=#ffffff;" parent="1" source="nL5" target="nL6" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e6" value="&lt;font face=&quot;Comic Sans MS&quot; style=&quot;font-size:10px&quot;&gt;codegen (EmitC / LLVM)&lt;/font&gt;" style="edgeStyle=none;html=1;endArrow=classic;endSize=16;strokeWidth=2;curved=1;sketch=1;jiggle=1;curveFitting=1;exitX=1;exitY=0.5;entryX=0;entryY=0.5;labelBackgroundColor=#ffffff;" parent="1" source="nL6" target="nBackend" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+
+                <!-- ================= PROVENANCE OUTPUTS (above spine) ================= -->
+                <mxCell id="prov1" value="&lt;font face=&quot;Comic Sans MS&quot;&gt;&lt;b&gt;Provenance Map&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:10px&quot;&gt;dmaphop-level JSON&lt;/font&gt;&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f0f0ff;strokeColor=#9673a6;sketch=1;curveFitting=1;jiggle=1;dashed=1;dashPattern=6 6;strokeWidth=2;arcSize=20;" parent="1" vertex="1">
+                    <mxGeometry x="705" y="140" width="160" height="70" as="geometry"/>
+                </mxCell>
+                <mxCell id="prov2" value="&lt;font face=&quot;Comic Sans MS&quot;&gt;&lt;b&gt;Provenance Map&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:10px&quot;&gt;dfschedule-level JSON&lt;/font&gt;&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f0f0ff;strokeColor=#9673a6;sketch=1;curveFitting=1;jiggle=1;dashed=1;dashPattern=6 6;strokeWidth=2;arcSize=20;" parent="1" vertex="1">
+                    <mxGeometry x="1165" y="140" width="160" height="70" as="geometry"/>
+                </mxCell>
+                <mxCell id="ep1" value="" style="edgeStyle=none;html=1;endArrow=open;endSize=10;strokeWidth=2;curved=1;sketch=1;jiggle=1;dashed=1;dashPattern=6 6;exitX=0.5;exitY=0;entryX=0.5;entryY=1;strokeColor=#9673a6;" parent="1" source="nL3" target="prov1" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="ep2" value="" style="edgeStyle=none;html=1;endArrow=open;endSize=10;strokeWidth=2;curved=1;sketch=1;jiggle=1;dashed=1;dashPattern=6 6;exitX=0.5;exitY=0;entryX=0.5;entryY=1;strokeColor=#9673a6;" parent="1" source="nL5" target="prov2" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="provNote" value="&lt;font face=&quot;Comic Sans MS&quot; style=&quot;font-size:10px&quot;&gt;native provenance &amp;#8594; debug &amp;amp; abstraction-leak tracing&lt;/font&gt;" style="text;html=1;align=center;strokeColor=none;fillColor=none;fontColor=#9673a6;" parent="1" vertex="1">
+                    <mxGeometry x="900" y="112" width="330" height="20" as="geometry"/>
+                </mxCell>
+
+                <!-- ================= STATIC ROUTING FORK (below spine) ================= -->
+                <mxCell id="fork" value="&lt;font face=&quot;Comic Sans MS&quot;&gt;&lt;b&gt;routinghw IR&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:10px&quot;&gt;hardware routing resources&lt;/font&gt;&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;sketch=1;curveFitting=1;jiggle=1;strokeWidth=2;arcSize=12;" parent="1" vertex="1">
+                    <mxGeometry x="705" y="500" width="160" height="80" as="geometry"/>
+                </mxCell>
+                <mxCell id="forkOut" value="&lt;font face=&quot;Comic Sans MS&quot;&gt;&lt;b&gt;Static Routing Config&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:10px&quot;&gt;(RoutingConstantFold &amp;#8594; .prx)&lt;/font&gt;&lt;/font&gt;" style="ellipse;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;sketch=1;curveFitting=1;jiggle=1;shadow=0;strokeWidth=2;" parent="1" vertex="1">
+                    <mxGeometry x="935" y="498" width="170" height="84" as="geometry"/>
+                </mxCell>
+                <mxCell id="ef1" value="&lt;font face=&quot;Comic Sans MS&quot; style=&quot;font-size:10px&quot;&gt;DmaphopToRoutinghw&lt;/font&gt;" style="edgeStyle=none;html=1;endArrow=classic;endSize=16;strokeWidth=2;curved=1;sketch=1;jiggle=1;exitX=0.5;exitY=1;entryX=0.5;entryY=0;strokeColor=#d6b656;labelBackgroundColor=#ffffff;" parent="1" source="nL3" target="fork" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="ef2" value="" style="edgeStyle=none;html=1;endArrow=classic;endSize=16;strokeWidth=2;curved=1;sketch=1;jiggle=1;exitX=1;exitY=0.5;entryX=0;entryY=0.5;strokeColor=#82b366;" parent="1" source="fork" target="forkOut" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="forkLbl" value="&lt;font face=&quot;Comic Sans MS&quot; style=&quot;font-size:11px&quot;&gt;&lt;b&gt;Path A &amp;#8212; static routing config&lt;/b&gt;&lt;/font&gt;" style="text;html=1;align=left;strokeColor=none;fillColor=none;fontColor=#82b366;" parent="1" vertex="1">
+                    <mxGeometry x="705" y="600" width="400" height="20" as="geometry"/>
+                </mxCell>
+                <mxCell id="spineLbl" value="&lt;font face=&quot;Comic Sans MS&quot; style=&quot;font-size:11px&quot;&gt;&lt;b&gt;Path B &amp;#8212; dynamic host + kernel code&lt;/b&gt;&lt;/font&gt;" style="text;html=1;align=left;strokeColor=none;fillColor=none;fontColor=#6c8ebf;" parent="1" vertex="1">
+                    <mxGeometry x="1160" y="418" width="400" height="20" as="geometry"/>
+                </mxCell>
+
+                <!-- ================= FEATURE LEGEND ================= -->
+                <mxCell id="legend" value="&lt;font face=&quot;Comic Sans MS&quot;&gt;&lt;b&gt;Cross-cutting features&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:11px&quot;&gt;&amp;#8226; auto routing / tiling / scheduling&amp;nbsp;&amp;nbsp; &amp;#8226; auto ping-pong + lock sync&lt;br&gt;&amp;#8226; memory-aware per-tile budget check&amp;nbsp;&amp;nbsp; &amp;#8226; collective transfers (broadcast / gather)&lt;br&gt;&amp;#8226; multi-generation AIE targeting&amp;nbsp;&amp;nbsp; &amp;#8226; full-pipeline IR dump at every stage&lt;/font&gt;&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;align=left;verticalAlign=top;fillColor=#fafafa;strokeColor=#999999;sketch=1;curveFitting=1;jiggle=1;strokeWidth=1;arcSize=6;spacing=8;" parent="1" vertex="1">
+                    <mxGeometry x="1350" y="500" width="440" height="110" as="geometry"/>
+                </mxCell>
+
+            </root>
+        </mxGraphModel>
+    </diagram>
+</mxfile>
