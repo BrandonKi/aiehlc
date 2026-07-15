@@ -28,11 +28,36 @@ Key features:
 
 AIEHLC enables developers to easily build AIE applications by relying solely on the AIE driver C API and CUDA/ROCm-compatible APIs, eliminating the need to learn additional domain-specific languages (DSLs). This streamlined approach target to accelerates the development process and reduces barriers to entry for AIE application development.
 
+### Emaple code conv2d
+
+```c
+//kernel code 
+constexpr aie::GlobalPolicy conv_policy = {.fullconnect_auto = 0};
+__global__(conv_policy) void conv2d_spatial(
+    aie::port<input_window_int8 *, RowBC_spatial> win_a, // raw slab [halo_slice, W*C] (derived)
+    aie::port<input_window_int8 *, ColBC> win_b,         // filter [K, tile_N]
+    aie::port<output_window_int8 *, LtoR_Merge> win_c    // output [oh_per_row*OW, tile_N]
+) {
+   .....
+}
+
+//host code 
+int main() {
+    //...
+    aieSetDevice(0);
+    aieArray device;
+    aieMesh mesh = device.partition({3, 6, 0, 6}, HW_ROWS, HW_COLS);
+    //...
+    conv2d_spatial<<<mesh>>>(input, filter, output, M, N, K);
+    //...
+}
+```
+
 ### Architecture
 
-![architecture diagram C frontend](doc/diagram/architecture.png)
-
 ![architecture diagram 6 IR](doc/diagram/autorouting_ir_architecture.png)
+
+![architecture diagram C frontend](doc/diagram/architecture.png)
 
 ### What it is Not
 
