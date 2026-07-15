@@ -227,92 +227,6 @@ constexpr aie::GemmSpace LtoR_Merge = {
 // compiler needs to know the full tile coverage
 
 // ═══════════════════════════════════════════════════════════════════════════
-// KERNEL: conv2d_im2col
-//
-// From the kernel's perspective, this is a standard matmul:
-//   C_tile[tile_rows x tile_cols] = A_tile[tile_rows x K] * B_tile[K x tile_cols]
-//
-// where:
-//   A_tile = im2col patches (DMA rearranged input data)
-//   B_tile = filter weights (flat layout, no rearrangement needed)
-//   K      = KH * KW * C = 9
-//
-// The kernel does NOT know it's computing conv2d — it just multiplies
-// whatever data the DMA delivers. This separation of concerns is key:
-//   - DMA handles data layout transformation (im2col)
-//   - Core tile handles computation (matmul)
-// ═══════════════════════════════════════════════════════════════════════════
-__global__ void conv2d_im2col(aie::port<input_window_int8 *, RowBC_im2col> win_a, // im2col DMA [tile_M, K] (derived)
-                              aie::port<input_window_int8 *, ColBC> win_b,        // filter weights [K, tile_N]
-                              aie::port<output_window_int8 *, LtoR_Merge> win_c   // output [tile_M, tile_N]
-) {
-    // Compiler-resolved tiling parameters
-    const int tile_rows = aie::get_tile_rows(); // M / HW_ROWS per tile
-    const int tile_cols = aie::get_tile_cols(); // N / HW_COLS per tile
-    const int k_dim = aie::get_k_dim();         // K = KH*KW*C = 9
-    const int num_a_rounds = aie::get_num_rounds(win_a);
-    const int num_b_rounds = aie::get_num_rounds(win_b);
-    const int num_c_rounds = aie::get_num_rounds(win_c);
-    const int buf_sz_a = aie::get_buffer_size(win_a);
-    const int buf_sz_b = aie::get_buffer_size(win_b);
-    const int buf_sz_c = aie::get_buffer_size(win_c);
-
-    // Derived per-round sizes
-    const int rows_per_round = buf_sz_a / k_dim;
-    const int cols_per_round = buf_sz_b / k_dim;
-
-    // Local buffers
-    int8_t all_A[tile_rows * k_dim];
-    int8_t local_out[tile_rows * tile_cols];
-
-    // ===== Phase 1: Receive and cache all A (im2col) chunks =====
-    // The DMA has already extracted sliding-window patches from the input
-    // image using multi-dimensional BD addressing. Each patch is KH*KW*C = 9
-    // elements, corresponding to one output position (oh, ow).
-    for (int ra = 0; ra < num_a_rounds; ra++) {
-        int8_t *A_ptr = (int8_t *)acquire_input_window(win_a);
-        for (int i = 0; i < buf_sz_a; i++)
-            all_A[ra * buf_sz_a + i] = A_ptr[i];
-        release_input_window(win_a);
-    }
-
-    // ===== Phase 2: Stream B (filter), compute matmul =====
-    // B is the filter in B^T[N, K] layout (same convention as simplematmul).
-    // For N=1 (single filter), B^T is just a row vector of K=9 elements.
-    // For multi-filter (N>1), each row j of B^T is one filter's K weights.
-    for (int rb = 0; rb < num_b_rounds; rb++) {
-        int8_t *B_ptr = (int8_t *)acquire_input_window(win_b);
-
-        for (int ra = 0; ra < num_a_rounds; ra++) {
-            for (int i = 0; i < rows_per_round; i++) {
-                for (int j = 0; j < cols_per_round; j++) {
-                    int16_t sum = 0;
-                    for (int k = 0; k < k_dim; k++)
-                        sum += (int16_t)all_A[(ra * rows_per_round + i) * k_dim + k] * (int16_t)B_ptr[j * k_dim + k];
-                    if (sum > 127)
-                        sum = 127;
-                    else if (sum < -128)
-                        sum = -128;
-                    local_out[(ra * rows_per_round + i) * tile_cols + rb * cols_per_round + j] = (int8_t)sum;
-                }
-            }
-        }
-
-        release_input_window(win_b);
-    }
-
-    // ===== Phase 3: Output =====
-    // Output is [tile_M, tile_N] = subset of [OH*OW, F].
-    // Host will reshape the gathered output from [M, N] back to [OH, OW, F].
-    for (int rc = 0; rc < num_c_rounds; rc++) {
-        int8_t *out = (int8_t *)acquire_output_window(win_c);
-        for (int i = 0; i < buf_sz_c; i++)
-            out[i] = local_out[rc * buf_sz_c + i];
-        release_output_window(win_c);
-    }
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
 // KERNEL: conv2d_spatial
 //
 // Receives the RAW input slab in win_a as [halo_slice, W*C] (overlapping
@@ -443,16 +357,6 @@ __global__(conv_policy) void conv2d_spatial(
 
 // ═══════════════════════════════════════════════════════════════════════════
 // HOST
-//
-// 1. Allocate input image, filter, output buffer
-// 2. Initialize with test data
-// 3. Verify im2col equivalence on CPU (sanity check)
-// 4. Launch conv2d_im2col kernel on AIE mesh
-//    - The compiler pipeline generates DMA descriptors that perform im2col:
-//      input[8,8,1] → im2col stream [36, 9] via multi-dim BD
-//    - Filter [3,3,1,1] → flat [9, 1] via standard DMA
-//    - Output [36, 1] gathered and reshaped to [6,6,1]
-// 5. Verify AIE output against CPU conv2d reference
 // ═══════════════════════════════════════════════════════════════════════════
 int main() {
     printf("=== Conv2d via Im2col on AIE %dx%d Mesh ===\n", HW_ROWS, HW_COLS);
@@ -537,13 +441,8 @@ int main() {
     //   Model 1 (default): im2col — DMA extracts patches, kernel is pure matmul.
     //   Model 2 (-DUSE_SPATIAL_HALO): spatial halo — DMA sends raw IFM slabs,
     //                                 kernel does on-chip windowing + matmul.
-#ifdef USE_SPATIAL_HALO
     printf("\n--- Launching conv2d_spatial (spatial-halo) on AIE ---\n");
     conv2d_spatial<<<mesh>>>(input, filter, output, M, N, K);
-#else
-    printf("\n--- Launching conv2d_im2col on AIE ---\n");
-    conv2d_im2col<<<mesh>>>(input, filter, output, M, N, K);
-#endif
 
     // --- Wait and verify ---
     // device.synchronize();
