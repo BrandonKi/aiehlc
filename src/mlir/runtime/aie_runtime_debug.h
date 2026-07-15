@@ -1,6 +1,6 @@
 /******************************************************************************
  * Copyright (C) 2026 Advanced Micro Devices, Inc. All Rights Reserved.
- * SPDX-License-Identifier: MIT
+ * SPDX-License-Identifier: Apache-2.0
  ******************************************************************************/
 
 /**
@@ -665,9 +665,9 @@ void AieRt_PrintStreamSwitchConfigAll(XAie_DevInst *dev, const XAie_LocType *til
 
 /**
  * Read and print memory module perf counter 0 and 1 values for a single
- * core tile.  These are typically configured (via __Runtime_perfcnt_setup
- * or __Runtime_perfcnt_setup_mm2s_bd_finished) to count MM2S channel 0
- * and channel 1 BD finished events respectively.
+ * core tile.  These are typically armed by the AIE_DEBUG_FLAG_MM2SBDFINISH_COUNTER
+ * partition init (__Runtime_perfcnt_setup_mm2s_bd_finished_partition:
+ * counter 0 = MM2S ch0 FINISHED_BD, counter 1 = MM2S ch1 FINISHED_BD).
  *
  * @param dev   Device instance.
  * @param tile  Core tile location (row >= XAIE_AIE_TILE_ROW_START).

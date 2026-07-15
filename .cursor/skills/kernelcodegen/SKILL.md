@@ -1,5 +1,5 @@
 <!-- Copyright (C) 2025 Advanced Micro Devices, Inc. All Rights Reserved.
-     SPDX-License-Identifier: MIT -->
+     SPDX-License-Identifier: Apache-2.0 -->
 ---
 name: kernelcodegen
 description: AIE kernel code generation, compilation, and (optional) testing for the aiehlc flow. Use when you need to (1) Generate kernel C++ (kernel.cc, compute_kernel.cc) from the MLIR unitest pipeline, (2) Compile the kernel to an AIE kernel ELF with xchesscc/xchessmk, (3) Bypass or run kernel tests on HW. Complements hostcodegen (host side); kernel runs on AIE tiles.

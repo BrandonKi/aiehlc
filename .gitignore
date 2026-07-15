@@ -3,6 +3,9 @@ aout/
 build/
 .cache/
 
+# git worktrees
+.worktrees/
+
 # bsp
 thirdparty/arch
 

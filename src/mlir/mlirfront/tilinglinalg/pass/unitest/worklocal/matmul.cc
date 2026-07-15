@@ -8,7 +8,7 @@ void matmul(input_window_int8 *win_a, input_window_int8 *win_b, output_window_in
     const int tile_rows = 16;
     const int tile_cols = 16;
     const int eff_k = 64;       // K chunk size per k-round
-    const int k_rounds = 64;    // number of K-accumulation rounds
+    const int k_rounds = 4;     // number of K-accumulation rounds
     const int num_a_rounds = 1; // DMA rounds per k-round for A
     const int num_b_rounds = 1; // DMA rounds per k-round for B
     const int num_c_rounds = 1;
@@ -16,9 +16,9 @@ void matmul(input_window_int8 *win_a, input_window_int8 *win_b, output_window_in
     const int buf_sz_b = 1024;
     const int buf_sz_c = 256;
 
-    // Spatial sub-tile iteration counts
-    const int m_rounds = 64;
-    const int n_rounds = 64;
+    // Spatial sub-tile iteration counts (per-port: A->M rounds, B->N rounds)
+    const int m_rounds = 4;
+    const int n_rounds = 4;
 
     // Derived per-round sizes (using effective_k, not full k_dim)
     const int rows_per_round = buf_sz_a / eff_k;

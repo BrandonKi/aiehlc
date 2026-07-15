@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 ###############################################################################
 # Copyright (C) 2025 Advanced Micro Devices, Inc. All Rights Reserved.
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 ###############################################################################
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -35,7 +35,7 @@ setup_git_hooks() {
 #!/usr/bin/env bash
 ###############################################################################
 # Copyright (C) 2025 Advanced Micro Devices, Inc. All Rights Reserved.
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 ###############################################################################
 
 # This hook runs git-clang-format to check and format code before commits

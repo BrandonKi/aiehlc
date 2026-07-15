@@ -1,7 +1,7 @@
 /******************************************************************************
-* Copyright (C) 2025 Advanced Micro Devices, Inc. All Rights Reserved.
-* SPDX-License-Identifier: MIT
-******************************************************************************/
+ * Copyright (C) 2025 Advanced Micro Devices, Inc. All Rights Reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ ******************************************************************************/
 
 #include "AieDialect.h"
 #include "mlir/Bytecode/BytecodeOpInterface.h"
@@ -35,7 +35,7 @@
 #include "aiedialect.cc.inc"
 #define GET_OP_CLASSES
 #include "aieop.cc.inc"
-//using namespace mlir::aie;
+// using namespace mlir::aie;
 using namespace mlir;
 
 void AieADialect::initialize() {

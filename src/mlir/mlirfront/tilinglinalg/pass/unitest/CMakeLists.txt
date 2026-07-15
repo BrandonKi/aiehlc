@@ -1,6 +1,6 @@
 ###############################################################################
 # Copyright (C) 2025 Advanced Micro Devices, Inc. All Rights Reserved.
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 ###############################################################################
 
 cmake_minimum_required(VERSION 3.5)
@@ -108,6 +108,9 @@ set(SOURCE_FILES ${CMAKE_CURRENT_SOURCE_DIR}/test.cpp
                 ${CMAKE_CURRENT_SOURCE_DIR}/../passdmaptodmaphop/dmaptodmaphop.cpp
                 ${CMAKE_CURRENT_SOURCE_DIR}/../passdmaphoptoroutinghw/passdmaphoptoroutinghw.cpp
                 ${CMAKE_CURRENT_SOURCE_DIR}/../passblueprinttoschedule/passblueprinttoschedule.cpp
+                ${CMAKE_CURRENT_SOURCE_DIR}/../passblueprinttoschedule/helper/flowtransfer_common.cpp
+                ${CMAKE_CURRENT_SOURCE_DIR}/../passblueprinttoschedule/helper/flowtransfer_host.cpp
+                ${CMAKE_CURRENT_SOURCE_DIR}/../passblueprinttoschedule/helper/flowtransfer_kernel.cpp
                 ${CMAKE_CURRENT_SOURCE_DIR}/../passblueprinttoschedulekernel/passblueprinttoschedulekernel.cpp
                 ${CMAKE_CURRENT_SOURCE_DIR}/../passdmaphoptodfscheblueprint/passdmaphoptodfscheblueprint.cpp
                 ${CMAKE_CURRENT_SOURCE_DIR}/../passschedulecanonicalize/passschedulecanonicalize.cpp

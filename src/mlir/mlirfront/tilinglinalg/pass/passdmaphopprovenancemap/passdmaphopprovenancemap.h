@@ -1,6 +1,6 @@
 /******************************************************************************
  * Copyright (C) 2025 Advanced Micro Devices, Inc. All Rights Reserved.
- * SPDX-License-Identifier: MIT
+ * SPDX-License-Identifier: Apache-2.0
  ******************************************************************************/
 
 #ifndef __DMAPHOP_PROVENANCEMAP_PASS_H__
@@ -20,6 +20,9 @@ class DmaphopProvenanceMapPass : public PassWrapper<DmaphopProvenanceMapPass, Op
   public:
     DmaphopProvenanceMapPass() = default;
     explicit DmaphopProvenanceMapPass(const std::string &outputDir) : outputDir(outputDir) {}
+    DmaphopProvenanceMapPass(const std::string &outputDir, int startCol) : outputDir(outputDir), startCol(startCol) {}
+    DmaphopProvenanceMapPass(const std::string &outputDir, int startCol, const std::string &aieGen)
+        : outputDir(outputDir), startCol(startCol), aieGen(aieGen) {}
 
     void runOnOperation() override;
 
@@ -36,6 +39,8 @@ class DmaphopProvenanceMapPass : public PassWrapper<DmaphopProvenanceMapPass, Op
 
   private:
     std::string outputDir;
+    int startCol = -1;
+    std::string aieGen;
 };
 
 } // namespace mlir

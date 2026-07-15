@@ -1,29 +1,29 @@
 /******************************************************************************
-* Copyright (C) 2025 Advanced Micro Devices, Inc. All Rights Reserved.
-* SPDX-License-Identifier: MIT
-*
-* AIE Programming Model — Scaled Dot-Product Self-Attention
-*
-* Single-head self-attention with linear Q/K/V projections, int8
-* approximate softmax, and residual skip connection.
-* Scaled-down dimensions: seq_len=8, embed_dim=8.
-*
-*   Input (8x8) → Wq,Wk,Wv projections → Q,K,V (8x8 each)
-*   scores = Q * K^T / sqrt(d)  → approx softmax → attn_weights
-*   context = attn_weights * V  → Wo projection → output
-*   result = input + output     (residual connection)
-*
-* CUDA concepts kept (honest mapping):
-*   __global__             - kernel runs on AIE tiles
-*   kernel<<<mesh>>>()     - launch kernel across tile mesh
-*   aieDeviceSynchronize() - wait for all tiles to finish
-*   malloc/free            - plain C host memory allocation
-*
-* What the compiler handles automatically:
-*   DDR <-> tile DMA transfers, tensor partitioning, stream switch routing,
-*   buffer descriptors, lock synchronization, core load/run/wait
-*
-******************************************************************************/
+ * Copyright (C) 2025 Advanced Micro Devices, Inc. All Rights Reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * AIE Programming Model — Scaled Dot-Product Self-Attention
+ *
+ * Single-head self-attention with linear Q/K/V projections, int8
+ * approximate softmax, and residual skip connection.
+ * Scaled-down dimensions: seq_len=8, embed_dim=8.
+ *
+ *   Input (8x8) → Wq,Wk,Wv projections → Q,K,V (8x8 each)
+ *   scores = Q * K^T / sqrt(d)  → approx softmax → attn_weights
+ *   context = attn_weights * V  → Wo projection → output
+ *   result = input + output     (residual connection)
+ *
+ * CUDA concepts kept (honest mapping):
+ *   __global__             - kernel runs on AIE tiles
+ *   kernel<<<mesh>>>()     - launch kernel across tile mesh
+ *   aieDeviceSynchronize() - wait for all tiles to finish
+ *   malloc/free            - plain C host memory allocation
+ *
+ * What the compiler handles automatically:
+ *   DDR <-> tile DMA transfers, tensor partitioning, stream switch routing,
+ *   buffer descriptors, lock synchronization, core load/run/wait
+ *
+ ******************************************************************************/
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>

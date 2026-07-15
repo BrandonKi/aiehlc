@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 ###############################################################################
 # Copyright (C) 2025 Advanced Micro Devices, Inc. All Rights Reserved.
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 ###############################################################################
 # kernelcompile.sh - Compile a single AIE kernel source to a relocatable object
 #
@@ -38,8 +38,6 @@
 #                    --debug-output
 ###############################################################################
 
-set -e
-
 dbg_echo() {
     if [ "$DEBUG_OUTPUT" = 1 ]; then
         echo "$@"
@@ -48,11 +46,13 @@ dbg_echo() {
 
 run_cmd() {
     local command="$1"
+    local rc=0
     if [ "$DEBUG_OUTPUT" = 0 ]; then
-        $command > /dev/null 2>&1
+        $command > /dev/null 2>&1 || rc=$?
     else
-        $command
+        $command || rc=$?
     fi
+    return $rc
 }
 
 redefine_symbols() {
@@ -81,12 +81,56 @@ redefine_symbols() {
     done
 }
 
+# Emit DWARF line-table artifacts next to the kernel ELF:
+#   <out>/kernel.decodedline.txt  - readelf --debug-dump=decodedline (human readable)
+#   <out>/kernel.linemap.json     - parsed addr->file:line map for aiediag
+# Prefers system readelf, falls back to ${TOOL_PREFIX}readelf. Non-fatal.
+emit_linemap_artifacts() {
+    local out_dir="$1"
+    local elf="${out_dir}/kernel"
+    local decoded="${out_dir}/kernel.decodedline.txt"
+    local linemap="${out_dir}/kernel.linemap.json"
+
+    if [ ! -f "$elf" ]; then
+        echo "Warning: kernel ELF not found ($elf); skipping line-map artifacts"
+        return 0
+    fi
+
+    # Pick a readelf: prefer system, then cross-toolchain readelf.
+    local readelf_tool=""
+    if command -v readelf >/dev/null 2>&1; then
+        readelf_tool="readelf"
+    elif command -v "${TOOL_PREFIX}readelf" >/dev/null 2>&1; then
+        readelf_tool="${TOOL_PREFIX}readelf"
+    else
+        echo "Warning: no readelf found; skipping line-map artifacts"
+        return 0
+    fi
+
+    "$readelf_tool" --debug-dump=decodedline "$elf" > "$decoded" 2>/dev/null || true
+    if [ ! -s "$decoded" ]; then
+        echo "Warning: empty .debug_line table from $elf (no DWARF?); kernel.linemap.json not generated"
+        return 0
+    fi
+    dbg_echo "Wrote $decoded"
+
+    # Parse decodedline -> JSON line map.
+    local parser="${AIEHLC_ROOT_DIR}/script/parse_linemap.py"
+    if [ -f "$parser" ]; then
+        python3 "$parser" "$decoded" --elf "$elf" -o "$linemap" >/dev/null 2>&1 \
+            && dbg_echo "Wrote $linemap" \
+            || echo "Warning: parse_linemap.py failed; $linemap not generated"
+    else
+        echo "Warning: parse_linemap.py not found at $parser; $linemap not generated"
+    fi
+}
+
 usage() {
     echo "Usage: $0 --kernel-cc <file.cc> --output-dir <dir> --func-name <name>"
     echo "           --aie-version <1|2|5> [--prx <file.prx>] [--ld-script <file.ld>]"
     echo "           [--platform <baremetal|linux>] [--use-llvm-aie] [--debug-output]"
     echo "           [--include-base <path>] [--commons-dir <path>]"
-    exit 1
+    return 1
 }
 
 # --- Parse arguments ---
@@ -144,10 +188,14 @@ fi
 
 if [ -z "$XILINX_VITIS" ]; then
     echo "Error: XILINX_VITIS environment variable not set"
-    exit 1
+    return 1
 fi
 
 XILINX_VITIS_AIETOOLS="$XILINX_VITIS/aietools"
+
+# Ensure Vitis aietools shared libraries (e.g. libLLVM.so.20.1) are discoverable.
+# Vitis 2026.1+ ships a dynamically-linked `opt` that requires this.
+export LD_LIBRARY_PATH="$XILINX_VITIS_AIETOOLS/lib/lnx64.o${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 
 # --- Set up include paths ---
 
@@ -189,19 +237,29 @@ arch_model_dir_aie="${XILINX_VITIS}/aietools/data/aie/lib"
 arch_model_dir_aieml="${XILINX_VITIS}/aietools/data/aie_ml/lib"
 arch_model_dir_aie2ps="${XILINX_VITIS}/aietools/data/aie2ps/lib"
 
+# Force-include kernel_log.h so klog() is available in all kernel builds
+KERNEL_LOG_INCLUDE="+Wllvm,-include,${AIEHLC_ROOT_DIR}/src/mlir/runtime/kernel_log.h"
+
 # xchesscc compiler flags per AIE version
-compiler_flags_aie="$silent_flag +f -p me -P $arch_model_dir_aie +P 4 +Wllvm,-O2,-fno-jump-tables,-fno-discard-value-names,-mllvm,-chess-collapse-struct-types-during-linking=0,-Xclang,-chess-only-info-critical-passes -D__AIENGINE__ -D__AIE_ARCH__=10 -D__AIEARCH=10 -D__LOCK_FENCE_MODE__=0 -DAIE_OPTION_SCALAR_FLOAT_ON_VECTOR $INCLUDE_PATH"
-compiler_flags_aieml="-aiearch aie-ml $silent_flag +f -p me -P $arch_model_dir_aieml +P 4 +Wllvm,-O2,-fno-jump-tables,-fno-discard-value-names,-mllvm,-chess-collapse-struct-types-during-linking=0,-Xclang,-chess-only-info-critical-passes -D__AIENGINE__ -D__AIE_ARCH__=20 -D__AIEARCH=20 -D__LOCK_FENCE_MODE__=0 -DAIE_OPTION_SCALAR_FLOAT_ON_VECTOR -DAIE2_FP32_EMULATION_ACCURACY_FAST $INCLUDE_PATH"
-compiler_flags_aie2ps="-aiearch aie2ps $silent_flag +f -p me -P $arch_model_dir_aie2ps +P 4 +Wllvm,-O2,-fno-jump-tables,-fno-discard-value-names,-mllvm,-chess-collapse-struct-types-during-linking=0,-Xclang,-chess-only-info-critical-passes -D__AIENGINE__ -D__AIE_ARCH__=22 -D__AIEARCH=22 -D__LOCK_FENCE_MODE__=0 -DAIE_OPTION_SCALAR_FLOAT_ON_VECTOR -DAIE2_FP32_EMULATION_ACCURACY_FAST $INCLUDE_PATH"
+# DWARF debug info is always-on (-g) so the kernel ELF carries a .debug_line
+# table (DICompileUnit/DILocation referencing kernel.cc). This enables PC->source
+# mapping for HW debug (see parse_linemap.py / aiediag pc). -g is routed through
+# +Wllvm, alongside -O2 because it is a clang frontend/codegen flag. NOTE: with -O2
+# the line table is approximate (inlining/optimization) — coarse PC->line only.
+compiler_flags_aie="$silent_flag +f -p me -P $arch_model_dir_aie +P 4 +Wllvm,-O2,-g,-fno-jump-tables,-fno-discard-value-names,-mllvm,-chess-collapse-struct-types-during-linking=0,-Xclang,-chess-only-info-critical-passes -D__AIENGINE__ -D__AIE_ARCH__=10 -D__AIEARCH=10 -D__LOCK_FENCE_MODE__=0 -DAIE_OPTION_SCALAR_FLOAT_ON_VECTOR $KERNEL_LOG_INCLUDE $INCLUDE_PATH"
+compiler_flags_aieml="-aiearch aie-ml $silent_flag +f -p me -P $arch_model_dir_aieml +P 4 +Wllvm,-O2,-g,-fno-jump-tables,-fno-discard-value-names,-mllvm,-chess-collapse-struct-types-during-linking=0,-Xclang,-chess-only-info-critical-passes -D__AIENGINE__ -D__AIE_ARCH__=20 -D__AIEARCH=20 -D__LOCK_FENCE_MODE__=0 -DAIE_OPTION_SCALAR_FLOAT_ON_VECTOR -DAIE2_FP32_EMULATION_ACCURACY_FAST $KERNEL_LOG_INCLUDE $INCLUDE_PATH"
+compiler_flags_aie2ps="-aiearch aie2ps $silent_flag +f -p me -P $arch_model_dir_aie2ps +P 4 +Wllvm,-O2,-g,-fno-jump-tables,-fno-discard-value-names,-mllvm,-chess-collapse-struct-types-during-linking=0,-Xclang,-chess-only-info-critical-passes -D__AIENGINE__ -D__AIE_ARCH__=22 -D__AIEARCH=22 -D__LOCK_FENCE_MODE__=0 -DAIE_OPTION_SCALAR_FLOAT_ON_VECTOR -DAIE2_FP32_EMULATION_ACCURACY_FAST $KERNEL_LOG_INCLUDE $INCLUDE_PATH"
 
 # llvm-aie compiler flags per AIE version
 LLVM_AIE_INCLUDE_PATH="-I$XILINX_VITIS_AIETOOLS/include \
 -I$XILINX_VITIS_AIETOOLS/include/aie_api \
 -I$include_base"
 
-compiler_flags_llvm_aie_aie="-include ${LLVM_AIE_PATH}/../llvm-aie-extra.h -Wno-unknown-attributes -Wno-macro-redefined -O2 -std=c++20 --target=aie2-none-unknown-elf -D__AIECC__ -D__AIENGINE__ -D__AIE_ARCH__=10 -D__AIEARCH=10 -D_LIBCPP_HAS_NO_THREADS -D__LOCK_FENCE_MODE__=0 -DAIE_OPTION_SCALAR_FLOAT_ON_VECTOR $LLVM_AIE_INCLUDE_PATH $INCLUDE_PATH"
-compiler_flags_llvm_aie_aieml="-include ${LLVM_AIE_PATH}/../llvm-aie-extra.h -Wno-unknown-attributes -Wno-macro-redefined -O2 -std=c++20 --target=aie2-none-unknown-elf -D__AIECC__ -D__AIENGINE__ -D__AIE_ARCH__=20 -D__AIEARCH=20 -D_LIBCPP_HAS_NO_THREADS -D__LOCK_FENCE_MODE__=0 -DAIE_OPTION_SCALAR_FLOAT_ON_VECTOR -DAIE2_FP32_EMULATION_ACCURACY_FAST $LLVM_AIE_INCLUDE_PATH $INCLUDE_PATH"
-compiler_flags_llvm_aie_aie2ps="-include ${LLVM_AIE_PATH}/../llvm-aie-extra.h -Wno-unknown-attributes -Wno-macro-redefined -O2 -std=c++20 --target=aie2-none-unknown-elf -D__AIECC__ -D__AIENGINE__ -D__AIE_ARCH__=22 -D__AIEARCH=22 -D_LIBCPP_HAS_NO_THREADS -D__LOCK_FENCE_MODE__=0 -DAIE_OPTION_SCALAR_FLOAT_ON_VECTOR -DAIE2_FP32_EMULATION_ACCURACY_FAST $LLVM_AIE_INCLUDE_PATH $INCLUDE_PATH"
+KERNEL_LOG_INCLUDE_LLVM="-include ${AIEHLC_ROOT_DIR}/src/mlir/runtime/kernel_log.h"
+
+compiler_flags_llvm_aie_aie="-include ${LLVM_AIE_PATH}/../llvm-aie-extra.h $KERNEL_LOG_INCLUDE_LLVM -Wno-unknown-attributes -Wno-macro-redefined -O2 -std=c++20 --target=aie2-none-unknown-elf -D__AIECC__ -D__AIENGINE__ -D__AIE_ARCH__=10 -D__AIEARCH=10 -D_LIBCPP_HAS_NO_THREADS -D__LOCK_FENCE_MODE__=0 -DAIE_OPTION_SCALAR_FLOAT_ON_VECTOR $LLVM_AIE_INCLUDE_PATH $INCLUDE_PATH"
+compiler_flags_llvm_aie_aieml="-include ${LLVM_AIE_PATH}/../llvm-aie-extra.h $KERNEL_LOG_INCLUDE_LLVM -Wno-unknown-attributes -Wno-macro-redefined -O2 -std=c++20 --target=aie2-none-unknown-elf -D__AIECC__ -D__AIENGINE__ -D__AIE_ARCH__=20 -D__AIEARCH=20 -D_LIBCPP_HAS_NO_THREADS -D__LOCK_FENCE_MODE__=0 -DAIE_OPTION_SCALAR_FLOAT_ON_VECTOR -DAIE2_FP32_EMULATION_ACCURACY_FAST $LLVM_AIE_INCLUDE_PATH $INCLUDE_PATH"
+compiler_flags_llvm_aie_aie2ps="-include ${LLVM_AIE_PATH}/../llvm-aie-extra.h $KERNEL_LOG_INCLUDE_LLVM -Wno-unknown-attributes -Wno-macro-redefined -O2 -std=c++20 --target=aie2-none-unknown-elf -D__AIECC__ -D__AIENGINE__ -D__AIE_ARCH__=22 -D__AIEARCH=22 -D_LIBCPP_HAS_NO_THREADS -D__LOCK_FENCE_MODE__=0 -DAIE_OPTION_SCALAR_FLOAT_ON_VECTOR -DAIE2_FP32_EMULATION_ACCURACY_FAST $LLVM_AIE_INCLUDE_PATH $INCLUDE_PATH"
 
 # Select flags based on AIE version
 extra_chess_flag=""
@@ -221,7 +279,7 @@ elif [[ "$aie_version" == "5" ]]; then
     extra_chess_flag+=" -aiearch aie2ps"
 else
     echo "Unsupported AIE version: $aie_version"
-    exit 1
+    return 1
 fi
 
 if [ $DEBUG_OUTPUT = 1 ]; then
@@ -245,34 +303,68 @@ if [[ "$use_llvm_aie" != "true" ]]; then
     dbg_echo xchesscc $compiler_flags_chess -o "${output_dir}/kernel_orig.ll" "$kernel_cc"
     set -x
     xchesscc $compiler_flags_chess -o "${output_dir}/kernel_orig.ll" "$kernel_cc"
+    _xchesscc_rc=$?
     set +x
+    if [ $_xchesscc_rc -ne 0 ]; then
+        echo "Error: xchesscc compilation failed for $kernel_cc"
+        return 1
+    fi
 
     # Step 2: LLVM opt passes (xlopt x2)
     run_cmd "$XILINX_VITIS_AIETOOLS/lnx64.o/tools/clang/bin/opt -S -load-pass-plugin=$XILINX_VITIS_AIETOOLS/lib/lnx64.o/libLLVMXLOpt.so -passes=xlopt ${output_dir}/kernel_orig.ll -o ${output_dir}/kernel.ll"
+    if [ $? -ne 0 ]; then
+        echo "Error: LLVM opt pass 1 (xlopt) failed"
+        return 1
+    fi
     run_cmd "$XILINX_VITIS_AIETOOLS/lnx64.o/tools/clang/bin/opt -S -load-pass-plugin=$XILINX_VITIS_AIETOOLS/lib/lnx64.o/libLLVMXLOpt.so -passes=xlopt ${output_dir}/kernel.ll -o ${output_dir}/kernel.ll"
+    if [ $? -ne 0 ]; then
+        echo "Error: LLVM opt pass 2 (xlopt) failed"
+        return 1
+    fi
 
     # Step 3: xchessmk -> kernel ELF
     dbg_echo $chess_elf_compiler +o "$output_dir" "$prx_file"
     $chess_elf_compiler +o "$output_dir" "$prx_file"
+    if [ $? -ne 0 ]; then
+        echo "Error: xchessmk ELF linking failed"
+        return 1
+    fi
+
+    # Step 4: Emit DWARF line-table artifacts for PC->source debug.
+    # .debug_line parsing is architecture-agnostic, so a host/aarch64 readelf
+    # works on the AIE ELF. Non-fatal: a missing/empty table only warns.
+    emit_linemap_artifacts "$output_dir"
 else
     echo "Compiling kernel (using llvm-aie): $(basename "$kernel_cc")"
 
     if [ -z "$LLVM_AIE_PATH" ]; then
         echo "Error: LLVM_AIE_PATH environment variable not set (required for --use-llvm-aie)"
-        exit 1
+        return 1
     fi
 
     dbg_echo ${LLVM_AIE_PATH}/bin/clang++ $compiler_flags_llvm_aie_sel "$kernel_cc" -Wl,-T "$ld_script" -o "$output_dir/kernel"
     ${LLVM_AIE_PATH}/bin/clang++ $compiler_flags_llvm_aie_sel "$kernel_cc" -Wl,-T "$ld_script" -o "$output_dir/kernel"
+    if [ $? -ne 0 ]; then
+        echo "Error: llvm-aie clang++ compilation failed for $kernel_cc"
+        return 1
+    fi
 fi
 
 # --- Create relocatable object from kernel ELF binary ---
 
 dbg_echo $linker -o "$obj_file" "$output_dir/kernel"
 $linker -o "$obj_file" "$output_dir/kernel"
+if [ $? -ne 0 ]; then
+    echo "Error: ld binary embedding failed (kernel ELF -> relocatable object)"
+    return 1
+fi
 
 # --- Rename ELF binary symbols to canonical names ---
 
 redefine_symbols "$obj_file" "$func_name" "$objcopy_tool"
+if [ $? -ne 0 ]; then
+    echo "Error: objcopy symbol renaming failed"
+    return 1
+fi
 
 echo "Kernel compiled: $obj_file"

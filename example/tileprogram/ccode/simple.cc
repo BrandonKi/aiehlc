@@ -1,4 +1,12 @@
-
+/******************************************************************************
+ * Copyright (C) 2026 Advanced Micro Devices, Inc. All Rights Reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ ******************************************************************************/
+ 
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#define DEBUG_OUTPUT_ORDER 1
 #define M 16
 #define K 16
 #define N 16
@@ -29,6 +37,12 @@ __global__ void matmul(input_window_int8 *window_in_0, input_window_int8 *window
     for (int i = 0; i < ROWS_PER_ROUND * K_DIM; i++) {
         cache_A[i] = A0[i];
         cache_B[i] = B0[i];
+#if DEBUG_OUTPUT_ORDER
+        if (i < 8) {
+            klog("A   ", (int32_t)A0[i]);
+            klog("B   ", (int32_t)B0[i]);
+        }
+#endif
     }
 
     // Write partial output: C[0:RPR-1, 0:CPR-1] = A0 * B0^T, cols CPR..OUT_STRIDE-1 = 0
@@ -75,6 +89,11 @@ __global__ void matmul(input_window_int8 *window_in_0, input_window_int8 *window
                     sum = -128;
                 out[i * OUT_STRIDE + j] = (int8_t)sum;
             }
+#if DEBUG_OUTPUT_ORDER
+            if (i < 8) {
+                klog("C   ", (int32_t)out[i]);
+            }
+#endif
         }
         // C[RPR:2*RPR-1, CPR:2*CPR-1] = A1 * B1^T
         for (int i = 0; i < ROWS_PER_ROUND; i++) {
@@ -90,6 +109,7 @@ __global__ void matmul(input_window_int8 *window_in_0, input_window_int8 *window
                 out[i * OUT_STRIDE + j + COLS_PER_ROUND] = (int8_t)sum;
             }
         }
+
         release_output_window(window_out_0);
     }
 
@@ -98,11 +118,12 @@ __global__ void matmul(input_window_int8 *window_in_0, input_window_int8 *window
 }
 int main() {
     // --- Device + mesh ---
-    aieDim mesh(HW_ROWS, HW_COLS);
+    aieArray device;
+    aieMesh mesh = device.partition(HW_ROWS, HW_COLS); // startCol=0; sets _dev before alloc()
     // --- Allocate host memory ---
-    int8_t *A = (int8_t *)malloc(M * K * sizeof(int8_t));
-    int8_t *B = (int8_t *)malloc(K * N * sizeof(int8_t));
-    int8_t *C = (int8_t *)malloc(M * N * sizeof(int8_t));
+    int8_t *A = (int8_t *)device.alloc(M * K * sizeof(int8_t));
+    int8_t *B = (int8_t *)device.alloc(K * N * sizeof(int8_t));
+    int8_t *C = (int8_t *)device.alloc(M * N * sizeof(int8_t));
 
     // --- Initialize input matrices ---
     for (int i = 0; i < M * K; i++)
@@ -115,9 +136,19 @@ int main() {
     // --- Launch kernel on tile mesh ---
     matmul<<<mesh>>>(A, B, C);
 
+    printf("Output C:\n");
+    for (int i = 0; i < M; i++) {
+        printf("[");
+        for (int j = 0; j < N; j++) {
+            printf("%d", C[i * N + j]);
+            if (j < N - 1)
+                printf(", ");
+        }
+        printf("]\n");
+    }
     // --- Cleanup ---
-    free(A);
-    free(B);
-    free(C);
+    device.free(A);
+    device.free(B);
+    device.free(C);
     return 1;
 }

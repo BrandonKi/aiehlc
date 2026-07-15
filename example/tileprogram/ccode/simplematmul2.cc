@@ -1,42 +1,47 @@
 /******************************************************************************
  * Copyright (C) 2025 Advanced Micro Devices, Inc. All Rights Reserved.
- * SPDX-License-Identifier: MIT
+ * SPDX-License-Identifier: Apache-2.0
  *
  * AIE Programming Model — Matrix Multiplication (Parameterized Kernel API)
  */
 #include "simplematmul.h"
-#pragma aie_debug_level(2 | AIE_DEBUG_FLAG_DISABLE_PARTITIONTEARDOWN | AIE_DEBUG_FLAG_MM2SBDFINISH_COUNTER)
-constexpr aie::SpatialPolicy RowBA = {
-    .pattern = aie::Pattern::Broadcast,
-    .distribution = aie::Layout::Row,
-    .pp_depth = 2,
-    .max_buffer_bytes = 4096,
-    .tile_m = 16, // explicit sub-tile rows
-    .tile_n = 16, // 0 = auto (uses tileCols)
-    .tile_k = 64  // K chunk size (4 k-rounds for K=256)
-};
-constexpr aie::SpatialPolicy ColBB = {
-    .pattern = aie::Pattern::Broadcast,
-    .distribution = aie::Layout::Col,
-    .pp_depth = 2,
-    .max_buffer_bytes = 4096,
-    .tile_m = 16, // explicit sub-tile rows
-    .tile_n = 16, // 0 = auto (uses tileCols)
-    .tile_k = 64  // K chunk size (4 k-rounds for K=256)
-};
-constexpr aie::SpatialPolicy LtoR_Merge = {
-    .pattern = aie::Pattern::Gather,
-    .distribution = aie::Layout::Row,
-    .merge_order = aie::Flow::LeftToRight,
-    .pp_depth = 2,
-    .max_buffer_bytes = 4096,
-    .tile_m = 16, // explicit sub-tile rows
-    .tile_n = 16, // 0 = auto (uses tileCols)
-    .tile_k = 64  // K chunk size (4 k-rounds for K=256)
-};
+#pragma aie_debug_level(2 | AIE_DEBUG_FLAG_DISABLE_PARTITIONTEARDOWN)
+// Composition-based spatial spaces: a generic SpatialPolicy composed with a
+// PER-PORT 2D iteration space. Each port describes its OWN matrix via d1/d2:
+//   win_a A=[M,K] -> d1 = M-tile,  d2 = K-chunk
+//   win_b B=[N,K] -> d1 = N-tile,  d2 = K-chunk
+//   win_c C=[M,N] -> d1 = M-tile,  d2 = N-tile
+// 3-part orthogonal SpatialPolicy: map (array mapping) / mat (materialization)
+// / sched (resource & pipeline). Per-port act/wgt is resolved by input ordinal:
+//   win_a (1st input)  -> map.act,  win_b (2nd input) -> map.wgt,
+//   win_c (output)     -> Gather + map.merge_order.
+constexpr aie::GemmSpace RowBA = {
+    .policy = {.map = {.act = aie::Pattern::Broadcast, .layout = aie::Layout::Row},
+               .mat = {.pad = aie::PadMaterialize::DDR, .im2col = aie::Im2col::None},
+               .sched = {.pp_depth = 2, .l1_budget = aie::Bytes{4096}}},
+    .d1 = {.fullsize = M, .tile_size = 16, .stride = 16},  // A: M-tile (Partition: stride == size)
+    .d2 = {.fullsize = K, .tile_size = 64, .stride = 64}}; // A: K chunk (4 k-rounds for K=256)
+constexpr aie::GemmSpace ColBB = {.policy = {.map = {.wgt = aie::Pattern::Broadcast, .layout = aie::Layout::Col},
+                                             .mat = {.pad = aie::PadMaterialize::DDR, .im2col = aie::Im2col::None},
+                                             .sched = {.pp_depth = 2, .l1_budget = aie::Bytes{4096}}},
+                                  .d1 = {.fullsize = N, .tile_size = 16, .stride = 16},  // B: N-tile
+                                  .d2 = {.fullsize = K, .tile_size = 64, .stride = 64}}; // B: K chunk
+constexpr aie::GemmSpace LtoR_Merge = {
+    .policy = {.map = {.layout = aie::Layout::Row, .merge_order = aie::Flow::LeftToRight},
+               .mat = {.pad = aie::PadMaterialize::DDR, .im2col = aie::Im2col::None},
+               .sched = {.pp_depth = 2, .l1_budget = aie::Bytes{4096}}},
+    .d1 = {.fullsize = M, .tile_size = 16, .stride = 16},  // C: M-tile
+    .d2 = {.fullsize = N, .tile_size = 16, .stride = 16}}; // C: N-tile
 #define DEBUG_OUTPUT_ORDER 1
-__global__ void matmul(aie::port<input_window_int8 *, RowBA> win_a, aie::port<input_window_int8 *, ColBB> win_b,
-                       aie::port<output_window_int8 *, LtoR_Merge> win_c) {
+// Per-kernel GLOBAL policy, bound explicitly at the declaration site via
+// __global__(matmul_policy). The <kernel>_policy naming convention still works
+// as a fallback when no explicit binding is given.
+// fullconnect_auto = 0 -> disable the M×N cartesian DMA repeat: A and B are
+// each sent once following the tiling distribution (no host round loop).
+constexpr aie::GlobalPolicy matmul_policy = {.fullconnect_auto = 1};
+__global__(matmul_policy) void matmul(aie::port<input_window_int8 *, RowBA> win_a,
+                                      aie::port<input_window_int8 *, ColBB> win_b,
+                                      aie::port<output_window_int8 *, LtoR_Merge> win_c) {
 
     // Compiler-resolved tiling parameters
     const int tile_rows = aie::get_tile_rows();
@@ -50,9 +55,9 @@ __global__ void matmul(aie::port<input_window_int8 *, RowBA> win_a, aie::port<in
     const int buf_sz_b = aie::get_buffer_size(win_b);
     const int buf_sz_c = aie::get_buffer_size(win_c);
 
-    // Spatial sub-tile iteration counts
-    const int m_rounds = aie::get_spatial_m_rounds();
-    const int n_rounds = aie::get_spatial_n_rounds();
+    // Spatial sub-tile iteration counts (per-port: A->M rounds, B->N rounds)
+    const int m_rounds = aie::get_spatial_multiple_rounds(win_a);
+    const int n_rounds = aie::get_spatial_multiple_rounds(win_b);
 
     // Derived per-round sizes (using effective_k, not full k_dim)
     const int rows_per_round = buf_sz_a / eff_k;
@@ -162,9 +167,9 @@ __global__ void mul2(aie::port<input_window_int8 *, RowBA> win_a, aie::port<inpu
     const int buf_sz_b = aie::get_buffer_size(win_b);
     const int buf_sz_c = aie::get_buffer_size(win_c);
 
-    // Spatial sub-tile iteration counts
-    const int m_rounds = aie::get_spatial_m_rounds();
-    const int n_rounds = aie::get_spatial_n_rounds();
+    // Spatial sub-tile iteration counts (per-port: A->M rounds, B->N rounds)
+    const int m_rounds = aie::get_spatial_multiple_rounds(win_a);
+    const int n_rounds = aie::get_spatial_multiple_rounds(win_b);
 
     // Derived per-round sizes (using effective_k, not full k_dim)
     const int rows_per_round = buf_sz_a / eff_k;
@@ -288,9 +293,9 @@ int main() {
     aieArray device;
     // Carve a partition from the AIE array.
     // Fields: {startCol, endCol, startRow, endRow}
-    // This partition uses columns [2,5] and rows [0,6], which covers
-    // Gen2 NoC shim columns {2,3} — enough for a 4x4 GEMM's ~12 DataIOs.
-    aieMesh mesh = device.partition({3, 6, 0, 6}, HW_ROWS, HW_COLS);
+    // This partition uses columns [0,3] and rows [0,6], which covers
+    // Gen2 NoC shim columns {0,1} — enough for a 4x4 GEMM's ~12 DataIOs.
+    aieMesh mesh = device.partition({0, 3, 0, 6}, HW_ROWS, HW_COLS);
     // aieDim mesh(HW_ROWS, HW_COLS);
     //  --- Allocate DMA-capable host memory (cache stays enabled) ---
     int8_t *A = (int8_t *)device.alloc(M * K * sizeof(int8_t) * 4);
@@ -305,9 +310,10 @@ int main() {
         C[i] = 0;
     // --- Launch kernel on tile mesh ---
     matmul<<<mesh>>>(A, B, C, M, N, K);
-    // device.synchronizecpu(C, M * N * sizeof(int8_t) * 4);
+    // stlkernel<<mesh>>>(A, B, C);
+    //  device.synchronizecpu(C, M * N * sizeof(int8_t) * 4);
     int result = verify_matmul(A, B, C);
-    // mul2<<<mesh>>>(C, B, A, M, N, K);
+    /// mul2<<<mesh>>>(C, B, A, M, N, K);
     // int result2 = verify_matmul(C, B, A);
     //   --- Wait for all partitions and teardown ---
     // --- Verify output ---

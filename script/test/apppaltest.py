@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
-"""MIT License
-* Copyright (C) 2026 Advanced Micro Devices, Inc. All Rights Reserved.
-* SPDX-License-Identifier: MIT
+"""Copyright 2025-2026 Advanced Micro Devices, Inc. All Rights Reserved.
+* SPDX-License-Identifier: Apache-2.0
 """
 """
 Palboard ELF Test Script
@@ -372,13 +371,18 @@ def setup_first_connection(nonreboot=False):
         child.sendline("/bin/systest")
     child.expect(r'Systest[#>]', timeout=60)
     log.debug("setup_first_connection: systest prompt received")
-    print("[Connection 1] In systest, becoming palboard...")
-    
-    # Step 3: Become palboard - wait for Systest# prompt after board info
-    child.sendline(f'become "{boardname}"')
-    child.expect(r'Systest[#>]', timeout=60)  # Wait for prompt after become completes
-    time.sleep(3)  # Extra wait for system controller to stabilize
-    print("[Connection 1] Palboard mode, powering off first...")
+
+    # Step 3: Become palboard - wait for Systest# prompt after board info.
+    # In nonreboot mode the board is already up and owned by an existing
+    # session, so skip 'become' to avoid taking over/holding the board.
+    if not nonreboot:
+        print("[Connection 1] In systest, becoming palboard...")
+        child.sendline(f'become "{boardname}"')
+        child.expect(r'Systest[#>]', timeout=60)  # Wait for prompt after become completes
+        time.sleep(3)  # Extra wait for system controller to stabilize
+        print("[Connection 1] Palboard mode, powering off first...")
+    else:
+        print("[Connection 1] nonreboot mode: skipping 'become' (board already up)")
     
     # Step 4a: Power off first to ensure clean state
     child.sendline("power 0")

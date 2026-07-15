@@ -1,6 +1,6 @@
 /******************************************************************************
 * Copyright (C) 2025 Advanced Micro Devices, Inc. All Rights Reserved.
-* SPDX-License-Identifier: MIT
+* SPDX-License-Identifier: Apache-2.0
 ******************************************************************************/
 
 include "routingtype.td"
@@ -155,16 +155,13 @@ def routing_partitiontensor :routingop<"partitiontensor"> {
 
 	let arguments = (ins
 		AnyTensor:$tensor,
-		I32Attr:$splitnum,
-		I32Attr:$splitdim,
-		StrAttr:$hw_axis_owner,
-		StrAttr:$replicate_on,
-		StrAttr:$single_tile_owner
+		PartitionAttr:$partition,
+		OptionalAttr<TilingAttr>:$tiling
 	);
 
 	let results = (outs
 		AnyTensor:$output);
-	
+
 	let hasCustomAssemblyFormat = 1;
 
 }

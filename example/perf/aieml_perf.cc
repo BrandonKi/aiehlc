@@ -1,7 +1,7 @@
 /******************************************************************************
-* Copyright (C) 2025 Advanced Micro Devices, Inc. All Rights Reserved.
-* SPDX-License-Identifier: MIT
-******************************************************************************/
+ * Copyright (C) 2025 Advanced Micro Devices, Inc. All Rights Reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ ******************************************************************************/
 
 // #include <iostream>
 // #include <sstream>
@@ -20,6 +20,8 @@
 #endif
 // #include "unistd.h"
 #define uint_TYPE uint32_t
+
+#include "kernel_log.h"
 
 #if AIE_GEN <= 2
 
@@ -69,9 +71,16 @@ __global__ void perf(input_window_int32 *win __attribute__((annotate("mem_addres
 	//aie::store_unaligned_v<VECTOR_LENGTH>(A_mat + (w*VECTOR_LENGTH), temp_a);
 	uint32_t * ptr_out = (uint32_t *)(0x70000 + 0x6000);
 	uint32_t * ptr_in = (uint32_t *)(0x70000 + 0x1000);
-    /*
+
+    klog_init();
+    klog("INIT", 0);
+
+    ///*
     uint32_t * vec1 = ((uint32_t*)ptr_in), * vec2 = ((uint32_t*)ptr_in + MAT_SIZE);
 
+    klog("MMUL", 0);
+    klog("A0  ", vec1[0]);
+    klog("A1  ", vec2[0]);
     for (int i = 0; i < N; i++) {
         for (uint32_t j = 0; j < N; j++) {
             uint32_t ret = 0;
@@ -81,10 +90,14 @@ __global__ void perf(input_window_int32 *win __attribute__((annotate("mem_addres
             ptr_out[i * N + j] = ret;
         }
     }
-    */
-    for (int i = 0; i < DATA_SIZE; i++) {
-        ptr_out[i] = ptr_in[i];
-    }
+    klog("MDON", 0);
+    //*/
+
+    klog("MCPY", 0);
+    // for (int i = 0; i < DATA_SIZE; i++) {
+    //     ptr_out[i] = ptr_in[i];
+    // }
+    klog("DONE", 01);
 }
 void blockread(XAie_DevInst *DevInst, uint64_t addr)
 {
@@ -155,7 +168,7 @@ int test_routing(XAie_DevInst *DevInst)
         ((int32_t *)vmem_out)[j] = j;
     }
 
-    const int count = 1024 * 6;
+    const int count = 2;
 
     XTime tStart, tEnd;
     XTime_GetTime(&tStart);
@@ -199,24 +212,31 @@ int test_routing(XAie_DevInst *DevInst)
                 }
             }
         } while (!allDone);
+
+        /* Read kernel log from tile(4,4) — only on first iteration */
+        if (i == 0) {
+            klog_read(DevInst, XAie_TileLoc(4, 4));
+        }
+
         breakprint("fflush\n");
         // fflush(stdout);
 
         XAie_MoveDataAie2External(routingInstance, XAie_TileLoc(4, 4), CORE_OP_MEM, mlen * sizeof(u32), out,
                                   XAie_TileLoc(shimcol, 0));
-        // XAie_RouteDmaWait(routingInstance, XAie_TileLoc(shimcol,0), XAie_TileLoc(4,4), true);
+        XAie_RouteDmaWait(routingInstance, XAie_TileLoc(shimcol, 0), XAie_TileLoc(4, 4), true);
+        // XAie_MemSyncForCPU(out);
 
-        /*
-        //XTime_GetTime(&tEnd);
-        //printf("Output took %.2f us.\n", 1.0 * (tEnd - tStart) / (COUNTS_PER_SECOND/1000000));
+        ///*
+        // XTime_GetTime(&tEnd);
+        // printf("Output took %.2f us.\n", 1.0 * (tEnd - tStart) / (COUNTS_PER_SECOND/1000000));
 
         //printf("\nFinished moving data back to DDR\n");
         // step 5 validate data
         int32_t vmem_out_cpu[recv_len];
 
-        //vmem contains the input (128 samples, 64 of matrix A and 64 of matrix B, in row major and column major forms
-        respectively) and vmem_out contains the output samples (64 of result)
-        //compute CPU Result for softmax
+        // vmem contains the input (128 samples, 64 of matrix A and 64 of matrix B, in row major and column major forms
+        // respectively) and vmem_out contains the output samples (64 of result)
+        // compute CPU Result for softmax
         int32_t A_mat[N][N];  // Matrix A
         int32_t B_mat[N][N];  // Matrix B
         int32_t result[N][N] = {0};  // Result matrix
@@ -271,7 +291,7 @@ int test_routing(XAie_DevInst *DevInst)
         }
 
         printf("\nDone\n");
-        */
+        //*/
     }
     XTime_GetTime(&tEnd);
     printf("-%d KB Time taken: %.2f us.\n", (count * mlen * sizeof(u32)) / 1024,

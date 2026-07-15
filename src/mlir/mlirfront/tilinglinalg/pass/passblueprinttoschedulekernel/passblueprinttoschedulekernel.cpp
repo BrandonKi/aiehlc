@@ -1,6 +1,6 @@
 /******************************************************************************
  * Copyright (C) 2025 Advanced Micro Devices, Inc. All Rights Reserved.
- * SPDX-License-Identifier: MIT
+ * SPDX-License-Identifier: Apache-2.0
  ******************************************************************************/
 
 #include "passblueprinttoschedulekernel.h"
@@ -273,6 +273,8 @@ struct KernelParamInfo {
     uint32_t pingAddress = 0;   // BCF symbol address for ping buffer (from CoreMemAllocator)
     uint32_t pongAddress = 0;   // BCF symbol address for pong buffer (from CoreMemAllocator)
     int funcArgIndex = -1;      // Function argument index (0=A, 1=B, 2=C)
+    bool singleBuffer = false;  // Single-buffer (no pong) mode, e.g. spatial-halo IFM slab
+                                // that is received once per invocation (numRounds==1).
 };
 
 // Structure to hold kernel generation parameters
@@ -375,15 +377,18 @@ static void generateKernelModule(ConversionPatternRewriter &rewriter, Location l
 
             auto pingBufDef = rewriter.create<dfschedule::BufferDefOp>(
                 loc, rewriter.getStringAttr(paramInfo.bufferPingName), TypeAttr::get(localMemRefType));
-            auto pongBufDef = rewriter.create<dfschedule::BufferDefOp>(
-                loc, rewriter.getStringAttr(paramInfo.bufferPongName), TypeAttr::get(localMemRefType));
-
             // Annotate buffer addresses from CoreMemAllocator (for BCF generation)
             if (paramInfo.pingAddress != 0) {
                 pingBufDef->setAttr("address", rewriter.getI64IntegerAttr(paramInfo.pingAddress));
             }
-            if (paramInfo.pongAddress != 0) {
-                pongBufDef->setAttr("address", rewriter.getI64IntegerAttr(paramInfo.pongAddress));
+            // Single-buffer ports (bufferPongName == bufferPingName) declare only
+            // one global array; the window's pong slot reuses the ping buffer.
+            if (!paramInfo.singleBuffer) {
+                auto pongBufDef = rewriter.create<dfschedule::BufferDefOp>(
+                    loc, rewriter.getStringAttr(paramInfo.bufferPongName), TypeAttr::get(localMemRefType));
+                if (paramInfo.pongAddress != 0) {
+                    pongBufDef->setAttr("address", rewriter.getI64IntegerAttr(paramInfo.pongAddress));
+                }
             }
 
             // Window definition
@@ -833,8 +838,21 @@ static SmallVector<KernelParamInfo> analyzeKernelParams(Operation *rootOp, Kerne
                         int64_t tileCols = tileColsAttr ? tileColsAttr.getInt() : 0;
                         int64_t mRounds = (tileM > 0 && tileM < tileRows) ? (tileRows / tileM) : 1;
                         int64_t nRounds = (tileN > 0 && tileN < tileCols) ? (tileCols / tileN) : 1;
-                        if (mRounds * nRounds > 1) {
-                            perCoreSizeForBuf = perCoreSize / (mRounds * nRounds);
+                        int64_t outDivisor = mRounds * nRounds;
+                        // Spatial-halo conv: tile_m/tile_rows/tile_n attrs are DROPPED under
+                        // fullconnect_auto=0, collapsing the divisor to 1 and leaving the
+                        // output window at the full per-core partition (clamped to 4096).
+                        // The conv2d_spatial kernel still writes one [oh_per_row*ow_t, tile_n]
+                        // slab per on-core round, so honor the authoritative per-slab count
+                        // in "routing.spatial_out_rounds" (= spatialMRounds*spatialNRounds).
+                        // Kept in lockstep with the host flowtransfer_kernel.cpp output path.
+                        if (auto outRoundsAttr = moduleOp2->getAttrOfType<IntegerAttr>("routing.spatial_out_rounds")) {
+                            int64_t outRounds = outRoundsAttr.getInt();
+                            if (outRounds > outDivisor)
+                                outDivisor = outRounds;
+                        }
+                        if (outDivisor > 1) {
+                            perCoreSizeForBuf = perCoreSize / outDivisor;
                         }
                     }
                 }
@@ -868,8 +886,75 @@ static SmallVector<KernelParamInfo> analyzeKernelParams(Operation *rootOp, Kerne
                 int64_t pingPongBufSize = perCoreSizeForBuf;
                 if (pingPongBufSize <= 0)
                     pingPongBufSize = 1;
-                // Clamp to maxPingPongBytes to prevent exceeding core tile memory
-                if (maxPingPongBytes > 0) {
+
+                // Spatial-halo conv IFM override: the kernel performs on-chip im2col
+                // and needs the WHOLE contiguous halo slab (halo_slice * raw_wc) in a
+                // single window buffer. The GEMM flow-view partition size above does
+                // not reflect this slab, so the window allocation must use the
+                // authoritative slab size carried via "routing.spatial_halo_buf_size".
+                // Identify the spatial-halo IFM port by the per-tensor "tensor_N.halo"
+                // attribute (N = funcArgIndex). This override bypasses the maxPingPong
+                // clamp because the slab must stay contiguous for windowing.
+                bool isSpatialHaloPort = false;
+                int64_t l2RoundsKernel = 0; // >1 ⇒ two-level (nested) halo IFM port
+                if (paramInfo.isInput && paramInfo.funcArgIndex >= 0) {
+                    auto moduleOpHalo = declareDataOp->getParentOfType<ModuleOp>();
+                    if (moduleOpHalo) {
+                        std::string haloAttrName = "tensor_" + std::to_string(paramInfo.funcArgIndex) + ".halo";
+                        auto haloDict = moduleOpHalo->getAttrOfType<DictionaryAttr>(haloAttrName);
+                        auto haloBufAttr = moduleOpHalo->getAttrOfType<IntegerAttr>("routing.spatial_halo_buf_size");
+                        if (haloDict && haloBufAttr && haloBufAttr.getInt() > 0) {
+                            pingPongBufSize = haloBufAttr.getInt();
+                            isSpatialHaloPort = true;
+                            // Two-level (nested) halo: when l2_rounds>1 the kernel
+                            // receives the slab in l2_rounds shifted windows of
+                            // l2_slice*raw_wc each (instead of one full halo_slice slab).
+                            // Note: routing.spatial_halo_buf_size already carries the
+                            // per-round (l2_slice*raw_wc) size because aiehlc.cc sizes
+                            // the A-port bufferSize from l2_slice when L2 is active; we
+                            // only need the round multiplier here.
+                            if (auto a = haloDict.getAs<IntegerAttr>("l2_rounds"))
+                                l2RoundsKernel = a.getInt();
+                        }
+                    }
+                }
+
+                // K-contraction split halo IFM (tensor_N.halo k_rounds>1): unlike the
+                // single-slab spatial-halo path above, this config has NO
+                // routing.spatial_halo_buf_size. The kernel receives the IFM as
+                // l2_rounds*k_rounds windows, each a [l2_slice rows x k_slice width-elems]
+                // band. Per-window buffer = l2_slice*k_slice elements; numRounds =
+                // l2_rounds*k_rounds. pp_depth stays >=2 (do NOT set singleBuffer) so the
+                // window double-buffers across rounds — kept in lockstep with host B2/B3.
+                bool isKSplitHaloPort = false;
+                int64_t kSplitNumRounds = 0;
+                if (!isSpatialHaloPort && paramInfo.isInput && paramInfo.funcArgIndex >= 0) {
+                    auto moduleOpK = declareDataOp->getParentOfType<ModuleOp>();
+                    if (moduleOpK) {
+                        std::string haloAttrName = "tensor_" + std::to_string(paramInfo.funcArgIndex) + ".halo";
+                        if (auto haloDict = moduleOpK->getAttrOfType<DictionaryAttr>(haloAttrName)) {
+                            auto l2SliceA = haloDict.getAs<IntegerAttr>("l2_slice");
+                            auto kSliceA = haloDict.getAs<IntegerAttr>("k_slice");
+                            auto l2RoundsA = haloDict.getAs<IntegerAttr>("l2_rounds");
+                            auto kRoundsA = haloDict.getAs<IntegerAttr>("k_rounds");
+                            if (kRoundsA && kRoundsA.getInt() > 1 && kSliceA && kSliceA.getInt() > 0 && l2SliceA &&
+                                l2SliceA.getInt() > 0) {
+                                pingPongBufSize = l2SliceA.getInt() * kSliceA.getInt(); // 19*244 = 4636 elements
+                                int64_t l2r = l2RoundsA ? l2RoundsA.getInt() : 1;
+                                kSplitNumRounds = (l2r > 0 ? l2r : 1) * kRoundsA.getInt(); // 4*4 = 16
+                                isKSplitHaloPort = true;
+                                llvm::errs()
+                                    << "[BlueprintToScheduleKernel] K-split halo IFM: bufSize=" << pingPongBufSize
+                                    << " (l2_slice*k_slice) numRounds=" << kSplitNumRounds << " (l2_rounds*k_rounds)\n";
+                            }
+                        }
+                    }
+                }
+
+                // Clamp to maxPingPongBytes to prevent exceeding core tile memory.
+                // Skip the clamp for the spatial-halo IFM slab and the K-split per-round
+                // slab (both must match the host per-round len exactly).
+                if (!isSpatialHaloPort && !isKSplitHaloPort && maxPingPongBytes > 0) {
                     int64_t elemBytes =
                         paramInfo.elementType.isIntOrFloat() ? paramInfo.elementType.getIntOrFloatBitWidth() / 8 : 1;
                     if (elemBytes > 0) {
@@ -887,6 +972,29 @@ static SmallVector<KernelParamInfo> analyzeKernelParams(Operation *rootOp, Kerne
                 paramInfo.numRounds =
                     (pingPongBufSize > 0) ? static_cast<int32_t>(perCoreSizeForBuf / pingPongBufSize) : 1;
 
+                // Two-level (nested) halo IFM: the per-round window is l2_slice*raw_wc
+                // (already reflected in pingPongBufSize via spatial_halo_buf_size) and
+                // the kernel acquires/releases this window l2_rounds times — once per
+                // on-core temporal round. Set numRounds = l2_rounds directly so the
+                // window_init covers every L2 acquire/release cycle. (The GEMM
+                // flow-view ratio above does not capture the L2 round count.)
+                if (l2RoundsKernel > 1) {
+                    llvm::errs() << "[BlueprintToScheduleKernel] L2 halo IFM: numRounds " << paramInfo.numRounds
+                                 << " -> l2_rounds " << l2RoundsKernel << "\n";
+                    paramInfo.numRounds = static_cast<int32_t>(l2RoundsKernel);
+                }
+
+                // K-contraction split halo IFM: the kernel acquires/releases the per-round
+                // window l2_rounds*k_rounds times (= 16). Set numRounds directly so
+                // window_init arms every acquire/release cycle — symmetric with the host
+                // core num_iterations (B3). Must run after the GEMM-ratio numRounds compute
+                // and BEFORE the routing.k_rounds multiplier below (absent here anyway).
+                if (isKSplitHaloPort && kSplitNumRounds > 1) {
+                    llvm::errs() << "[BlueprintToScheduleKernel] K-split halo IFM: numRounds " << paramInfo.numRounds
+                                 << " -> l2_rounds*k_rounds " << kSplitNumRounds << "\n";
+                    paramInfo.numRounds = static_cast<int32_t>(kSplitNumRounds);
+                }
+
                 // M-round multiplication for output: when tile_m < tileRows,
                 // the kernel outputs mRounds sub-tiles per GEMM invocation.
                 // numRounds must cover all m-round iterations.
@@ -897,8 +1005,17 @@ static SmallVector<KernelParamInfo> analyzeKernelParams(Operation *rootOp, Kerne
                         auto tileRowsAttr = moduleOp3->getAttrOfType<IntegerAttr>("routing.tile_rows");
                         int64_t tileM = tileMAttr ? tileMAttr.getInt() : 0;
                         int64_t tileRows = tileRowsAttr ? tileRowsAttr.getInt() : 0;
-                        if (tileM > 0 && tileM < tileRows) {
-                            int64_t mRounds = tileRows / tileM;
+                        int64_t mRounds = (tileM > 0 && tileM < tileRows) ? (tileRows / tileM) : 1;
+                        // Spatial-halo conv (fullconnect_auto=0): tile_m/tile_rows dropped
+                        // so mRounds collapses to 1; use the authoritative per-slab round
+                        // count so the output window arms once per kernel slab (16), matching
+                        // the per-slab buffer size divided above. In lockstep with the host.
+                        if (auto outRoundsAttr = moduleOp3->getAttrOfType<IntegerAttr>("routing.spatial_out_rounds")) {
+                            int64_t outRounds = outRoundsAttr.getInt();
+                            if (outRounds > mRounds)
+                                mRounds = outRounds;
+                        }
+                        if (mRounds > 1) {
                             llvm::errs() << "[BlueprintToScheduleKernel] M-round: output numRounds "
                                          << paramInfo.numRounds << " * mRounds " << mRounds << " = "
                                          << paramInfo.numRounds * mRounds << "\n";
@@ -991,7 +1108,9 @@ static SmallVector<KernelParamInfo> analyzeKernelParams(Operation *rootOp, Kerne
     for (auto *p : inputParams) {
         p->windowName = "window_in_" + std::to_string(sortedInputCount);
         p->bufferPingName = "buf_in_ping_" + std::to_string(sortedInputCount);
-        p->bufferPongName = "buf_in_pong_" + std::to_string(sortedInputCount);
+        // Single-buffer ports reuse the ping buffer for the pong slot so no
+        // second global array is declared (and no floating BCF symbol).
+        p->bufferPongName = p->singleBuffer ? p->bufferPingName : "buf_in_pong_" + std::to_string(sortedInputCount);
         p->acquireLockId = resourceMgr.allocateInputAcquireLock();
         p->releaseLockId = resourceMgr.allocateInputReleaseLock();
         sortedInputCount++;

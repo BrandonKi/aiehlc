@@ -1,6 +1,6 @@
 /******************************************************************************
 * Copyright (C) 2025 Advanced Micro Devices, Inc. All Rights Reserved.
-* SPDX-License-Identifier: MIT
+* SPDX-License-Identifier: Apache-2.0
 ******************************************************************************/
 
 //Provide a definition of the 'aie' dialect in the ODS framework so that we

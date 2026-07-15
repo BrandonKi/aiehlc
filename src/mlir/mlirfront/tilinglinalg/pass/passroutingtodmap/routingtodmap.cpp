@@ -1,7 +1,7 @@
 /******************************************************************************
-* Copyright (C) 2025 Advanced Micro Devices, Inc. All Rights Reserved.
-* SPDX-License-Identifier: MIT
-******************************************************************************/
+ * Copyright (C) 2025 Advanced Micro Devices, Inc. All Rights Reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ ******************************************************************************/
 
 #include "routingtodmap.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
@@ -980,9 +980,9 @@ struct RoutingmovedatabyioConvertdmap : public ConversionPattern {
         int tensor_y = shape[1].cast<mlir::IntegerAttr>().getInt();
 
         llvm::StringRef split_axis = partitionmesh.getSplitaxis();
-        llvm::StringRef hw_axis_owner = partitiontensor.getHwAxisOwner();
-        llvm::StringRef replicate_on = partitiontensor.getReplicateOn();
-        llvm::StringRef single_tile_owner = partitiontensor.getSingleTileOwner();
+        llvm::StringRef hw_axis_owner = partitiontensor.getPartition().getHwAxisOwner();
+        llvm::StringRef replicate_on = partitiontensor.getPartition().getReplicateOn();
+        llvm::StringRef single_tile_owner = partitiontensor.getPartition().getSingleTileOwner();
 
         llvm::outs() << "col =" << col << " row=" << row  << " tensor_x=" << tensor_x << " tensor_y=" << tensor_y << "\n";
         llvm::outs() << "split_axis =" << split_axis << " hw_axis_owner=" << hw_axis_owner  << "\n";

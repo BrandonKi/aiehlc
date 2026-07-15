@@ -1,5 +1,5 @@
 <!-- Copyright (C) 2025 Advanced Micro Devices, Inc. All Rights Reserved.
-     SPDX-License-Identifier: MIT -->
+     SPDX-License-Identifier: Apache-2.0 -->
 ---
 name: hostcodegen
 description: Host code generation, compilation, HW run, verification, and bug fixing for the aiehlc AIE flow. Use when you need to (1) Generate host/kernel C++ from the MLIR unitest pipeline, (2) Compile host + aie_runtime for baremetal/linux, (3) Run the host ELF on PAL/HW and capture console, (4) Verify output or debug failures, (5) Fix bugs in codegen, generated host.cc, or runtime.

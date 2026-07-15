@@ -1,6 +1,6 @@
 /******************************************************************************
  * Copyright (C) 2025 Advanced Micro Devices, Inc. All Rights Reserved.
- * SPDX-License-Identifier: MIT
+ * SPDX-License-Identifier: Apache-2.0
  ******************************************************************************/
 
 #ifndef __DFSCHEDULE_PROVENANCEMAP_PASS_H__
@@ -22,6 +22,10 @@ class DfscheduleProvenanceMapPass : public PassWrapper<DfscheduleProvenanceMapPa
   public:
     DfscheduleProvenanceMapPass() = default;
     explicit DfscheduleProvenanceMapPass(const std::string &outputDir) : outputDir(outputDir) {}
+    DfscheduleProvenanceMapPass(const std::string &outputDir, int startCol)
+        : outputDir(outputDir), startCol(startCol) {}
+    DfscheduleProvenanceMapPass(const std::string &outputDir, int startCol, const std::string &aieGen)
+        : outputDir(outputDir), startCol(startCol), aieGen(aieGen) {}
 
     void runOnOperation() override;
 
@@ -38,6 +42,8 @@ class DfscheduleProvenanceMapPass : public PassWrapper<DfscheduleProvenanceMapPa
 
   private:
     std::string outputDir;
+    int startCol = -1;
+    std::string aieGen;
 };
 
 } // namespace mlir

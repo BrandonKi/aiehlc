@@ -1,5 +1,5 @@
 <!-- Copyright (C) 2025 Advanced Micro Devices, Inc. All Rights Reserved.
-     SPDX-License-Identifier: MIT -->
+     SPDX-License-Identifier: Apache-2.0 -->
 ---
 name: routinghwdebug
 description: Debug routing code generation issues by scanning generated routing.cc with xaieapiverify, tracing errors back through the MLIR dialect pipeline (EmitC -> routinghw -> dmaphop -> dmap -> routing), finding root causes in routingimplement (topology, BFS, resource manager), and providing fixes. Use when routing.cc fails XAie API verification or causes HW errors.

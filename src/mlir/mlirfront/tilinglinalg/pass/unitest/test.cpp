@@ -1,7 +1,7 @@
 /******************************************************************************
-* Copyright (C) 2025 Advanced Micro Devices, Inc. All Rights Reserved.
-* SPDX-License-Identifier: MIT
-******************************************************************************/
+ * Copyright (C) 2025 Advanced Micro Devices, Inc. All Rights Reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ ******************************************************************************/
 #include "../passblueprinttoschedule/passblueprinttoschedule.h"
 #include "../passblueprinttoschedulekernel/passblueprinttoschedulekernel.h"
 #include "../passdfscheduleprovenancemap/passdfscheduleprovenancemap.h"
@@ -25,7 +25,7 @@
 #include "routingmanager.h"
 #include "routingunrolling.h"
 #include <iostream>
-//#include "llvm/IR/IRPrintingPasses.h"
+// #include "llvm/IR/IRPrintingPasses.h"
 #include "llvm/ADT/SmallString.h"
 #include "llvm/IRPrinter/IRPrintingPasses.h"
 #include "llvm/Support/FileSystem.h"
@@ -1344,6 +1344,571 @@ void routingtodfschedule(const std::string &irFilepath = "", int startStage = 0)
 // module with dim_strides/dim_wraps on a config.dma_bd op and runs the
 // DfscheduleToApiPass to verify __Runtime_dma_bd_config_multidim emission.
 
+void testConv2d() {
+    std::cout << "\n=== Conv2d DmaTransform Integration Test ===" << std::endl;
+    std::cout << "Tests that user-specified DmaTransform (im2col) flows through\n"
+              << "buildRoutingIR -> module attr -> DmaphopTodfscheblueprintPass\n"
+              << "-> FlowConfigOp shim_dim_strides/wraps -> host.cc XAie_DmaSetMultiDimAddr\n"
+              << std::endl;
+
+    // Conv2d parameters: Input[8,8,1], Filter[3,3,1,1], stride=1, pad=0
+    // Im2col GEMM: A[OH*OW, KH*KW*C] = [36, 9], B[9, 1], C[36, 1]
+    int H = 8, W = 8, C = 1, KH = 3, KW = 3, S = 1, P = 0, F = 1;
+    int OH = (H + 2 * P - KH) / S + 1; // 6
+    int OW = (W + 2 * P - KW) / S + 1; // 6
+    int M_dim = OH * OW;               // 36
+    int K_dim = KH * KW * C;           // 9
+    int N_dim = F;                     // 1
+
+    std::cout << "Conv2d params: H=" << H << " W=" << W << " C=" << C << " KH=" << KH << " KW=" << KW << " S=" << S
+              << " P=" << P << " OH=" << OH << " OW=" << OW << "\nGEMM dims: M=" << M_dim << " K=" << K_dim
+              << " N=" << N_dim << std::endl;
+
+    // Build im2col DmaAddressing (matches DmaTransform::im2col factory, C-aware)
+    DmaAddressing im2col;
+    im2col.dims = {{1, KW * C}, {W * C, KH}, {S * C, OW}};
+    im2col.iter_step = W * C * S;
+    im2col.iter_wrap = OH;
+
+    std::cout << "DmaAddressing: dims=[";
+    for (unsigned i = 0; i < im2col.dims.size(); ++i) {
+        if (i > 0)
+            std::cout << ", ";
+        std::cout << "{" << im2col.dims[i].first << "," << im2col.dims[i].second << "}";
+    }
+    std::cout << "] iter_step=" << im2col.iter_step << " iter_wrap=" << im2col.iter_wrap << std::endl;
+
+    // Tensor params: A gets im2col DMA, B and C are flat
+    std::vector<TensorParam> tensors = {
+        {{M_dim, K_dim}, 8, true, im2col}, // input A (im2col)
+        {{K_dim, N_dim}, 8, true, {}},     // input B (flat)
+        {{M_dim, N_dim}, 8, false, {}},    // output C (flat)
+    };
+
+    MLIRContext ctx;
+    TilingLinalgPipeline::registerDialects(ctx);
+
+    auto module = TilingLinalgPipeline::buildRoutingIR(ctx, 2, 2, tensors, SplitModel::gemm());
+
+    // Verify module attribute was set
+    auto shimDmaAttr = module->getAttrOfType<DictionaryAttr>("tensor_0.shim_dma");
+    if (shimDmaAttr) {
+        std::cout << "PASS: tensor_0.shim_dma module attribute present" << std::endl;
+        auto strides = shimDmaAttr.getAs<ArrayAttr>("strides");
+        auto wraps = shimDmaAttr.getAs<ArrayAttr>("wraps");
+        if (strides && wraps) {
+            std::cout << "  strides=[";
+            for (unsigned i = 0; i < strides.size(); ++i) {
+                if (i > 0)
+                    std::cout << ",";
+                std::cout << cast<IntegerAttr>(strides[i]).getInt();
+            }
+            std::cout << "] wraps=[";
+            for (unsigned i = 0; i < wraps.size(); ++i) {
+                if (i > 0)
+                    std::cout << ",";
+                std::cout << cast<IntegerAttr>(wraps[i]).getInt();
+            }
+            std::cout << "]" << std::endl;
+        }
+        auto iterStep = shimDmaAttr.getAs<IntegerAttr>("iter_step");
+        auto iterWrap = shimDmaAttr.getAs<IntegerAttr>("iter_wrap");
+        if (iterStep && iterWrap) {
+            std::cout << "  iter_step=" << iterStep.getInt() << " iter_wrap=" << iterWrap.getInt() << std::endl;
+        }
+    } else {
+        std::cerr << "FAIL: tensor_0.shim_dma module attribute NOT found" << std::endl;
+        return;
+    }
+
+    // Verify tensor_1 (B) does NOT have shim_dma
+    auto shimDmaB = module->getAttrOfType<DictionaryAttr>("tensor_1.shim_dma");
+    if (!shimDmaB) {
+        std::cout << "PASS: tensor_1 (flat) has no shim_dma attribute" << std::endl;
+    } else {
+        std::cerr << "FAIL: tensor_1 should not have shim_dma" << std::endl;
+    }
+
+    // Run full pipeline to generate host.cc and verify XAie_DmaSetMultiDimAddr
+    std::string outputDir = setupWorklocalDir();
+    if (outputDir.empty())
+        return;
+
+    if (!TilingLinalgPipeline::runPipeline(ctx, module, outputDir,
+                                           /*userKernelBody=*/"", /*userKernelFuncName=*/"",
+                                           /*runtimeDebugLevel=*/-1, /*userRewrittenSource=*/"", tensors,
+                                           /*maxPingPongBytes=*/4096, g_aieGen)) {
+        llvm::errs() << "TilingLinalgPipeline::runPipeline failed!\n";
+        return;
+    }
+
+    std::cout << "\n=== Conv2d DmaTransform Test Complete ===" << std::endl;
+    std::cout << "Check worklocal/host.cc for XAie_DmaSetMultiDimAddr with im2col strides/wraps." << std::endl;
+}
+
+void testConv2dSpatial() {
+    std::cout << "\n=== Conv2d Spatial-Halo Integration Test ===" << std::endl;
+    std::cout << "Tests that a spatial-halo A port (ConvTiling::spatial) flows through\n"
+              << "buildRoutingIR -> tensor_N.halo module attr -> partitiontensor step attr\n"
+              << "-> overlapping extract_data slices -> FLAT shim BDs (no SetMultiDimAddr).\n"
+              << std::endl;
+
+    // Conv2d params (ResNet-style 7x7 stem):
+    // Input 224x224x4, Filter[7,7,4,64], stride=2. The IFM is pre-padded by
+    // 3 on H and W BEFORE processing, so the test feeds the padded 230x230x4
+    // tensor directly and uses P=0 in the output-size formula.
+    //   H = W = 224 + 2*3 = 230, C = 4, F = 64
+    //   OH = (230 - 7)/2 + 1 = 112, OW = 112
+    //   oh_per_row = OH / R = 28
+    //   halo_slice = (oh_per_row - 1) * S + KH = 27*2 + 7 = 61
+    //   halo_step  = oh_per_row * S            = 28*2 = 56  (overlap = 5 = KH - S)
+    //   raw A shape = [H, W*C] = [230, 920]; overlapping row-blocks of size 61x920
+    int H = 230, W = 230, C = 4, KH = 7, KW = 7, S = 2, P = 0, F = 64;
+    int R = 4;                                  // HW_ROWS (tile-rows along H)
+    int OH = (H + 2 * P - KH) / S + 1;          // 112
+    int OW = (W + 2 * P - KW) / S + 1;          // 112
+    int oh_per_row = OH / R;                    // 28
+    int halo_slice = (oh_per_row - 1) * S + KH; // 61
+    int halo_step = oh_per_row * S;             // 56
+    int raw_h = H;                              // 230
+    int raw_wc = W * C;                         // 920
+    int M_dim = OH * OW;                        // 12544 (im2col GEMM M, for C/B sizing)
+    int K_dim = KH * KW * C;                    // 196
+    int N_dim = F;                              // 64
+
+    std::cout << "Conv2d params: H=" << H << " W=" << W << " C=" << C << " KH=" << KH << " KW=" << KW << " S=" << S
+              << " P=" << P << " OH=" << OH << " OW=" << OW << " R=" << R << "\n"
+              << "Spatial-halo: raw A=[" << raw_h << "," << raw_wc << "] halo_slice=" << halo_slice
+              << " halo_step=" << halo_step << " (overlap=" << (halo_slice - halo_step) << ")" << std::endl;
+
+    // Two-level (nested) halo: each halo_slice(61)-row L1 tile is further chunked
+    // on-core into l2_rounds temporal rounds of l2_slice rows advancing by l2_step.
+    // Coverage: (l2_rounds-1)*l2_step + l2_slice == halo_slice (61).
+    int l2_slice = 19; // rows per on-core round
+    int l2_step = 14;  // row stride between L2 rounds (overlap = 19-14 = 5)
+    int l2_rounds = 4; // (4-1)*14 + 19 = 61 == halo_slice
+    std::cout << "Two-level halo: l2_slice=" << l2_slice << " l2_step=" << l2_step << " l2_rounds=" << l2_rounds
+              << " (coverage=" << ((l2_rounds - 1) * l2_step + l2_slice) << " == halo_slice=" << halo_slice << ")"
+              << std::endl;
+
+    // K-contraction accumulate split (independent of the H/row L2 halo above):
+    // the K dim is chunked into k_rounds on-core accumulate rounds (plumbing
+    // round-trip only; no kernel-round / dma_bd len wiring yet).
+    int k_slice = 61 * 4, k_step = 56 * 4, k_rounds = 4; // K-accum example
+
+    // Spatial-halo DmaAddressing on the A tensor.
+    DmaAddressing halo;
+    halo.mode = 1;
+    halo.haloSlice = halo_slice;
+    halo.haloStep = halo_step;
+    halo.splitDim = 0;
+    halo.l2Slice = l2_slice;
+    halo.l2Step = l2_step;
+    halo.l2Rounds = l2_rounds;
+    halo.kSlice = k_slice;
+    halo.kStep = k_step;
+    halo.kRounds = k_rounds;
+    // PADDED DDR row pitch (elements) — required by the K-accum single multi-dim BD
+    // (D1 row stride = rowPitch, iter_step = l2_step*rowPitch). = raw_wc (= 920).
+    halo.rowPitch = raw_wc;
+
+    // Tensor params:
+    //   A = raw [raw_h, raw_wc] with spatial-halo addressing (split along dim 0 by row)
+    //   B = filter [K, N] col-split (flat)
+    //   C = output [M, N] gather (flat)
+    std::vector<TensorParam> tensors = {
+        {{raw_h, raw_wc}, 8, true, halo} //, // input A (spatial halo)
+        //{{K_dim, N_dim}, 8, true, {}},    // input B (flat)
+        //{{M_dim, N_dim}, 8, false, {}},   // output C (flat)
+    };
+
+    // Mirror halo onto the A split desc so buildRoutingIR emits tensor_0.halo
+    // and sets the partitiontensor step attr.
+    SplitModel sm = SplitModel::gemm();
+    if (!sm.tensorSplits.empty()) {
+        sm.tensorSplits[0].haloMode = 1;
+        sm.tensorSplits[0].haloSlice = halo_slice;
+        sm.tensorSplits[0].haloStep = halo_step;
+        sm.tensorSplits[0].splitDim = 0;
+        sm.tensorSplits[0].haloL2Slice = l2_slice;
+        sm.tensorSplits[0].haloL2Step = l2_step;
+        sm.tensorSplits[0].haloL2Rounds = l2_rounds;
+        sm.tensorSplits[0].kAccumSlice = k_slice;
+        sm.tensorSplits[0].kAccumStep = k_step;
+        sm.tensorSplits[0].kAccumRounds = k_rounds;
+    }
+
+    MLIRContext ctx;
+    TilingLinalgPipeline::registerDialects(ctx);
+
+    // Mesh R rows x 1 col so A is split along H into R overlapping row-blocks.
+    auto module = TilingLinalgPipeline::buildRoutingIR(ctx, R, 1, tensors, sm);
+    // module.dump();
+    // return;
+    //  Verify tensor_0.halo module attribute was set
+    auto haloAttr = module->getAttrOfType<DictionaryAttr>("tensor_0.halo");
+    if (haloAttr) {
+        std::cout << "PASS: tensor_0.halo module attribute present" << std::endl;
+        if (auto slice = haloAttr.getAs<IntegerAttr>("slice"))
+            std::cout << "  slice=" << slice.getInt() << std::endl;
+        if (auto step = haloAttr.getAs<IntegerAttr>("step"))
+            std::cout << "  step=" << step.getInt() << std::endl;
+        if (auto sd = haloAttr.getAs<IntegerAttr>("split_dim"))
+            std::cout << "  split_dim=" << sd.getInt() << std::endl;
+        // Two-level (nested) halo L2 attrs.
+        auto l2SliceA = haloAttr.getAs<IntegerAttr>("l2_slice");
+        auto l2StepA = haloAttr.getAs<IntegerAttr>("l2_step");
+        auto l2RoundsA = haloAttr.getAs<IntegerAttr>("l2_rounds");
+        if (l2SliceA && l2StepA && l2RoundsA) {
+            std::cout << "  l2_slice=" << l2SliceA.getInt() << " l2_step=" << l2StepA.getInt()
+                      << " l2_rounds=" << l2RoundsA.getInt() << std::endl;
+            if (l2SliceA.getInt() == l2_slice && l2StepA.getInt() == l2_step && l2RoundsA.getInt() == l2_rounds)
+                std::cout << "PASS: tensor_0.halo carries correct L2 (nested) attrs" << std::endl;
+            else
+                std::cerr << "FAIL: tensor_0.halo L2 attrs mismatch (expected l2_slice=" << l2_slice
+                          << " l2_step=" << l2_step << " l2_rounds=" << l2_rounds << ")" << std::endl;
+        } else {
+            std::cerr << "FAIL: tensor_0.halo missing L2 (l2_slice/l2_step/l2_rounds) attrs" << std::endl;
+        }
+        // K-contraction accumulate attrs (independent of the H/row L2 above).
+        auto kSliceA = haloAttr.getAs<IntegerAttr>("k_slice");
+        auto kStepA = haloAttr.getAs<IntegerAttr>("k_step");
+        auto kRoundsA = haloAttr.getAs<IntegerAttr>("k_rounds");
+        if (kSliceA && kStepA && kRoundsA) {
+            std::cout << "  k_slice=" << kSliceA.getInt() << " k_step=" << kStepA.getInt()
+                      << " k_rounds=" << kRoundsA.getInt() << std::endl;
+            if (kSliceA.getInt() == k_slice && kStepA.getInt() == k_step && kRoundsA.getInt() == k_rounds)
+                std::cout << "PASS: tensor_0.halo carries correct K-accum attrs" << std::endl;
+            else
+                std::cerr << "FAIL: tensor_0.halo K-accum attrs mismatch (expected k_slice=" << k_slice
+                          << " k_step=" << k_step << " k_rounds=" << k_rounds << ")" << std::endl;
+        } else {
+            std::cerr << "FAIL: tensor_0.halo missing K-accum (k_slice/k_step/k_rounds) attrs" << std::endl;
+        }
+    } else {
+        std::cerr << "FAIL: tensor_0.halo module attribute NOT found" << std::endl;
+        return;
+    }
+
+    // Verify tensor_0 does NOT have a multi-dim shim_dma (must stay FLAT)
+    auto shimDmaA = module->getAttrOfType<DictionaryAttr>("tensor_0.shim_dma");
+    if (!shimDmaA) {
+        std::cout << "PASS: tensor_0 (spatial-halo) has NO shim_dma attribute (flat BD)" << std::endl;
+    } else {
+        std::cerr << "FAIL: spatial-halo tensor_0 should not have shim_dma (would force multi-dim BD)" << std::endl;
+    }
+
+    // Run full pipeline to generate host.cc / kernel.cc into worklocal/.
+    std::string outputDir = setupWorklocalDir();
+    if (outputDir.empty())
+        return;
+
+    if (!TilingLinalgPipeline::runPipeline(ctx, module, outputDir,
+                                           /*userKernelBody=*/"", /*userKernelFuncName=*/"",
+                                           /*runtimeDebugLevel=*/-1, /*userRewrittenSource=*/"", tensors,
+                                           /*maxPingPongBytes=*/4096, g_aieGen)) {
+        llvm::errs() << "TilingLinalgPipeline::runPipeline failed!\n";
+        return;
+    }
+
+    std::cout << "\n=== Conv2d Spatial-Halo Test Complete ===" << std::endl;
+    std::cout << "Check worklocal/host.cc for FLAT A BDs (XAie_DmaSetAddrLen, no SetMultiDimAddr),\n"
+              << "per-row DDR offsets {0, " << (halo_step * raw_wc) << "} (= i*halo_step*raw_wc), len "
+              << (halo_slice * raw_wc) << " each." << std::endl;
+}
+
+void testDilatedConv2d() {
+    std::cout << "\n=== Dilated Conv2d DmaTransform Test ===" << std::endl;
+    std::cout << "Tests dilated_im2col DmaTransform with dilation=2.\n" << std::endl;
+
+    // Dilated Conv2d: Input[8,8,1], Filter[3,3], stride=1, pad=0, dilation=2
+    // OW = (8 + 0 - 2*(3-1) - 1) / 1 + 1 = (8 - 4 - 1)/1 + 1 = 4
+    // OH = 4
+    int H = 8, W = 8, C = 1, KH = 3, KW = 3, S = 1, P = 0, D = 2, F = 1;
+    int OH = (H + 2 * P - D * (KH - 1) - 1) / S + 1; // 4
+    int OW = (W + 2 * P - D * (KW - 1) - 1) / S + 1; // 4
+    int M_dim = OH * OW;                             // 16
+    int K_dim = KH * KW * C;                         // 9
+    int N_dim = F;                                   // 1
+
+    std::cout << "Dilated Conv2d params: H=" << H << " W=" << W << " C=" << C << " KH=" << KH << " KW=" << KW
+              << " S=" << S << " P=" << P << " D=" << D << " OH=" << OH << " OW=" << OW << "\nGEMM dims: M=" << M_dim
+              << " K=" << K_dim << " N=" << N_dim << std::endl;
+
+    // dilated_im2col: dim0={D*C, KW}, dim1={W*C*D, KH}, dim2={S*C, OW}
+    DmaAddressing dilated;
+    dilated.dims = {{D * C, KW}, {W * C * D, KH}, {S * C, OW}};
+    dilated.iter_step = W * C * S;
+    dilated.iter_wrap = OH;
+
+    std::cout << "DmaAddressing: dims=[";
+    for (unsigned i = 0; i < dilated.dims.size(); ++i) {
+        if (i > 0)
+            std::cout << ", ";
+        std::cout << "{" << dilated.dims[i].first << "," << dilated.dims[i].second << "}";
+    }
+    std::cout << "] iter_step=" << dilated.iter_step << " iter_wrap=" << dilated.iter_wrap << std::endl;
+
+    // Verify expected values
+    bool pass = true;
+    if (dilated.dims[0].first != 2 || dilated.dims[0].second != 3) {
+        std::cerr << "FAIL: dim0 expected {2,3} got {" << dilated.dims[0].first << "," << dilated.dims[0].second << "}"
+                  << std::endl;
+        pass = false;
+    }
+    if (dilated.dims[1].first != 16 || dilated.dims[1].second != 3) {
+        std::cerr << "FAIL: dim1 expected {16,3} got {" << dilated.dims[1].first << "," << dilated.dims[1].second << "}"
+                  << std::endl;
+        pass = false;
+    }
+    if (dilated.dims[2].first != 1 || dilated.dims[2].second != 4) {
+        std::cerr << "FAIL: dim2 expected {1,4} got {" << dilated.dims[2].first << "," << dilated.dims[2].second << "}"
+                  << std::endl;
+        pass = false;
+    }
+    if (dilated.iter_step != 8) {
+        std::cerr << "FAIL: iter_step expected 8 got " << dilated.iter_step << std::endl;
+        pass = false;
+    }
+    if (dilated.iter_wrap != 4) {
+        std::cerr << "FAIL: iter_wrap expected 4 got " << dilated.iter_wrap << std::endl;
+        pass = false;
+    }
+
+    // Build module with this DmaAddressing
+    std::vector<TensorParam> tensors = {
+        {{M_dim, K_dim}, 8, true, dilated}, // input A (dilated im2col)
+        {{K_dim, N_dim}, 8, true, {}},      // input B (flat)
+        {{M_dim, N_dim}, 8, false, {}},     // output C (flat)
+    };
+
+    MLIRContext ctx;
+    TilingLinalgPipeline::registerDialects(ctx);
+    auto module = TilingLinalgPipeline::buildRoutingIR(ctx, 2, 2, tensors, SplitModel::gemm());
+
+    auto shimDmaAttr = module->getAttrOfType<DictionaryAttr>("tensor_0.shim_dma");
+    if (shimDmaAttr) {
+        std::cout << "PASS: tensor_0.shim_dma module attribute present" << std::endl;
+        auto strides = shimDmaAttr.getAs<ArrayAttr>("strides");
+        auto wraps = shimDmaAttr.getAs<ArrayAttr>("wraps");
+        if (strides && wraps) {
+            std::cout << "  strides=[";
+            for (unsigned i = 0; i < strides.size(); ++i) {
+                if (i > 0)
+                    std::cout << ",";
+                std::cout << cast<IntegerAttr>(strides[i]).getInt();
+            }
+            std::cout << "] wraps=[";
+            for (unsigned i = 0; i < wraps.size(); ++i) {
+                if (i > 0)
+                    std::cout << ",";
+                std::cout << cast<IntegerAttr>(wraps[i]).getInt();
+            }
+            std::cout << "]" << std::endl;
+        }
+    } else {
+        std::cerr << "FAIL: tensor_0.shim_dma module attribute NOT found" << std::endl;
+        pass = false;
+    }
+
+    // Run full pipeline
+    std::string outputDir = setupWorklocalDir();
+    if (!outputDir.empty()) {
+        if (!TilingLinalgPipeline::runPipeline(ctx, module, outputDir,
+                                               /*userKernelBody=*/"", /*userKernelFuncName=*/"",
+                                               /*runtimeDebugLevel=*/-1, /*userRewrittenSource=*/"", tensors,
+                                               /*maxPingPongBytes=*/4096, g_aieGen)) {
+            llvm::errs() << "TilingLinalgPipeline::runPipeline failed!\n";
+            pass = false;
+        }
+    }
+
+    std::cout << "\n=== Dilated Conv2d Test " << (pass ? "PASSED" : "FAILED") << " ===" << std::endl;
+}
+
+void testPool() {
+    std::cout << "\n=== Pool DmaTransform Test ===" << std::endl;
+    std::cout << "Tests pool() factory (semantic alias for im2col).\n" << std::endl;
+
+    // MaxPool: Input[8,8,1], PoolWindow[2,2], stride=2, pad=0
+    // OW = (8 + 0 - 2) / 2 + 1 = 4
+    // OH = 4
+    int H = 8, W = 8, C = 1, KH = 2, KW = 2, S = 2, P = 0;
+    int OH = (H + 2 * P - KH) / S + 1; // 4
+    int OW = (W + 2 * P - KW) / S + 1; // 4
+    int M_dim = OH * OW;               // 16
+    int K_dim = KH * KW * C;           // 4
+
+    std::cout << "Pool params: H=" << H << " W=" << W << " C=" << C << " KH=" << KH << " KW=" << KW << " S=" << S
+              << " P=" << P << " OH=" << OH << " OW=" << OW << "\nGEMM dims: M=" << M_dim << " K=" << K_dim
+              << std::endl;
+
+    // pool() is alias for im2col(): dim0={1, KW*C}, dim1={W*C, KH}, dim2={S*C, OW}
+    DmaAddressing pool;
+    pool.dims = {{1, KW * C}, {W * C, KH}, {S * C, OW}};
+    pool.iter_step = W * C * S;
+    pool.iter_wrap = OH;
+
+    std::cout << "DmaAddressing: dims=[";
+    for (unsigned i = 0; i < pool.dims.size(); ++i) {
+        if (i > 0)
+            std::cout << ", ";
+        std::cout << "{" << pool.dims[i].first << "," << pool.dims[i].second << "}";
+    }
+    std::cout << "] iter_step=" << pool.iter_step << " iter_wrap=" << pool.iter_wrap << std::endl;
+
+    // Verify expected values
+    bool pass = true;
+    if (pool.dims[0].first != 1 || pool.dims[0].second != 2) {
+        std::cerr << "FAIL: dim0 expected {1,2} got {" << pool.dims[0].first << "," << pool.dims[0].second << "}"
+                  << std::endl;
+        pass = false;
+    }
+    if (pool.dims[1].first != 8 || pool.dims[1].second != 2) {
+        std::cerr << "FAIL: dim1 expected {8,2} got {" << pool.dims[1].first << "," << pool.dims[1].second << "}"
+                  << std::endl;
+        pass = false;
+    }
+    if (pool.dims[2].first != 2 || pool.dims[2].second != 4) {
+        std::cerr << "FAIL: dim2 expected {2,4} got {" << pool.dims[2].first << "," << pool.dims[2].second << "}"
+                  << std::endl;
+        pass = false;
+    }
+    if (pool.iter_step != 16) {
+        std::cerr << "FAIL: iter_step expected 16 got " << pool.iter_step << std::endl;
+        pass = false;
+    }
+    if (pool.iter_wrap != 4) {
+        std::cerr << "FAIL: iter_wrap expected 4 got " << pool.iter_wrap << std::endl;
+        pass = false;
+    }
+
+    // Build module
+    std::vector<TensorParam> tensors = {
+        {{M_dim, K_dim}, 8, true, pool}, // input A (pool window)
+        {{K_dim, 1}, 8, true, {}},       // input B (flat, e.g. ones for avg pool)
+        {{M_dim, 1}, 8, false, {}},      // output C (flat)
+    };
+
+    MLIRContext ctx;
+    TilingLinalgPipeline::registerDialects(ctx);
+    auto module = TilingLinalgPipeline::buildRoutingIR(ctx, 2, 2, tensors, SplitModel::gemm());
+
+    auto shimDmaAttr = module->getAttrOfType<DictionaryAttr>("tensor_0.shim_dma");
+    if (shimDmaAttr) {
+        std::cout << "PASS: tensor_0.shim_dma module attribute present" << std::endl;
+    } else {
+        std::cerr << "FAIL: tensor_0.shim_dma module attribute NOT found" << std::endl;
+        pass = false;
+    }
+
+    std::cout << "\n=== Pool Test " << (pass ? "PASSED" : "FAILED") << " ===" << std::endl;
+}
+
+void testDepthwiseConv2d() {
+    std::cout << "\n=== Depthwise Conv2d DmaTransform Test ===" << std::endl;
+    std::cout << "Tests depthwise_im2col with G=C (each channel separate).\n" << std::endl;
+
+    // Depthwise: Input[8,8,3], Filter[3,3] per channel, stride=1, pad=0, G=C=3
+    // OW = (8 + 0 - 3) / 1 + 1 = 6
+    // OH = 6
+    // CPG = C/G = 3/3 = 1 (depthwise: each group has 1 channel)
+    int H = 8, W = 8, C = 3, KH = 3, KW = 3, S = 1, P = 0, G = 3;
+    int CPG = C / G;                   // 1
+    int OH = (H + 2 * P - KH) / S + 1; // 6
+    int OW = (W + 2 * P - KW) / S + 1; // 6
+    int M_dim = OH * OW;               // 36
+    int K_dim = KH * KW * CPG;         // 9 (per group)
+    int N_dim = 1;
+
+    std::cout << "Depthwise params: H=" << H << " W=" << W << " C=" << C << " KH=" << KH << " KW=" << KW << " S=" << S
+              << " P=" << P << " G=" << G << " CPG=" << CPG << " OH=" << OH << " OW=" << OW
+              << "\nPer-group GEMM: M=" << M_dim << " K=" << K_dim << " N=" << N_dim << std::endl;
+
+    // depthwise_im2col: dim0={1, KW*CPG}, dim1={W*C, KH}, dim2={S*C, OW}
+    DmaAddressing depthwise;
+    depthwise.dims = {{1, KW * CPG}, {W * C, KH}, {S * C, OW}};
+    depthwise.iter_step = W * C * S;
+    depthwise.iter_wrap = OH;
+
+    std::cout << "DmaAddressing: dims=[";
+    for (unsigned i = 0; i < depthwise.dims.size(); ++i) {
+        if (i > 0)
+            std::cout << ", ";
+        std::cout << "{" << depthwise.dims[i].first << "," << depthwise.dims[i].second << "}";
+    }
+    std::cout << "] iter_step=" << depthwise.iter_step << " iter_wrap=" << depthwise.iter_wrap << std::endl;
+
+    // Verify expected values for depthwise (G=C=3, CPG=1)
+    bool pass = true;
+    // dim0: {1, KW*CPG} = {1, 3*1} = {1, 3}
+    if (depthwise.dims[0].first != 1 || depthwise.dims[0].second != 3) {
+        std::cerr << "FAIL: dim0 expected {1,3} got {" << depthwise.dims[0].first << "," << depthwise.dims[0].second
+                  << "}" << std::endl;
+        pass = false;
+    }
+    // dim1: {W*C, KH} = {24, 3}
+    if (depthwise.dims[1].first != 24 || depthwise.dims[1].second != 3) {
+        std::cerr << "FAIL: dim1 expected {24,3} got {" << depthwise.dims[1].first << "," << depthwise.dims[1].second
+                  << "}" << std::endl;
+        pass = false;
+    }
+    // dim2: {S*C, OW} = {3, 6}
+    if (depthwise.dims[2].first != 3 || depthwise.dims[2].second != 6) {
+        std::cerr << "FAIL: dim2 expected {3,6} got {" << depthwise.dims[2].first << "," << depthwise.dims[2].second
+                  << "}" << std::endl;
+        pass = false;
+    }
+    // iter_step: W*C*S = 24
+    if (depthwise.iter_step != 24) {
+        std::cerr << "FAIL: iter_step expected 24 got " << depthwise.iter_step << std::endl;
+        pass = false;
+    }
+    // iter_wrap: OH = 6
+    if (depthwise.iter_wrap != 6) {
+        std::cerr << "FAIL: iter_wrap expected 6 got " << depthwise.iter_wrap << std::endl;
+        pass = false;
+    }
+
+    // Build module
+    std::vector<TensorParam> tensors = {
+        {{M_dim, K_dim}, 8, true, depthwise}, // input A (depthwise im2col)
+        {{K_dim, N_dim}, 8, true, {}},        // input B (flat)
+        {{M_dim, N_dim}, 8, false, {}},       // output C (flat)
+    };
+
+    MLIRContext ctx;
+    TilingLinalgPipeline::registerDialects(ctx);
+    auto module = TilingLinalgPipeline::buildRoutingIR(ctx, 2, 2, tensors, SplitModel::gemm());
+
+    auto shimDmaAttr = module->getAttrOfType<DictionaryAttr>("tensor_0.shim_dma");
+    if (shimDmaAttr) {
+        std::cout << "PASS: tensor_0.shim_dma module attribute present" << std::endl;
+        auto strides = shimDmaAttr.getAs<ArrayAttr>("strides");
+        auto wraps = shimDmaAttr.getAs<ArrayAttr>("wraps");
+        if (strides && wraps) {
+            std::cout << "  strides=[";
+            for (unsigned i = 0; i < strides.size(); ++i) {
+                if (i > 0)
+                    std::cout << ",";
+                std::cout << cast<IntegerAttr>(strides[i]).getInt();
+            }
+            std::cout << "] wraps=[";
+            for (unsigned i = 0; i < wraps.size(); ++i) {
+                if (i > 0)
+                    std::cout << ",";
+                std::cout << cast<IntegerAttr>(wraps[i]).getInt();
+            }
+            std::cout << "]" << std::endl;
+        }
+    } else {
+        std::cerr << "FAIL: tensor_0.shim_dma module attribute NOT found" << std::endl;
+        pass = false;
+    }
+
+    std::cout << "\n=== Depthwise Conv2d Test " << (pass ? "PASSED" : "FAILED") << " ===" << std::endl;
+}
+
 void testMultidimBd() {
     std::cout << "\n=== Multi-Dimensional BD Addressing Test ===" << std::endl;
 
@@ -1683,6 +2248,21 @@ int main(int argc, char* argv[]) {
         } else if (arg == "dmaphw") {
             std::cout << "Executing routingtodmap..." << std::endl;
             routingtodmap();
+        } else if (arg == "conv2d") {
+            std::cout << "Executing conv2d DmaTransform integration test..." << std::endl;
+            testConv2d();
+        } else if (arg == "conv2d_spatial") {
+            std::cout << "Executing conv2d spatial-halo integration test..." << std::endl;
+            testConv2dSpatial();
+        } else if (arg == "dilated") {
+            std::cout << "Executing dilated conv2d DmaTransform test..." << std::endl;
+            testDilatedConv2d();
+        } else if (arg == "pool") {
+            std::cout << "Executing pool DmaTransform test..." << std::endl;
+            testPool();
+        } else if (arg == "depthwise") {
+            std::cout << "Executing depthwise conv2d DmaTransform test..." << std::endl;
+            testDepthwiseConv2d();
         } else if (arg == "multidim") {
             std::cout << "Executing multi-dimensional BD addressing test..." << std::endl;
             testMultidimBd();
@@ -1690,11 +2270,12 @@ int main(int argc, char* argv[]) {
             std::cout << "Executing partition test..." << std::endl;
             testPartition();
         } else {
-            std::cout
-                << "Invalid argument. Please use hw, test, dfschedule, dmaphw, multidim, partition, routing, --parse "
-                   "<stage> <file>\n"
-                << "Stages: routing, dmap, dmaphop, dfscheblueprint, dfschedule, emitc\n"
-                << "Options: --gen <Gen1|Gen2|Gen5> (default: Gen2)" << std::endl;
+            std::cout << "Invalid argument. Please use hw, test, dfschedule, dmaphw, conv2d, conv2d_spatial, "
+                         "dilated, pool, "
+                         "depthwise, multidim, partition, routing, --parse "
+                         "<stage> <file>\n"
+                      << "Stages: routing, dmap, dmaphop, dfscheblueprint, dfschedule, emitc\n"
+                      << "Options: --gen <Gen1|Gen2|Gen5> (default: Gen2)" << std::endl;
         }
     } else {
         // Default behavior: routingtodfschedule generates host.cc, kernel.cc,

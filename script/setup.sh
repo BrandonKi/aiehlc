@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 ###############################################################################
 # Copyright (C) 2025 Advanced Micro Devices, Inc. All Rights Reserved.
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 ###############################################################################
 
 
@@ -54,7 +54,8 @@ LOCAL_AIE_RT_REPO=0
 PATH_SET_ONLY=0
 #VITIS_SETTINGS_PATH="/proj/xbuilds/2025.2_0414_1/installs/lin64/HEAD/Vitis/settings64.sh"
 #VITIS_SETTINGS_PATH="/proj/xbuilds/HEAD_qualified_latest/installs/lin64/HEAD/Vitis/settings64.sh"
-VITIS_SETTINGS_PATH="/proj/xbuilds/2025.2_daily_latest/installs/lin64/HEAD/Vitis/settings64.sh"
+#VITIS_SETTINGS_PATH="/proj/xbuilds/2025.2_daily_latest/installs/lin64/HEAD/Vitis/settings64.sh"
+VITIS_SETTINGS_PATH="/proj/xbuilds/2026.1_daily_latest/installs/lin64/2026.1/Vitis/settings64.sh"
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -143,7 +144,16 @@ echo "PETALINUX: ${PETALINUX}"
 export LIB_PATH="${XILINX_VITIS}/gnu/aarch64/lin/aarch64-none/x86_64-oesdk-linux/usr/lib"
 export LIB_BASE_PATH="${XILINX_VITIS}/gnu/aarch64/lin/aarch64-none/x86_64-oesdk-linux/lib"
 export LD_SO="${LIB_BASE_PATH}/ld-linux-x86-64.so.2"
-export CLANG_INCLUDE_PATH="${XILINX_VITIS}/gnu/aarch64/lin/aarch64-none/x86_64-oesdk-linux/usr/lib/aarch64-xilinx-elf/gcc/aarch64-xilinx-elf/13.3.0/include/"
+# Auto-detect GCC version for Clang builtin headers (stddef.h, stdarg.h, etc.)
+_gcc_include_base="${XILINX_VITIS}/gnu/aarch64/lin/aarch64-none/x86_64-oesdk-linux/usr/lib/aarch64-xilinx-elf/gcc/aarch64-xilinx-elf"
+_gcc_version=$(ls -1 "$_gcc_include_base" 2>/dev/null | head -1)
+if [ -z "$_gcc_version" ]; then
+    echo "WARNING: Could not detect GCC version under ${_gcc_include_base}"
+    export CLANG_INCLUDE_PATH="${_gcc_include_base}/13.3.0/include/"
+else
+    export CLANG_INCLUDE_PATH="${_gcc_include_base}/${_gcc_version}/include/"
+fi
+unset _gcc_include_base _gcc_version
 export LLVM_INSTALL_DIR=/Users/hua/src/dsamlir/thirdparty/llvm-project/build/
 
 if [ "$SKIP_BSP" -eq 0 ]; then
@@ -168,12 +178,27 @@ if [ "$SKIP_BSP" -eq 0 ]; then
         echo "Generating BSPs..."
         pushd "$SCRIPT_DIR"
         
-        VEK280_XSA=$XILINX_VITIS/base_platforms/xilinx_vek280_base_202520_1/hw/hw.xsa
-        VEK385_XSA=/proj/xbuilds/2025.2_daily_latest/internal_platforms/vek385_base_reva/hw/hw.xsa
+        # Auto-detect XSA platform paths (works across Vitis versions)
+        VEK280_XSA=$(ls -d "$XILINX_VITIS/base_platforms/xilinx_vek280_base_"*/hw/hw.xsa 2>/dev/null | head -1)
+        VEK385_XSA=$(ls -d "$XILINX_VITIS/base_platforms/"*vek385*/hw/hw.xsa 2>/dev/null | head -1)
 
-        vitis -s gen_bsp.py --xsa $VEK280_XSA --processor psv_cortexr5_0       
+        if [ -z "$VEK280_XSA" ]; then
+            echo "Error: Could not find VEK280 XSA under $XILINX_VITIS/base_platforms/"
+            echo "Expected pattern: xilinx_vek280_base_*/hw/hw.xsa"
+            popd
+            return 1
+        fi
+        echo "VEK280 XSA: $VEK280_XSA"
+
+        vitis -s gen_bsp.py --xsa $VEK280_XSA --processor psv_cortexr5_0
         vitis -s gen_bsp.py --xsa $VEK280_XSA --processor psv_cortexa72_0
-        vitis -s gen_bsp.py --xsa $VEK385_XSA --processor cortexa78_0
+
+        if [ -n "$VEK385_XSA" ]; then
+            echo "VEK385 XSA: $VEK385_XSA"
+            vitis -s gen_bsp.py --xsa $VEK385_XSA --processor cortexa78_0
+        else
+            echo "Warning: VEK385 XSA not found, skipping cortexa78_0 BSP generation"
+        fi
 
         popd
     else

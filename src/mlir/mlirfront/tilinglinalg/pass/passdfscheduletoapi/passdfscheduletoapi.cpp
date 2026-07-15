@@ -1,7 +1,7 @@
 /******************************************************************************
-* Copyright (C) 2025 Advanced Micro Devices, Inc. All Rights Reserved.
-* SPDX-License-Identifier: MIT
-******************************************************************************/
+ * Copyright (C) 2025 Advanced Micro Devices, Inc. All Rights Reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ ******************************************************************************/
 
 #include "passdfscheduletoapi.h"
 #include "mlir/Conversion/SCFToEmitC/SCFToEmitC.h"
@@ -1211,7 +1211,26 @@ struct ConfigDmaBdInnerPattern : public OpConversionPattern<dfschedule::ConfigDm
         int32_t releaseLockVal = static_cast<int32_t>(op.getReleaseLockVal());
         int32_t outOfOrderBdId = static_cast<int32_t>(op.getOutOfOrderBdId());
 
-        // Create comment
+        // Multi-dimensional addressing attributes (read here, before the provenance
+        // comment, so the comment can describe the dims/iteration actually emitted).
+        auto dimStrides = op.getDimStrides();
+        auto dimWraps = op.getDimWraps();
+        bool useMultiDim = dimStrides && dimWraps && !dimStrides->empty();
+
+        // When DISABLE_MULTID_DIM_DMA flag is set (bit 4), force linear DMA.
+        // Only check when runtimeDebugLevel is explicitly set (>= 0); -1 means "not specified".
+        if (useMultiDim && state.runtimeDebugLevel >= 0 && (state.runtimeDebugLevel & (1 << 4))) {
+            llvm::errs() << "  [DISABLE_MULTID_DIM_DMA flag set] Suppressing multi-dim DMA, using linear "
+                            "__Runtime_dma_bd_config\n";
+            useMultiDim = false;
+        }
+
+        // OOO iteration attributes.
+        int32_t iterStepSize = op.getIterStepSize();
+        int32_t iterWrap = op.getIterWrap();
+        bool useOooIter = useMultiDim && iterWrap > 1;
+
+        // Create comment (includes multi-dim per-dim stride/wrap + iteration when present).
         std::string comment =
             "/* DMA BD Config: bd_id=" +
             std::to_string(
@@ -1223,8 +1242,22 @@ struct ConfigDmaBdInnerPattern : public OpConversionPattern<dfschedule::ConfigDm
             ", acquire_lock_id=" + std::to_string(acquireLockId) +
             ", acquire_lock_val=" + std::to_string(acquireLockVal) +
             ", release_lock_id=" + std::to_string(releaseLockId) +
-            ", release_lock_val=" + std::to_string(releaseLockVal) + ", ooo_bd_id=" + std::to_string(outOfOrderBdId) +
-            " */";
+            ", release_lock_val=" + std::to_string(releaseLockVal) + ", ooo_bd_id=" + std::to_string(outOfOrderBdId);
+        if (useMultiDim) {
+            int32_t numDimsComment = static_cast<int32_t>(dimStrides->size());
+            comment += ", num_dims=" + std::to_string(numDimsComment);
+            for (int32_t i = 0; i < numDimsComment; i++) {
+                int32_t s = mlir::cast<IntegerAttr>((*dimStrides)[i]).getInt();
+                int32_t w = mlir::cast<IntegerAttr>((*dimWraps)[i]).getInt();
+                comment += ", d" + std::to_string(i) + "_stride=" + std::to_string(s) + ", d" + std::to_string(i) +
+                           "_wrap=" + std::to_string(w);
+            }
+            if (useOooIter) {
+                comment +=
+                    ", iter_step_size=" + std::to_string(iterStepSize) + ", iter_wrap=" + std::to_string(iterWrap);
+            }
+        }
+        comment += " */";
         rewriter.create<emitc::VerbatimOp>(loc, comment);
 
         // Create constants for parameters
@@ -1281,24 +1314,9 @@ struct ConfigDmaBdInnerPattern : public OpConversionPattern<dfschedule::ConfigDm
             rewriter.create<emitc::ConstantOp>(loc, i32Type, rewriter.getI32IntegerAttr(releaseLockVal));
         auto oooIdConst = rewriter.create<emitc::ConstantOp>(loc, i32Type, rewriter.getI32IntegerAttr(outOfOrderBdId));
 
-        // Check for multi-dimensional addressing attributes
-        auto dimStrides = op.getDimStrides();
-        auto dimWraps = op.getDimWraps();
-        bool useMultiDim = dimStrides && dimWraps && !dimStrides->empty();
-
-        // When DISABLE_MULTID_DIM_DMA flag is set (bit 4), force linear DMA
-        // Only check when runtimeDebugLevel is explicitly set (>= 0); -1 means "not specified"
-        if (useMultiDim && state.runtimeDebugLevel >= 0 && (state.runtimeDebugLevel & (1 << 4))) {
-            llvm::errs() << "  [DISABLE_MULTID_DIM_DMA flag set] Suppressing multi-dim DMA, using linear "
-                            "__Runtime_dma_bd_config\n";
-            useMultiDim = false;
-        }
-
+        // dimStrides, dimWraps, useMultiDim, iterStepSize, iterWrap and useOooIter
+        // were read above (before the provenance comment) and are reused here.
         emitc::CallOpaqueOp configCall;
-        // Check for OOO iteration attributes
-        int32_t iterStepSize = op.getIterStepSize();
-        int32_t iterWrap = op.getIterWrap();
-        bool useOooIter = useMultiDim && iterWrap > 1;
 
         if (useOooIter) {
             // OOO iteration path: __Runtime_dma_bd_config_multidim_ooo
@@ -3406,6 +3424,30 @@ void DfscheduleToApiPass::runOnOperation() {
                     b.create<emitc::AddOp>(addOp.getLoc(), addOp.getResult().getType(), addOp.getLhs(), addOp.getRhs());
                 addOp.replaceAllUsesWith(result.getResult());
                 addOp.erase();
+            }
+
+            // Walk the for body and convert arith.divsi → emitc.div
+            // (used by the 2D width-split halo offset: hc = iv / w_rounds)
+            SmallVector<arith::DivSIOp> divOps;
+            forOp.getBody()->walk([&](arith::DivSIOp op) { divOps.push_back(op); });
+            for (auto divOp : divOps) {
+                b.setInsertionPoint(divOp);
+                auto result =
+                    b.create<emitc::DivOp>(divOp.getLoc(), divOp.getResult().getType(), divOp.getLhs(), divOp.getRhs());
+                divOp.replaceAllUsesWith(result.getResult());
+                divOp.erase();
+            }
+
+            // Walk the for body and convert arith.remsi → emitc.rem
+            // (used by the 2D width-split halo offset: wc = iv % w_rounds)
+            SmallVector<arith::RemSIOp> remOps;
+            forOp.getBody()->walk([&](arith::RemSIOp op) { remOps.push_back(op); });
+            for (auto remOp : remOps) {
+                b.setInsertionPoint(remOp);
+                auto result =
+                    b.create<emitc::RemOp>(remOp.getLoc(), remOp.getResult().getType(), remOp.getLhs(), remOp.getRhs());
+                remOp.replaceAllUsesWith(result.getResult());
+                remOp.erase();
             }
         });
 

@@ -1,5 +1,5 @@
 <!-- Copyright (C) 2025 Advanced Micro Devices, Inc. All Rights Reserved.
-     SPDX-License-Identifier: MIT -->
+     SPDX-License-Identifier: Apache-2.0 -->
 # LLVM/MLIR API Pitfalls
 
 Known LLVM and MLIR API pitfalls encountered in the AIEHLC project. Each entry documents the bug, root cause, fix, and a rule to avoid reoccurrence.

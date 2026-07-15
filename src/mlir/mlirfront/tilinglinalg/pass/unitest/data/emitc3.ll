@@ -1,6 +1,6 @@
 /******************************************************************************
 * Copyright (C) 2025 Advanced Micro Devices, Inc. All Rights Reserved.
-* SPDX-License-Identifier: MIT
+* SPDX-License-Identifier: Apache-2.0
 ******************************************************************************/
 %11 = "emitc.constant"() <{value = 0 : i32}> : () -> i32
 %12 = "emitc.constant"() <{value = 0 : i64}> : () -> i64

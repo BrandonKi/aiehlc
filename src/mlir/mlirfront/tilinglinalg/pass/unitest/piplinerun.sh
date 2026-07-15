@@ -1,15 +1,20 @@
 #!/bin/bash
 ###############################################################################
 # Copyright (C) 2026 Advanced Micro Devices, Inc. All Rights Reserved.
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 ###############################################################################
 set -e
 
-# Parse arguments: accept 'rebuild' or '-rebuild' to force steps 2-3 (cmake/make/test)
+# Parse arguments:
+#   'rebuild'/'-rebuild' -> force steps 2-3 (cmake/make/test)
+#   'reboot'/'-reboot'   -> full reboot/power-cycle HW run (default is nonreboot/xsdb TCP connect)
 REBUILD=0
+REBOOT=0
 for arg in "$@"; do
     if [[ "$arg" == "rebuild" || "$arg" == "-rebuild" ]]; then
         REBUILD=1
+    elif [[ "$arg" == "reboot" || "$arg" == "-reboot" ]]; then
+        REBOOT=1
     fi
 done
 
@@ -42,15 +47,26 @@ else
     echo "=== Step 2+3: Skipped (pass 'rebuild' or '-rebuild' to regenerate host.cc + kernel.cc) ==="
 fi
 
+echo "=== Step 3b: Generate readable schedule view (schedule_view.json + host_schedule.html) ==="
+if [ -f "$(pwd)/build/worklocal/dfscheduleprovenancemap.json" ]; then
+    python3 ../../../../../../src/tool/debug/schedule_view.py "$(pwd)/build/worklocal" || \
+        echo "warning: schedule_view.py failed (non-fatal)"
+else
+    echo "=== Step 3b: Skipped (no dfscheduleprovenancemap.json in build/worklocal) ==="
+fi
+
 echo "=== Step 4: Compile host + kernel (hostcompile.sh) ==="
-pushd ./worklocal/
 REBUILD_ARG=""
 [ "${REBUILD}" -eq 1 ] && REBUILD_ARG="rebuild"
-source hostcompile.sh
-popd
+WORKLOCAL_DIR="$(pwd)/build/worklocal" source ../../../../../../script/hostcompile.sh
 
-echo "=== Step 5: Run on HW (apppaltest) ==="
 source ~/palmtest/envlocal.sh
-apppaltest.py ./worklocal/build/host
+if [ "${REBOOT}" -eq 1 ]; then
+    echo "=== Step 5: Run on HW (apppaltest, full reboot/power-cycle) ==="
+    apppaltest.py ./build/worklocal/build/host
+else
+    echo "=== Step 5: Run on HW (apppaltest, xsdb TCP connect via -nonreboot; pass 'reboot' to power-cycle) ==="
+    apppaltest.py -nonreboot ./build/worklocal/build/host
+fi
 
 echo "=== Pipeline completed successfully ==="

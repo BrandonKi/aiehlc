@@ -1,7 +1,7 @@
 /******************************************************************************
-* Copyright (C) 2025 Advanced Micro Devices, Inc. All Rights Reserved.
-* SPDX-License-Identifier: MIT
-******************************************************************************/
+ * Copyright (C) 2025 Advanced Micro Devices, Inc. All Rights Reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ ******************************************************************************/
 #include "tilinglinalg_pipeline.h"
 
 #include "dmaptodmaphop.h"
@@ -193,9 +193,35 @@ mlir::ModuleOp TilingLinalgPipeline::buildRoutingIR(mlir::MLIRContext &ctx, int 
         isInputFlags.push_back(tp.isInput);
     }
 
+    // Mirror per-tensor spatial-halo descriptors (from TensorParam.shimDma) onto the
+    // SplitModel so createroutingfuncBySplitModel can build overlapping partition slices.
+    SplitModel effectiveSplit = splitModel;
+    for (unsigned i = 0; i < tensors.size() && i < effectiveSplit.tensorSplits.size(); ++i) {
+        const auto &sd = tensors[i].shimDma;
+        if (sd.mode == 1 && sd.haloSlice > 0) {
+            effectiveSplit.tensorSplits[i].haloMode = 1;
+            effectiveSplit.tensorSplits[i].haloSlice = sd.haloSlice;
+            effectiveSplit.tensorSplits[i].haloStep = sd.haloStep;
+            if (sd.splitDim == 0 || sd.splitDim == 1)
+                effectiveSplit.tensorSplits[i].splitDim = sd.splitDim;
+            // Nested L2 (on-core temporal ROW-split): propagate so
+            // createroutingfuncBySplitModel sets the partitiontensor
+            // l2_slice/l2_step/l2_rounds attrs.
+            effectiveSplit.tensorSplits[i].haloL2Slice = sd.l2Slice;
+            effectiveSplit.tensorSplits[i].haloL2Step = sd.l2Step;
+            effectiveSplit.tensorSplits[i].haloL2Rounds = sd.l2Rounds;
+            // K-contraction accumulate split (independent of the H/row L2 halo):
+            // propagate so createroutingfuncBySplitModel sets the HaloAttr k params.
+            effectiveSplit.tensorSplits[i].kAccumSlice = sd.kSlice;
+            effectiveSplit.tensorSplits[i].kAccumStep = sd.kStep;
+            effectiveSplit.tensorSplits[i].kAccumRounds = sd.kRounds;
+        }
+    }
+
     // Use SplitModel-driven routing generation
     routingmanager rm;
-    rm.createroutingfuncBySplitModel(builder, &ctx, mesh, tensorValues, isInputFlags, meshRows, meshCols, splitModel);
+    rm.createroutingfuncBySplitModel(builder, &ctx, mesh, tensorValues, isInputFlags, meshRows, meshCols,
+                                     effectiveSplit);
 
     builder.create<mlir::func::ReturnOp>(builder.getUnknownLoc());
     m.push_back(hostFunc);
@@ -210,6 +236,114 @@ mlir::ModuleOp TilingLinalgPipeline::buildRoutingIR(mlir::MLIRContext &ctx, int 
             ppDepthEntries.append(key, builder.getI32IntegerAttr(ppDepth));
         }
         m->setAttr("routing.pp_depth_map", DictionaryAttr::get(&ctx, ppDepthEntries));
+    }
+
+    // Store per-tensor shimDma as module attribute so DmaphopTodfscheblueprintPass
+    // can read multi-dim DMA addressing from user-specified DmaTransform.
+    // Format: "tensor_N.shim_dma" = { strides = [...], wraps = [...], iter_step = N, iter_wrap = N,
+    //                                  ddr_shape = [...], tile_m_alignment = N }
+    for (unsigned i = 0; i < tensors.size(); ++i) {
+        // Spatial-halo mode (mode == 1) uses flat contiguous shim BDs with overlapping
+        // per-tile base offsets — it must NOT emit a multi-dim shim_dma attribute.
+        if (tensors[i].shimDma.mode == 1)
+            continue;
+        if (!tensors[i].shimDma.empty()) {
+            NamedAttrList entries;
+            SmallVector<int32_t> strides, wraps;
+            for (auto &[s, w] : tensors[i].shimDma.dims) {
+                strides.push_back(s);
+                wraps.push_back(w);
+            }
+            entries.append("strides", builder.getI32ArrayAttr(strides));
+            entries.append("wraps", builder.getI32ArrayAttr(wraps));
+            entries.append("iter_step", builder.getI32IntegerAttr(tensors[i].shimDma.iter_step));
+            entries.append("iter_wrap", builder.getI32IntegerAttr(tensors[i].shimDma.iter_wrap));
+            // Store ddr_shape if available (for tile_m temporal tiling base address computation)
+            if (!tensors[i].shimDma.ddrShape.empty()) {
+                SmallVector<int64_t> shape(tensors[i].shimDma.ddrShape.begin(), tensors[i].shimDma.ddrShape.end());
+                entries.append("ddr_shape", builder.getI64ArrayAttr(shape));
+            }
+            // Store tile_m_alignment if set (e.g. OW for im2col)
+            if (tensors[i].shimDma.tile_m_alignment > 0) {
+                entries.append("tile_m_alignment", builder.getI32IntegerAttr(tensors[i].shimDma.tile_m_alignment));
+            }
+            m->setAttr("tensor_" + std::to_string(i) + ".shim_dma", DictionaryAttr::get(&ctx, entries));
+            llvm::outs() << "[TilingLinalg] Stored shim_dma for tensor_" << i << ": " << tensors[i].shimDma.dims.size()
+                         << " dims, iter_step=" << tensors[i].shimDma.iter_step
+                         << " iter_wrap=" << tensors[i].shimDma.iter_wrap << "\n";
+        }
+    }
+
+    // Store per-tensor spatial-halo descriptor as module attribute.
+    // Format: "tensor_N.halo" = { slice = <haloSlice>, step = <haloStep>, split_dim = <splitDim> }
+    // DmaphopTodfscheblueprintPass reads this (or the partitiontensor's step attr) to
+    // compute overlapping per-tile DDR base offsets for the flat shim BD.
+    for (unsigned i = 0; i < tensors.size(); ++i) {
+        const auto &sd = tensors[i].shimDma;
+        if (sd.mode == 1 && sd.haloSlice > 0) {
+            NamedAttrList entries;
+            entries.append("slice", builder.getI32IntegerAttr(sd.haloSlice));
+            entries.append("step", builder.getI32IntegerAttr(sd.haloStep));
+            entries.append("split_dim", builder.getI32IntegerAttr(sd.splitDim));
+            // 2D width-split: carry the per-chunk WIDTH geometry so the shim BD
+            // (passdmaphop) and the host round loop (passblueprinttoschedule) can
+            // build the 2D narrow-chunk descriptor + (hc,wc) per-round base offset.
+            // Emitted only when wRounds > 1 so the height-only path is untouched.
+            if (sd.wRounds > 1) {
+                entries.append("w_slice", builder.getI32IntegerAttr(sd.wSlice));
+                entries.append("w_step", builder.getI32IntegerAttr(sd.wStep));
+                entries.append("w_rounds", builder.getI32IntegerAttr(sd.wRounds));
+                entries.append("row_pitch", builder.getI32IntegerAttr(sd.rowPitch));
+                entries.append("ow_t", builder.getI32IntegerAttr(sd.owT));
+            }
+            // 2-level (nested) halo: each L1 tile slice is further chunked into
+            // l2_rounds on-core temporal rounds (l2_slice rows advancing by l2_step
+            // along the split/row dim). Realized downstream via the DMA BD iteration
+            // dimension (iter_step=l2_step*row_pitch, iter_wrap=l2_rounds) plus kernel
+            // rounds. Emitted only when l2Rounds > 1 so the legacy path is untouched.
+            if (sd.l2Rounds > 1) {
+                entries.append("l2_slice", builder.getI32IntegerAttr(sd.l2Slice));
+                entries.append("l2_step", builder.getI32IntegerAttr(sd.l2Step));
+                entries.append("l2_rounds", builder.getI32IntegerAttr(sd.l2Rounds));
+                // row_pitch is required by the iteration-dim BD; ensure it is present
+                // even when there is no W-split (wRounds <= 1).
+                if (sd.wRounds <= 1)
+                    entries.append("row_pitch", builder.getI32IntegerAttr(sd.rowPitch));
+            }
+            // K-contraction accumulate split (independent of the H/row L2 above):
+            // the K dim is chunked into k_rounds on-core accumulate rounds of
+            // k_slice elements advancing by k_step. Emitted only when kRounds > 1
+            // so non-k-accum IR stays byte-identical.
+            if (sd.kRounds > 1) {
+                entries.append("k_slice", builder.getI32IntegerAttr(sd.kSlice));
+                entries.append("k_step", builder.getI32IntegerAttr(sd.kStep));
+                entries.append("k_rounds", builder.getI32IntegerAttr(sd.kRounds));
+            }
+            m->setAttr("tensor_" + std::to_string(i) + ".halo", DictionaryAttr::get(&ctx, entries));
+            llvm::outs() << "[TilingLinalg] Stored halo for tensor_" << i << ": slice=" << sd.haloSlice
+                         << " step=" << sd.haloStep << " split_dim=" << sd.splitDim;
+            if (sd.wRounds > 1)
+                llvm::outs() << " [W-SPLIT w_slice=" << sd.wSlice << " w_step=" << sd.wStep
+                             << " w_rounds=" << sd.wRounds << " row_pitch=" << sd.rowPitch << " ow_t=" << sd.owT << "]";
+            if (sd.l2Rounds > 1)
+                llvm::outs() << " [L2-SPLIT l2_slice=" << sd.l2Slice << " l2_step=" << sd.l2Step
+                             << " l2_rounds=" << sd.l2Rounds << "]";
+            if (sd.kRounds > 1)
+                llvm::outs() << " [K-ACCUM k_slice=" << sd.kSlice << " k_step=" << sd.kStep
+                             << " k_rounds=" << sd.kRounds << "]";
+            llvm::outs() << "\n";
+        }
+    }
+
+    // Store per-tensor layout_transform as module attribute so DmaphopTodfscheblueprintPass
+    // knows whether to apply DmaTransform strides on shim BD (dma_shuffle) or skip them (core_shuffle).
+    // Format: "tensor_N.layout_transform" = "dma_shuffle" | "core_shuffle"
+    for (unsigned i = 0; i < splitModel.tensorSplits.size(); ++i) {
+        const auto &lt = splitModel.tensorSplits[i].layoutTransform;
+        if (!lt.empty()) {
+            m->setAttr("tensor_" + std::to_string(i) + ".layout_transform", builder.getStringAttr(lt));
+            llvm::outs() << "[TilingLinalg] Stored layout_transform for tensor_" << i << ": " << lt << "\n";
+        }
     }
 
     llvm::errs() << m;
@@ -261,7 +395,7 @@ bool TilingLinalgPipeline::runPipeline(mlir::MLIRContext &ctx, mlir::ModuleOp mo
 
     // Generate provenance map JSON after dmaphop IR is available
     {
-        auto provenancePass = std::make_unique<DmaphopProvenanceMapPass>(outputDir);
+        auto provenancePass = std::make_unique<DmaphopProvenanceMapPass>(outputDir, partStartCol, aieGen);
         runPipelineSinglePass(ctx, module, std::move(provenancePass), irDir, stage, "DmaphopProvenanceMapPass");
     }
 
@@ -360,7 +494,7 @@ bool TilingLinalgPipeline::runPipeline(mlir::MLIRContext &ctx, mlir::ModuleOp mo
 
     // Generate low-level dfschedule provenance map after WaitMergePass
     {
-        auto dfscheProvenancePass = std::make_unique<DfscheduleProvenanceMapPass>(outputDir);
+        auto dfscheProvenancePass = std::make_unique<DfscheduleProvenanceMapPass>(outputDir, partStartCol, aieGen);
         runPipelineSinglePass(ctx, hostModule, std::move(dfscheProvenancePass), irDir, stage,
                               "DfscheduleProvenanceMapPass");
     }
@@ -574,20 +708,204 @@ bool TilingLinalgPipeline::runPipeline(mlir::MLIRContext &ctx, mlir::ModuleOp mo
             stream << "#define AIEHLC_TILING_STUBS_DEFINED\n";
             // Re-emit SpatialPolicy types so user source constexpr definitions compile
             stream << "namespace aie {\n";
-            stream << "enum class Pattern  { Broadcast = 0, Scatter = 1, Multicast = 2, Gather = 3 };\n";
+            stream
+                << "enum class Pattern  { Broadcast = 0, Scatter = 1, Distribute = 1, Multicast = 2, Gather = 3 };\n";
             stream << "enum class Layout   { Row = 0, Col = 1, Grid = 2 };\n";
             stream << "enum class Flow     { Default = 0, LeftToRight = 1, RightToLeft = 2 };\n";
-            stream << "struct SpatialPolicy {\n";
-            stream << "  Pattern pattern      = Pattern::Broadcast;\n";
-            stream << "  Layout  distribution = Layout::Row;\n";
-            stream << "  Flow    merge_order  = Flow::Default;\n";
-            stream << "  int     pp_depth     = 2;\n";
-            stream << "  int     max_buffer_bytes = 4096;\n";
-            stream << "  int     tile_m       = 0;\n";
-            stream << "  int     tile_n       = 0;\n";
-            stream << "  int     tile_k       = 0;\n";
+            stream << "enum class PadMaterialize { DDR = 0, Memtile = 1 };\n";
+            stream << "enum class Im2col   { None = 0, Dma = 1 };\n";
+            stream << "enum class LayoutTransform { None = 0, DmaShuffle = 1, CoreShuffle = 2 };\n";
+            stream << "enum class TileMode { Partition = 0, Overlap = 1 };\n";
+            stream << "enum class Objective { MaxArrayUtil = 0, MinLatency = 1, MinDma = 2 };\n";
+            stream << "struct Bytes { int value = 0; };\n";
+            // tile_level — nested second-level (on-core temporal) split. Must stay in
+            // sync with the two Clang-phase emissions in aiehlc.cc (field order
+            // tile_size=0, stride=1, rounds=2 is contractual for AST extraction).
+            stream << "struct tile_level {\n";
+            stream << "  int tile_size = 0;\n";
+            stream << "  int stride    = 0;\n";
+            stream << "  int rounds    = 0;\n";
             stream << "};\n";
-            stream << "template<typename T, SpatialPolicy P> struct port { using type = T; };\n";
+            stream << "struct tile_dim {\n";
+            stream << "  int fullsize   = 0;\n";
+            stream << "  int tile_round = 0;\n";
+            stream << "  int tile_size  = 0;\n";
+            stream << "  int stride     = 0;\n";
+            stream << "  int padsize    = 0;\n";
+            stream << "  tile_level slice_tiling;\n"; // nested inner level (field 5)
+            stream << "};\n";
+            // SpatialPolicy — 3-part orthogonal policy (map/mat/sched).
+            stream << "struct SpatialMap {\n";
+            stream << "  Pattern act         = Pattern::Broadcast;\n";
+            stream << "  Pattern wgt         = Pattern::Broadcast;\n";
+            stream << "  Layout  layout      = Layout::Row;\n";
+            stream << "  Flow    merge_order = Flow::Default;\n";
+            stream << "};\n";
+            stream << "struct Materialize {\n";
+            stream << "  PadMaterialize pad    = PadMaterialize::DDR;\n";
+            stream << "  Im2col         im2col = Im2col::None;\n";
+            stream << "};\n";
+            stream << "struct Schedule {\n";
+            stream << "  int   pp_depth  = 2;\n";
+            stream << "  Bytes l1_budget = Bytes{32*1024};\n";
+            stream << "};\n";
+            stream << "struct SpatialPolicy {\n";
+            stream << "  SpatialMap  map;\n";
+            stream << "  Materialize mat;\n";
+            stream << "  Schedule    sched;\n";
+            stream << "};\n";
+            // GlobalPolicy — per-kernel GLOBAL policy bound by name convention
+            // (<kernelName>_policy). fullconnect_auto: 1 (default) = M×N repeat,
+            // 0 = no repeat (A/B each sent once).
+            stream << "struct GlobalPolicy {\n";
+            stream << "  int fullconnect_auto = 1;\n";
+            stream << "};\n";
+            // GemmSpace — policy + GEMM iteration space
+            // (0 policy,1 m,2 n,3 k legacy; 4 d1,5 d2,6 d3,7 d4 per-port 2D/3D/4D).
+            stream << "struct GemmSpace {\n";
+            stream << "  SpatialPolicy policy;\n";
+            stream << "  tile_dim m;\n";
+            stream << "  tile_dim n;\n";
+            stream << "  tile_dim k;\n";
+            stream << "  tile_dim d1;\n";
+            stream << "  tile_dim d2;\n";
+            stream << "  tile_dim d3;\n";
+            stream << "  tile_dim d4;\n";
+            stream << "};\n";
+            // Conv2dSpace — policy + conv iteration space; ih/iw carry the
+            // EXACT input spatial dims (OH/OW derived via forward conv).
+            // (0 policy,1 ih,2 iw,3 ic,4 oc,5 kh,6 kw,7 stride,8 pad,9 m).
+            // Field 9 (m) is the optional explicit spatial-halo split.
+            stream << "struct Conv2dSpace {\n";
+            stream << "  SpatialPolicy policy;\n";
+            stream << "  tile_dim ih;\n";
+            stream << "  tile_dim iw;\n";
+            stream << "  tile_dim ic;\n";
+            stream << "  tile_dim oc;\n";
+            stream << "  tile_dim kh;\n";
+            stream << "  tile_dim kw;\n";
+            stream << "  int stride = 1;\n";
+            stream << "  int pad = 0;\n";
+            stream << "  tile_dim m;\n";
+            stream << "};\n";
+            // ConvGeom + Conv2dSpace_Spatial — declarative spatial-halo conv
+            // space (geom 0 in_h,1 in_w,2 cin,3 cout,4 ksize,5 S,6 pad_lo,
+            // 7 pad_hi,8 cin_aligned; space 0 geom,1 out_tile_h,2 out_tile_w,
+            // 3 objective,4 policy).
+            stream << "struct ConvGeom {\n";
+            stream << "  int in_h=0; int in_w=0; int cin=0; int cout=0;\n";
+            stream << "  int ksize=0; int S=1; int pad_lo=0; int pad_hi=0; int cin_aligned=0;\n";
+            stream << "};\n";
+            stream << "struct Conv2dSpace_Spatial {\n";
+            stream << "  ConvGeom      geom;\n";
+            stream << "  int           out_tile_h = 0;\n";
+            stream << "  int           out_tile_w = 0;\n";
+            stream << "  Objective     objective  = Objective::MaxArrayUtil;\n";
+            stream << "  SpatialPolicy policy;\n";
+            stream << "  tile_dim      d1;\n";
+            stream << "  tile_dim      d2;\n";
+            stream << "};\n";
+            // DmaTransform — general multi-dim DMA descriptor with factory methods
+            stream << "struct DmaTransform {\n";
+            stream << "  struct Dim { int stride; int wrap; };\n";
+            stream << "  Dim dims[4] = {};\n";
+            stream << "  int num_dims = 0;\n";
+            stream << "  int iter_step = 0;\n";
+            stream << "  int iter_wrap = 0;\n";
+            stream << "  int mode = 0;\n";
+            stream << "  int halo_slice = 0;\n";
+            stream << "  int halo_step = 0;\n";
+            stream << "  int split_dim = 0;\n";
+            stream << "  int raw_h = 0;\n";
+            stream << "  int raw_wc = 0;\n";
+            stream << "  int kernel_h = 0;\n";
+            stream << "  int kernel_w = 0;\n";
+            stream << "  int input_c = 0;\n";
+            stream << "  int stride = 0;\n";
+            stream << "  int ow = 0;\n";
+            stream << "  int oh_per_row = 0;\n";
+            stream << "  static constexpr DmaTransform flat() { return {}; }\n";
+            stream << "  static constexpr DmaTransform im2col(int H, int W, int C,\n";
+            stream << "      int KH, int KW, int S, int P) {\n";
+            stream << "    DmaTransform d;\n";
+            stream << "    int OW = (W + 2*P - KW) / S + 1;\n";
+            stream << "    int OH = (H + 2*P - KH) / S + 1;\n";
+            stream << "    d.dims[0] = {1, KW * C}; d.dims[1] = {W * C, KH}; d.dims[2] = {S * C, OW};\n";
+            stream << "    d.num_dims = 3;\n";
+            stream << "    d.iter_step = W * C * S; d.iter_wrap = OH;\n";
+            stream << "    return d;\n";
+            stream << "  }\n";
+            stream << "  static constexpr DmaTransform dilated_im2col(int H, int W, int C,\n";
+            stream << "      int KH, int KW, int S, int P, int D) {\n";
+            stream << "    DmaTransform d;\n";
+            stream << "    int OW = (W + 2*P - D*(KW-1) - 1) / S + 1;\n";
+            stream << "    int OH = (H + 2*P - D*(KH-1) - 1) / S + 1;\n";
+            stream << "    d.dims[0] = {D * C, KW}; d.dims[1] = {W * C * D, KH}; d.dims[2] = {S * C, OW};\n";
+            stream << "    d.num_dims = 3;\n";
+            stream << "    d.iter_step = W * C * S; d.iter_wrap = OH;\n";
+            stream << "    return d;\n";
+            stream << "  }\n";
+            stream << "  static constexpr DmaTransform pool(int H, int W, int C,\n";
+            stream << "      int KH, int KW, int S, int P) {\n";
+            stream << "    return im2col(H, W, C, KH, KW, S, P);\n";
+            stream << "  }\n";
+            stream << "  static constexpr DmaTransform depthwise_im2col(int H, int W, int C,\n";
+            stream << "      int KH, int KW, int S, int P, int G) {\n";
+            stream << "    DmaTransform d;\n";
+            stream << "    int CPG = C / G;\n";
+            stream << "    int OW = (W + 2*P - KW) / S + 1;\n";
+            stream << "    int OH = (H + 2*P - KH) / S + 1;\n";
+            stream << "    d.dims[0] = {1, KW * CPG}; d.dims[1] = {W * C, KH}; d.dims[2] = {S * C, OW};\n";
+            stream << "    d.num_dims = 3;\n";
+            stream << "    d.iter_step = W * C * S; d.iter_wrap = OH;\n";
+            stream << "    return d;\n";
+            stream << "  }\n";
+            stream << "  static constexpr DmaTransform transpose(int rows, int cols) {\n";
+            stream << "    DmaTransform d;\n";
+            stream << "    d.dims[0] = {cols, rows}; d.dims[1] = {1, cols};\n";
+            stream << "    d.num_dims = 2;\n";
+            stream << "    return d;\n";
+            stream << "  }\n";
+            stream << "  static constexpr DmaTransform chw_to_hwc(int C, int H, int W) {\n";
+            stream << "    DmaTransform d;\n";
+            stream << "    d.dims[0] = {H * W, C};\n";
+            stream << "    d.dims[1] = {1, W};\n";
+            stream << "    d.num_dims = 2;\n";
+            stream << "    d.iter_step = W;\n";
+            stream << "    d.iter_wrap = H;\n";
+            stream << "    return d;\n";
+            stream << "  }\n";
+            stream << "  static constexpr DmaTransform hwc_to_chw(int H, int W, int C) {\n";
+            stream << "    DmaTransform d;\n";
+            stream << "    d.dims[0] = {C, W}; d.dims[1] = {W * C, H};\n";
+            stream << "    d.num_dims = 2;\n";
+            stream << "    d.iter_step = 1; d.iter_wrap = C;\n";
+            stream << "    return d;\n";
+            stream << "  }\n";
+            stream << "  static constexpr DmaTransform spatial(int H, int W, int C,\n";
+            stream << "      int KH, int KW, int S, int P, int R) {\n";
+            stream << "    DmaTransform d;\n";
+            stream << "    int OH = (H + 2*P - KH) / S + 1;\n";
+            stream << "    int oh_per_row = OH / R;\n";
+            stream << "    d.mode = 1;\n";
+            stream << "    d.halo_slice = (oh_per_row - 1) * S + KH;\n";
+            stream << "    d.halo_step  = oh_per_row * S;\n";
+            stream << "    d.split_dim  = 0;\n";
+            stream << "    d.raw_h  = H;\n";
+            stream << "    d.raw_wc = W * C;\n";
+            stream << "    d.kernel_h = KH; d.kernel_w = KW; d.input_c = C; d.stride = S;\n";
+            stream << "    d.ow = (W + 2*P - KW) / S + 1; d.oh_per_row = oh_per_row;\n";
+            stream << "    return d;\n";
+            stream << "  }\n";
+            stream << "};\n";
+            stream << "struct ConvTiling {\n";
+            stream << "  static constexpr DmaTransform spatial(int H, int W, int C,\n";
+            stream << "      int KH, int KW, int S, int P, int R) {\n";
+            stream << "    return DmaTransform::spatial(H, W, C, KH, KW, S, P, R);\n";
+            stream << "  }\n";
+            stream << "};\n";
+            stream << "template<typename T, auto Space, DmaTransform D = DmaTransform::flat()> struct port { "
+                      "using type = T; };\n";
             stream << "template<typename T> constexpr int get_num_rounds(T) { return 0; }\n";
             stream << "template<typename T> constexpr int get_buffer_size(T) { return 0; }\n";
             stream << "constexpr int get_tile_rows() { return 0; }\n";
@@ -599,6 +917,14 @@ bool TilingLinalgPipeline::runPipeline(mlir::MLIRContext &ctx, mlir::ModuleOp mo
             stream << "constexpr int get_k_rounds() { return 0; }\n";
             stream << "constexpr int get_spatial_m_rounds() { return 0; }\n";
             stream << "constexpr int get_spatial_n_rounds() { return 0; }\n";
+            stream << "template<typename T> constexpr int get_spatial_multiple_rounds(T) { return 0; }\n";
+            stream << "constexpr int get_kernel_h() { return 0; }\n";
+            stream << "constexpr int get_kernel_w() { return 0; }\n";
+            stream << "constexpr int get_input_c() { return 0; }\n";
+            stream << "constexpr int get_stride() { return 0; }\n";
+            stream << "constexpr int get_ow() { return 0; }\n";
+            stream << "constexpr int get_oh_per_row() { return 0; }\n";
+            stream << "constexpr int get_halo_slice() { return 0; }\n";
             stream << "}\n";
             // aiePartition struct (shared between aieDim and aieMesh)
             stream << "struct aiePartition {\n";
@@ -619,6 +945,11 @@ bool TilingLinalgPipeline::runPipeline(mlir::MLIRContext &ctx, mlir::ModuleOp mo
             stream << "        int meshId = nextMeshId++;\n";
             stream << "        _dev = __Runtime_init_mesh_partition(meshId, p.startCol, p.endCol - p.startCol + 1);\n";
             stream << "        return aieMesh{rows, cols, p, meshId};\n";
+            stream << "    }\n";
+            stream << "    aieMesh partition(int rows, int cols) {\n";
+            stream << "        int meshId = nextMeshId++;\n";
+            stream << "        _dev = __Runtime_init_mesh_partition(meshId, 0, cols);\n";
+            stream << "        return aieMesh{rows, cols, {0, cols - 1, 0, rows - 1}, meshId};\n";
             stream << "    }\n";
             stream << "    void* alloc(size_t size) { return __Runtime_alloc_buffer(_dev, size); }\n";
             stream << "    void free(void* ptr) { __Runtime_free_buffer(_dev, ptr); }\n";
@@ -944,23 +1275,29 @@ after_host_emit:
             stream << "            klog(\"IV\", (int)in0[di]);\n";
             stream << "        }\n";
             stream << "\n";
-            stream << "        // GEMM kernel: out0[i] = in0[i] * in1[i]\n";
-            stream << "        for (int i = 0; i < BUF_SZ_OUT_0; i++) {\n";
-            stream << "            " << vecType << " data0 = *((" << vecType << " *)&in0[i * 4]);\n";
-            if (numInputWindows > 1) {
-                stream << "            " << vecType << " data1 = *((" << vecType << " *)&in1[i * 4]);\n";
+            // The copy/output body references out0 + BUF_SZ_OUT_0, which only exist
+            // when the kernel has an output window. Input-only kernels (e.g. the
+            // conv2d_spatial halo-input test, numOutputWindows == 0) must skip it,
+            // otherwise the body references undeclared identifiers.
+            if (numOutputWindows > 0) {
+                stream << "        // GEMM kernel: out0[i] = in0[i] * in1[i]\n";
+                stream << "        for (int i = 0; i < BUF_SZ_OUT_0; i++) {\n";
+                stream << "            " << vecType << " data0 = *((" << vecType << " *)&in0[i * 4]);\n";
+                if (numInputWindows > 1) {
+                    stream << "            " << vecType << " data1 = *((" << vecType << " *)&in1[i * 4]);\n";
+                }
+                stream << "            *((" << vecType << " *)&out0[i * 4]) = data0;\n";
+                stream << "        }\n";
+                stream << "        klog(\"CLOP\", BUF_SZ_OUT_0);\n";
+                stream << "\n";
+                // Debug: print out0 values
+                stream << "        // Debug: dump out0 buffer contents\n";
+                stream << "        klog(\"OUT0\", BUF_SZ_OUT_0 * 4);\n";
+                stream << "        for (int di = 0; di < BUF_SZ_OUT_0 * 4; di++) {\n";
+                stream << "            klog(\"OV\", (int)out0[di]);\n";
+                stream << "        }\n";
+                stream << "\n";
             }
-            stream << "            *((" << vecType << " *)&out0[i * 4]) = data0;\n";
-            stream << "        }\n";
-            stream << "        klog(\"CLOP\", BUF_SZ_OUT_0);\n";
-            stream << "\n";
-            // Debug: print out0 values
-            stream << "        // Debug: dump out0 buffer contents\n";
-            stream << "        klog(\"OUT0\", BUF_SZ_OUT_0 * 4);\n";
-            stream << "        for (int di = 0; di < BUF_SZ_OUT_0 * 4; di++) {\n";
-            stream << "            klog(\"OV\", (int)out0[di]);\n";
-            stream << "        }\n";
-            stream << "\n";
 
             // Release all windows
             for (int i = 0; i < numInputWindows; ++i) {

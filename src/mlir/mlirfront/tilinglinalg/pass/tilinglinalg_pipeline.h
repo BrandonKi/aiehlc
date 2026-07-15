@@ -1,17 +1,65 @@
 /******************************************************************************
-* Copyright (C) 2025 Advanced Micro Devices, Inc. All Rights Reserved.
-* SPDX-License-Identifier: MIT
-******************************************************************************/
+ * Copyright (C) 2025 Advanced Micro Devices, Inc. All Rights Reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ ******************************************************************************/
 #pragma once
 
 #include "mlir/IR/BuiltinOps.h"
 #include <string>
 #include <vector>
 
+/// Generic multi-dim DMA descriptor for shim tile.
+/// Mirrors AIEML BD hardware: up to 4 dims + iteration.
+struct DmaAddressing {
+    std::vector<std::pair<int, int>> dims; // {stride, wrap} per dim
+    int iter_step = 0;
+    int iter_wrap = 0;
+    std::vector<int64_t> ddrShape; // actual DDR buffer shape (e.g. [H, W, C] for im2col)
+    int tile_m_alignment = 0;      // tile_m must be multiple of this (e.g. OW for im2col)
+    // Spatial-halo distribution (mode 1): the A-tensor is sliced into overlapping
+    // contiguous row-blocks. Each tile-row owns `haloSlice` input rows, advancing by
+    // `haloStep` rows between tile-rows (so overlap = haloSlice - haloStep). When
+    // mode == 1 the shim BD stays flat (no multi-dim strides); the overlap is realized
+    // purely through per-tile DDR base offsets (offset_i = i * haloStep * raw_wc).
+    int mode = 0;      // 0 = flat / im2col-by-dims, 1 = spatial_halo
+    int haloSlice = 0; // input rows owned by each tile-row (e.g. 61)
+    int haloStep = 0;  // row stride between consecutive tile-rows (e.g. 56)
+    int splitDim = 0;  // tensor dimension that carries the halo split (usually 0)
+    // 2D width-split (spatial-halo on-core WIDTH rounds). When wRounds > 1 the conv
+    // WIDTH is chunked into on-core temporal rounds: each chunk is a NARROW slab
+    // [haloSlice, wSlice*C] cut from the PADDED DDR buffer with row pitch rowPitch.
+    // The kernel iterates H_chunks * W_chunks rounds; the shim BD becomes 2D and the
+    // host round loop steps a 2D (hc,wc) base offset. Zero / 1 keeps the legacy
+    // height-only flat path unchanged.
+    int wSlice = 0;   // per-chunk input cols (e.g. TILE_W = 61)
+    int wStep = 0;    // width halo step between chunks (e.g. TILE_STRIDE_W = 56)
+    int wRounds = 0;  // number of width chunks (e.g. 4); 0/1 = no width split
+    int rowPitch = 0; // PADDED input row pitch in elements (INPUT_W_PAD * C = 920)
+    int owT = 0;      // per-chunk output cols (e.g. OW_T = 28)
+    // 2D L2 (nested temporal) row-split on the SAME split axis as the L1 spatial
+    // halo. Each HW tile owns `haloSlice` rows (L1); when l2Rounds > 1 that slice
+    // is further chunked into l2Rounds on-core temporal ROUNDS, each `l2Slice`
+    // rows advancing by `l2Step` rows (L2 overlap = l2Slice - l2Step). Realized
+    // via the BD iteration dim (iter_step = l2Step*rowPitch, iter_wrap = l2Rounds)
+    // and a matching kernel round multiplier. Zero / 1 keeps the legacy
+    // single-level (L1-only) path unchanged.
+    int l2Slice = 0;  // input rows per on-core round (e.g. 19)
+    int l2Step = 0;   // row stride between L2 rounds (e.g. 14)
+    int l2Rounds = 0; // number of L2 on-core rounds (e.g. 4); 0/1 = no L2 split
+    // K-contraction accumulate split (independent of the H/row L2 halo above).
+    // The K dim (im2col KH*KW*C) is chunked into kRounds on-core rounds of kSlice
+    // advancing by kStep; partial products accumulate. Zero/1 = no K-accum split.
+    int kSlice = 0;  // K elements per accumulate round (e.g. 19)
+    int kStep = 0;   // K stride between rounds (e.g. 14)
+    int kRounds = 1; // number of accumulate rounds; 0/1 = none
+    bool empty() const { return dims.empty() && mode == 0; }
+};
+
 struct TensorParam {
     std::vector<int64_t> shape;  // e.g. {16, 16}
     int elementBitWidth;         // e.g. 32 for int32_t, 8 for int8_t
     bool isInput;                // true = input, false = output
+    DmaAddressing shimDma;       // optional: non-flat DMA addressing for shim
 };
 
 /// Per-tensor split descriptor — maps to partitiontensor op attributes.
@@ -25,6 +73,27 @@ struct TensorSplitDesc {
     std::string flow;    // "ltor" | "rtol" | "default"
     int pingPong = 2;    // ping-pong buffer depth (2, 4, 8)
     int maxBufferBytes = 4096; // max per-buffer size (PP_MAX_BYTES equivalent)
+    std::string layoutTransform; // "dma_shuffle" | "core_shuffle" | "" (none)
+    // Spatial-halo fields (mirrored from TensorParam.shimDma when mode == 1).
+    // When haloMode == 1 the partition slice is overlapping: each tile-row owns
+    // `haloSlice` rows along splitDim, advancing by `haloStep` rows per tile-row.
+    int haloMode = 0;  // 0 = even split, 1 = overlapping halo split
+    int haloSlice = 0; // rows per tile-row (e.g. 61)
+    int haloStep = 0;  // row stride between tile-rows (e.g. 56)
+    // Nested L2 (on-core temporal) row-split inside each L1 tile slice, on the
+    // SAME split axis. When haloL2Rounds > 1 each tile's `haloSlice` rows are
+    // chunked into haloL2Rounds rounds of `haloL2Slice` rows advancing by
+    // `haloL2Step` (L2 overlap = haloL2Slice - haloL2Step). Mirrored onto the
+    // partitiontensor op as l2_slice/l2_step/l2_rounds attrs. Zero / 1 = no L2.
+    int haloL2Slice = 0;  // rows per on-core round (e.g. 19)
+    int haloL2Step = 0;   // row stride between L2 rounds (e.g. 14)
+    int haloL2Rounds = 0; // number of L2 on-core rounds (e.g. 4); 0/1 = no L2
+    // K-contraction accumulate split (mirrored from DmaAddressing.kSlice/kStep/
+    // kRounds). Independent of the H/row L2 halo above; the K dim is chunked into
+    // kAccumRounds on-core rounds of kAccumSlice advancing by kAccumStep.
+    int kAccumSlice = 0;
+    int kAccumStep = 0;
+    int kAccumRounds = 1;
 };
 
 /// Operation-level split model: one TensorSplitDesc per tensor.
@@ -51,7 +120,7 @@ struct SplitModel {
     /// distribution: 0=Row, 1=Col, 2=Grid
     /// mergeOrder: 0=Default, 1=LeftToRight, 2=RightToLeft
     static TensorSplitDesc fromPolicyFields(int pattern, int distribution, int mergeOrder, int pingPong, bool isInput,
-                                            int maxBufferBytes = 4096);
+                                            int maxBufferBytes = 4096, int layoutTransform = 0);
 };
 
 /// Partition descriptor: confines tile allocation to a sub-region of the AIE array.
@@ -81,10 +150,49 @@ struct DerivedTilingParams {
     int64_t kRounds = 1;        // kDim / effectiveK — K-accumulation rounds inside kernel
     bool autoTiled = false;     // true if compiler auto-derived tileM/tileN/effectiveK
 
+    // Conv (spatial-halo) parameters: resolve aie::get_kernel_h/get_kernel_w/
+    // get_input_c/get_stride/get_ow/get_oh_per_row/get_halo_slice in the kernel.
+    // Zero when the kernel is not a spatial-halo conv.
+    int64_t convKernelH = 0;   // KERNEL_H
+    int64_t convKernelW = 0;   // KERNEL_W
+    int64_t convInputC = 0;    // INPUT_C
+    int64_t convStride = 0;    // STRIDE
+    int64_t convOW = 0;        // OUTPUT_W
+    int64_t convOHPerRow = 0;  // OUTPUT_H / HW_ROWS
+    int64_t convHaloSlice = 0; // input rows owned per tile-row
+    // Spatial-halo IFM contiguous slab size in elements (halo_slice * raw_wc).
+    // The kernel performs on-chip im2col and needs the whole contiguous slab in
+    // one window buffer, so the kernel-side window allocation must use this size
+    // (bypassing the GEMM flow-view partition size and the maxPingPong clamp).
+    // Zero when the kernel is not a spatial-halo conv.
+    int64_t convHaloBufSize = 0; // halo_slice * raw_wc (elements per IFM window)
+
+    // 2D width-split (spatial-halo on-core WIDTH rounds). When convWRounds > 1
+    // the conv WIDTH is chunked into on-core rounds: each chunk delivers a NARROW
+    // slab [halo_slice, convWSlice*C] via a 2D shim BD with the PADDED row pitch,
+    // and the kernel iterates H_chunks * W_chunks (= spatialMRounds*convWRounds)
+    // rounds. Zero / 1 keeps the legacy height-only flat contiguous path.
+    int64_t convWRounds = 0;  // number of width chunks (e.g. 4); 0/1 = no width split
+    int64_t convOWT = 0;      // per-chunk output cols (e.g. OW_T = 28)
+    int64_t convWSlice = 0;   // per-chunk input cols (e.g. TILE_W = 61)
+    int64_t convWStep = 0;    // width halo step between chunks (e.g. TILE_STRIDE_W = 56)
+    int64_t convRowPitch = 0; // PADDED input row pitch in elements (INPUT_W_PAD * C)
+
+    // 2D L2 (nested temporal) ROW-split on the same split axis as the L1 spatial
+    // halo. When convL2Rounds > 1 the per-tile A-window row slice is chunked into
+    // convL2Rounds on-core rounds of convL2Slice rows; the kernel A-port round
+    // count is multiplied by convL2Rounds and the per-round A window is
+    // convL2Slice * raw_wc. Zero / 1 keeps the single-level (L1-only) path.
+    int64_t convL2Rounds = 0; // number of L2 on-core rounds (e.g. 4); 0/1 = none
+    int64_t convL2Slice = 0;  // input rows per L2 on-core round (e.g. 19)
+    int64_t convL2Step = 0;   // row stride between L2 rounds (e.g. 14)
+
     // Per-port derived values (indexed by tensor order: 0=A, 1=B, 2=C for GEMM)
     struct PortParams {
         int64_t numRounds = 0;
-        int64_t bufferSize = 0; // elements per round
+        int64_t bufferSize = 0;    // elements per round
+        int64_t spatialRounds = 1; // get_spatial_multiple_rounds(win): per-port
+                                   // spatial sub-tile count (A->M, B->N, C->M*N)
     };
     std::vector<PortParams> portParams;
     bool valid = false;
@@ -105,6 +213,9 @@ struct MeshKernelDesc {
     std::string kernelFuncName; // kernel function name from __global__
     SplitModel splitModel;      // per-tensor data distribution strategy
     int64_t maxPPBytes = 4096;  // max ping-pong buffer bytes
+    /// Full-connect auto flag (from aie::GlobalPolicy <kernel>_policy).
+    /// true (default) = M×N cartesian DMA repeat; false = A/B each sent once.
+    bool fullConnectAuto = true;
     /// Number of DDR args on the generated host function (set after pipeline run)
     unsigned numHostDdrArgs = 0;
     /// Per-port variable names (e.g. "win_a", "win_b", "win_c") for aie::get_*() replacement

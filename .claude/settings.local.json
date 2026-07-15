@@ -20,7 +20,14 @@
       "Skill(subagent-driven-development)",
       "Skill(brainstorming)",
       "WebFetch(domain:gitenterprise.xilinx.com)",
-      "Skill(data-mismatch-debug)"
+      "Skill(data-mismatch-debug)",
+      "Skill(honest)",
+      "WebFetch(domain:xsjboardfarm.xilinx.com)",
+      "WebFetch(domain:172.19.2.123)",
+      "WebFetch(domain:llm-api.amd.com)",
+      "WebFetch(domain:pypi.org)",
+      "Skill(superpowers:using-git-worktrees)",
+      "mcp__aiegdb__aie_scope"
     ],
     "deny": []
   },

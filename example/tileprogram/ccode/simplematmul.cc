@@ -1,11 +1,11 @@
 /******************************************************************************
  * Copyright (C) 2025 Advanced Micro Devices, Inc. All Rights Reserved.
- * SPDX-License-Identifier: MIT
+ * SPDX-License-Identifier: Apache-2.0
  *
  * AIE Programming Model — Matrix Multiplication (Parameterized Kernel API)
  */
 #include "simplematmul.h"
-#pragma aie_debug_level(2 | AIE_DEBUG_FLAG_DISABLE_PARTITIONTEARDOWN | AIE_DEBUG_FLAG_MM2SBDFINISH_COUNTER)
+#pragma aie_debug_level(2 | AIE_DEBUG_FLAG_DISABLE_PARTITIONTEARDOWN)
 constexpr aie::SpatialPolicy RowBC = {
     .pattern = aie::Pattern::Broadcast, .distribution = aie::Layout::Row, .pp_depth = 2, .max_buffer_bytes = 4096};
 constexpr aie::SpatialPolicy ColBC = {
@@ -211,11 +211,10 @@ int main() {
     // --- Device + mesh ---
     aieSetDevice(0);
     aieArray device;
-    // Carve a partition from the AIE array.
-    // Fields: {startCol, endCol, startRow, endRow}
-    // This partition uses columns [2,5] and rows [0,6], which covers
-    // Gen2 NoC shim columns {2,3} — enough for a 4x4 GEMM's ~12 DataIOs.
-    aieMesh mesh = device.partition({3, 6, 0, 6}, HW_ROWS, HW_COLS);
+    // Carve a partition from the AIE array (startCol=0, numCols=HW_COLS).
+    // This initializes _dev BEFORE device.alloc() below, so allocations get a
+    // valid device instead of NULL. Uses the aieMesh launch path.
+    aieMesh mesh = device.partition(HW_ROWS, HW_COLS); // startCol=0
     // aieDim mesh(HW_ROWS, HW_COLS);
     //  --- Allocate host memory ---
     int8_t *A = (int8_t *)malloc(M * K * sizeof(int8_t));
@@ -234,7 +233,7 @@ int main() {
     mul2<<<mesh>>>(C, B, A, M, N, K);
     int result2 = verify_matmul(C, B, A);
     //  --- Wait for all partitions and teardown ---
-    device.synchronize();
+    // device.synchronize();
     // --- Verify output ---
     // --- Cleanup ---
     free(A);

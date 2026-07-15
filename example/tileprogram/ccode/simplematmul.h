@@ -1,6 +1,6 @@
 /******************************************************************************
  * Copyright (C) 2025 Advanced Micro Devices, Inc. All Rights Reserved.
- * SPDX-License-Identifier: MIT
+ * SPDX-License-Identifier: Apache-2.0
  **/
 // ═══════════════════════════════════════════════════════════════════════════
 // Verification
@@ -13,7 +13,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
 /******************************************************************************
  * Copyright (C) 2025 Advanced Micro Devices, Inc. All Rights Reserved.
- * SPDX-License-Identifier: MIT
+ * SPDX-License-Identifier: Apache-2.0
  *
  * AIE Programming Model — Matrix Multiplication (Parameterized Kernel API)
  *
@@ -65,9 +65,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 // GEMM dimensions (user-specified)
-#define M 4096
-#define K 4096
-#define N 4096
+#define M 256 // 4096
+#define K 256 // 4096
+#define N 256 // 4096
 
 // HW mesh dimensions (number of AIE tile rows and columns)
 #define HW_ROWS 4

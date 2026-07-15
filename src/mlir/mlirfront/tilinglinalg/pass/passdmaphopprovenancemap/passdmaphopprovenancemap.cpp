@@ -1,6 +1,6 @@
 /******************************************************************************
  * Copyright (C) 2025 Advanced Micro Devices, Inc. All Rights Reserved.
- * SPDX-License-Identifier: MIT
+ * SPDX-License-Identifier: Apache-2.0
  ******************************************************************************/
 
 #include "passdmaphopprovenancemap.h"
@@ -939,6 +939,14 @@ void DmaphopProvenanceMapPass::runOnOperation() {
     jw.beginRoot();
 
     jw.keyValue("version", (int64_t)1);
+
+    // partition origin (absolute physical start column); phys_col = col + startcol
+    if (startCol >= 0)
+        jw.keyValue("startcol", (int64_t)startCol);
+
+    // compiler aie-gen (raw --aie-version value); Python tools map it to debug offset-map
+    if (!aieGen.empty())
+        jw.keyValue("aie_gen", StringRef(aieGen));
 
     // Module attributes
     jw.key("module_attrs");

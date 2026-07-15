@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # Copyright (C) 2025 Advanced Micro Devices, Inc. All Rights Reserved.
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """
 Parse a generated host.cc file and visualize DMA Buffer Descriptor (BD)
 configurations per tile, including ping-pong chaining, packet IDs, IO

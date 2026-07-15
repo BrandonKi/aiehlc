@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # Copyright (C) 2025 Advanced Micro Devices, Inc. All Rights Reserved.
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """
 Parse host_canonicalized dataflow from either a generated host.cc (C code)
 or an MLIR IR dump (logdf) and visualize the data connections from source
@@ -699,7 +699,7 @@ def parse_host_cc(text: str) -> List[SSAOp]:
 # ---------------------------------------------------------------------------
 
 _SCRIPT_DIR = Path(__file__).resolve().parent
-_DEFAULT_INPUT = _SCRIPT_DIR / "../../src/mlir/mlirfront/tilinglinalg/pass/unitest/worklocal/host.cc"
+_DEFAULT_INPUT = _SCRIPT_DIR / "../../aout/worklocal/host.cc"
 
 
 def detect_and_parse(text: str) -> Tuple[List[SSAOp], str]:

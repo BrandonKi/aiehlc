@@ -1,7 +1,7 @@
 /******************************************************************************
-* Copyright (C) 2025 Advanced Micro Devices, Inc. All Rights Reserved.
-* SPDX-License-Identifier: MIT
-******************************************************************************/
+ * Copyright (C) 2025 Advanced Micro Devices, Inc. All Rights Reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ ******************************************************************************/
 
 #include "../../include/gcommon.h"
 #include "clang/AST/APValue.h"
@@ -56,11 +56,109 @@ struct ParsedTensorInfo {
     int mergeOrder = 0;   // 0=Default, 1=LeftToRight, 2=RightToLeft
     int pingPong = 2;
     int maxBufferBytes = 4096;   // max per-buffer size (PP_MAX_BYTES equivalent)
-    // Two-level tiling hints (0 = auto-derive from memory budget)
-    int tileM = 0;               // explicit sub-tile rows per core
-    int tileN = 0;               // explicit sub-tile cols per core
-    int tileK = 0;               // explicit K chunk size for temporal tiling
+    // Two-level tiling hints (structured per-dimension descriptor).
+    // Each tile_dim describes one dimension's split, mapping 1:1 onto a
+    // #routing.level. User-facing fields:
+    //   fullsize (full PADDED dim length), tile_round (explicit outer round/
+    //   group count), tile_size (outer per-tile slice length), stride (outer
+    //   step; overlap = tile_size - stride), padsize (per-side pad, metadata/
+    //   boundary only), slice_tiling (nested inner level).
+    // `groups` maps from tile_round when the user pins it; otherwise it is
+    // derived from base (=fullsize) in readTileDim so downstream code
+    // (explicitGroups*, validateDim, halo paths) keeps working.
+    // size == 0 means "auto-derive from memory budget" (the old tileX == 0).
+    struct TileDim {
+        int size = 0;    // tile_dim field 2: tile_size (per-tile outer slice)
+        int stride = 0;  // tile_dim field 3: outer step (overlap = size - stride)
+        int base = 0;    // tile_dim field 0: fullsize (full PADDED dim length)
+        int padSize = 0; // tile_dim field 4: padsize (per-side pad, metadata only)
+        int groups = 0;  // tile_dim field 1: tile_round (else derived from base)
+        // Nested inner level (tile_dim field 5 slice_tiling), mirrors
+        // #routing.level: each outer `size` slice is further chunked on-core into
+        // l2Groups rounds of l2Size advancing by l2Stride (overlap = l2Size -
+        // l2Stride). Zero / <=1 l2Groups keeps the single-level path unchanged.
+        int l2Size = 0;   // slice_tiling.tile_size: per-round slice (e.g. 19)
+        int l2Stride = 0; // slice_tiling.stride: step between rounds (e.g. 14)
+        int l2Groups = 0; // slice_tiling.rounds (or derived): number of rounds (e.g. 4)
+    };
+    TileDim tdM; // replaces tile_m
+    TileDim tdN; // replaces tile_n
+    TileDim tdK; // replaces tile_k
+    // Per-port 2D GemmSpace dims (GemmSpace fields 4/5). When tdD1.size > 0 the
+    // port describes its OWN matrix and the role-aware (d1/d2) extraction path is
+    // used instead of the global m/n/k path.
+    TileDim tdD1;                    // GemmSpace.d1 (per-port dim 1)
+    TileDim tdD2;                    // GemmSpace.d2 (per-port dim 2)
+    TileDim tdD3;                    // GemmSpace.d3 (per-port dim 3, e.g. channels);
+                                     // bookkeeping only — folded into raw_wc.
+    TileDim tdD4;                    // GemmSpace.d4 (per-port dim 4, e.g. padded
+                                     // channel coverage for the filter K). Used by the
+                                     // structured-dim coalescing path.
+    bool perPort2D = false;          // true when d1/d2 were set on this port
+    int layoutTransform = 0;         // 0=None, 1=DmaShuffle, 2=CoreShuffle
+    int tileMode = 0;                // 0=Partition, 1=Overlap
+    bool requireFullCoverage = true; // validation: tiles must cover the dim
     bool policyResolved = false; // true once AST extraction succeeds
+    // DmaTransform: general multi-dim DMA descriptor for shim tile addressing
+    // Extracted from targs[2] of aie::port<T, Policy, DmaTransform>
+    struct ShimDma {
+        struct Dim {
+            int stride = 0;
+            int wrap = 0;
+        };
+        Dim dims[4];
+        int num_dims = 0;
+        int iter_step = 0;
+        int iter_wrap = 0;
+        // Spatial-halo mode (from aie::ConvTiling::spatial). mode==1 selects an
+        // overlapping contiguous row-block distribution instead of im2col multi-dim.
+        int mode = 0;       // 0 = flat / im2col-by-dims, 1 = spatial_halo
+        int halo_slice = 0; // input rows owned by each tile-row (e.g. 61)
+        int halo_step = 0;  // row stride between consecutive tile-rows (e.g. 56)
+        // When true the halo split was pinned explicitly via Conv2dSpace.m and
+        // the Overlap auto-derivation (OH/HW_ROWS) must NOT overwrite it.
+        bool haloExplicit = false;
+        int split_dim = 0; // tensor dimension carrying the halo split (usually 0)
+        int raw_h = 0;     // raw input H (declared A-tensor shape dim 0)
+        int raw_wc = 0;    // raw input W*C (declared A-tensor shape dim 1)
+        // Conv geometry carried through from ConvTiling::spatial (struct fields 10-15).
+        int kernel_h = 0;   // KERNEL_H (e.g. 7)
+        int kernel_w = 0;   // KERNEL_W (e.g. 7)
+        int input_c = 0;    // INPUT_C (e.g. 3)
+        int stride = 0;     // STRIDE (e.g. 2)
+        int ow = 0;         // OUTPUT_W (e.g. 112)
+        int oh_per_row = 0; // OUTPUT_H / HW_ROWS (e.g. 28)
+        // 2D width-split (spatial-halo on-core WIDTH rounds). When w_rounds > 1
+        // the WIDTH is chunked into on-core rounds (NOT a mesh axis): each chunk
+        // delivers a NARROW slab [halo_slice, w_slice*C] via a 2D shim BD with the
+        // PADDED row pitch, and the kernel iterates H_chunks * W_chunks rounds.
+        // Zero / 1 keeps the legacy height-only flat contiguous path unchanged.
+        int w_slice = 0;   // per-chunk input cols (e.g. TILE_W = 61)
+        int w_step = 0;    // halo step between width chunks (e.g. TILE_STRIDE_W = 56)
+        int w_rounds = 0;  // number of width chunks (e.g. 4); 0/1 = no width split
+        int row_pitch = 0; // PADDED input row pitch in elements (INPUT_W_PAD * C = 920)
+        int ow_t = 0;      // per-chunk output cols (e.g. OW_T = 28)
+        // Nested L2 (on-core temporal ROW-split) on the SAME (row) axis as the L1
+        // halo. Each HW tile owns `halo_slice` rows (L1); when l2Rounds > 1 that
+        // slice is further chunked into l2Rounds on-core temporal ROUNDS of
+        // `l2Slice` rows advancing by `l2Step` rows (L2 overlap = l2Slice - l2Step).
+        // Realized via the BD iteration dim + kernel round multiplier downstream.
+        // Zero / 1 keeps the single-level (L1-only) path unchanged.
+        int l2Slice = 0;  // input rows per on-core round (e.g. 19)
+        int l2Step = 0;   // row stride between L2 rounds (e.g. 14)
+        int l2Rounds = 0; // number of L2 on-core rounds (e.g. 4); 0/1 = no L2 split
+        // Conv2dSpace-derived geometry (populated when the port carries a
+        // Conv2dSpace and the explicit DmaTransform is flat()). These let the
+        // post-extraction derivation reconstruct the same im2col/spatial shim
+        // DMA that DmaTransform::im2col / ConvTiling::spatial would produce.
+        bool fromConvSpace = false;
+        int conv_ih = 0; // reconstructed INPUT_H
+        int conv_iw = 0; // reconstructed INPUT_W
+        int conv_oh = 0; // OUTPUT_H
+        int conv_oc = 0; // output channels (num filters)
+        int pad = 0;     // PAD
+        bool empty() const { return num_dims == 0 && mode == 0; }
+    } shimDma;
 };
 static std::vector<ParsedTensorInfo> parsedTensors;
 
@@ -75,6 +173,11 @@ static PartitionDesc parsedPartition; // default: invalid (all -1), set by #prag
 static std::vector<MeshKernelDesc> parsedMeshKernels; // multi-kernel mode: one per <<<mesh>>> launch
 static std::vector<std::string> kernel_name_list;
 static std::unordered_map<std::string, const clang::FunctionDecl*> globalKernelFuncs;
+// Per-kernel "fullconnect_auto" flag, set from a file-scope constexpr
+// `aie::GlobalPolicy <kernelName>_policy = {.fullconnect_auto = 0|1}` (bound by
+// name convention). true (default) = full-connect M×N cartesian DMA repeat;
+// false = no repeat (A/B each sent once).
+static std::unordered_map<std::string, bool> kernelFullConnectAuto;
 static std::string userKernelBody;     // raw source text of __global__ function body (last kernel, backward compat)
 static std::string userKernelFuncName; // kernel function name from __global__ (last kernel, backward compat)
 static std::unordered_map<std::string, std::string> globalKernelBodies; // per-kernel: name -> cleaned body text
@@ -310,12 +413,12 @@ public:
 				;
 			 }
 			 else {
-				header += 
-				 "\n#include <adf.h>"
-				 "\n#include <aie_api/aie.hpp>"
-				 "\n#include <aie_api/aie_adf.hpp>"
-				 "\n#include <aie_api/utils.hpp>\n\n";
-			 }
+                 header += "\n#include <adf.h>"
+                           "\n#include <aie_api/aie.hpp>"
+                           "\n#include <aie_api/aie_adf.hpp>"
+                           "\n#include <aie_api/utils.hpp>\n\n";
+             }
+             header += "#include \"kernel_log.h\"\n\n";
              // Add user macro definitions before kernel body
              std::string macroBlock;
              if (!userMacroDefines.empty()) {
@@ -371,8 +474,56 @@ public:
 							// Store function decl for later tensor parameter extraction
 							globalKernelFuncs[kernelName] = f;
 
-							// std::cout << "find global " << f->getNameInfo().getName().getAsString() << std::endl;
-							ParmVarDecl *param = f->getParamDecl(0);
+                            // GlobalPolicy binding by name convention: look up a file-scope
+                            // constexpr `aie::GlobalPolicy <kernelName>_policy = {...}` and read
+                            // its fullconnect_auto field (struct field 0). Default = 1 (full
+                            // connect) when no matching policy variable is present.
+                            {
+                                bool fca = true; // default: full-connect
+                                bool found = false;
+                                // Explicit binding via __global__(<policyVar>) emits an
+                                // annotate("aiepolicy:<policyVar>"); prefer it over the
+                                // <kernelName>_policy naming convention (fallback).
+                                std::string wantName = kernelName + "_policy";
+                                for (auto attr2 : f->attrs()) {
+                                    if (auto anno2 = clang::dyn_cast<clang::AnnotateAttr>(attr2)) {
+                                        std::string ann = anno2->getAnnotation().str();
+                                        const std::string prefix = "aiepolicy:";
+                                        if (ann.rfind(prefix, 0) == 0) {
+                                            wantName = ann.substr(prefix.size());
+                                            break;
+                                        }
+                                    }
+                                }
+                                if (Context) {
+                                    for (auto *d : Context->getTranslationUnitDecl()->decls()) {
+                                        auto *vd = clang::dyn_cast<clang::VarDecl>(d);
+                                        if (!vd || vd->getName() != wantName)
+                                            continue;
+                                        auto *rd = vd->getType()->getAsCXXRecordDecl();
+                                        if (!rd || rd->getName() != "GlobalPolicy")
+                                            continue;
+                                        const clang::APValue *apval = vd->getEvaluatedValue();
+                                        if (!apval) {
+                                            vd->evaluateValue();
+                                            apval = vd->getEvaluatedValue();
+                                        }
+                                        if (apval && apval->isStruct() && apval->getStructNumFields() >= 1) {
+                                            int v = (int)apval->getStructField(0).getInt().getExtValue();
+                                            fca = (v != 0);
+                                            found = true;
+                                        }
+                                        break;
+                                    }
+                                }
+                                kernelFullConnectAuto[kernelName] = fca;
+                                llvm::outs()
+                                    << "[TilingLinalg] kernel " << kernelName << " fullconnect_auto=" << (fca ? 1 : 0)
+                                    << (found ? " (from " + wantName + ")" : " (default)") << "\n";
+                            }
+
+                            // std::cout << "find global " << f->getNameInfo().getName().getAsString() << std::endl;
+                            ParmVarDecl *param = f->getParamDecl(0);
 							// llvm::outs() << "param->hasAttrs() is " << param->hasAttrs() << "\n";
 							//llvm::outs << "range is " << range <<"\n";
 							ExportFunction(f, kernelName);
@@ -803,6 +954,9 @@ public:
                             // Second pass: build ParsedTensorInfo for each tensor parameter
                             // Handles both bare pointer types (input_window_int8*) and
                             // spatial wrapper types (aie::row_broadcast_in<input_window_int8 *>)
+                            // Per-port act/wgt resolution: track input-port ordinal so the
+                            // 1st input -> map.act, 2nd+ inputs -> map.wgt.
+                            int inputOrd = 0;
                             for (unsigned i = 0; i < numKernelParams; ++i) {
 								const ParmVarDecl *kp = kernelFD->getParamDecl(i);
 								clang::QualType ptype = kp->getType();
@@ -979,6 +1133,9 @@ public:
                                 pti.isInput = isInput;
                                 pti.spatialTag = spatialTag;
                                 pti.policyName = policyName;
+                                // Input-port ordinal: 0 for the 1st input port (act),
+                                // 1+ for subsequent input ports (wgt); -1 for outputs.
+                                int thisInputIdx = pti.isInput ? inputOrd++ : -1;
 
                                 // --- AST-based SpatialPolicy struct extraction ---
                                 // Extract the constexpr SpatialPolicy struct fields from the
@@ -1025,35 +1182,704 @@ public:
                                                 }
                                             }
 
-                                            if (apval && apval->isStruct() && apval->getStructNumFields() >= 4) {
-                                                pti.pattern = (int)apval->getStructField(0).getInt().getExtValue();
-                                                pti.distribution = (int)apval->getStructField(1).getInt().getExtValue();
-                                                pti.mergeOrder = (int)apval->getStructField(2).getInt().getExtValue();
-                                                pti.pingPong = (int)apval->getStructField(3).getInt().getExtValue();
-                                                if (apval->getStructNumFields() >= 5)
-                                                    pti.maxBufferBytes =
-                                                        (int)apval->getStructField(4).getInt().getExtValue();
-                                                // Two-level tiling hints (fields 5,6,7)
-                                                if (apval->getStructNumFields() >= 6)
-                                                    pti.tileM = (int)apval->getStructField(5).getInt().getExtValue();
-                                                if (apval->getStructNumFields() >= 7)
-                                                    pti.tileN = (int)apval->getStructField(6).getInt().getExtValue();
-                                                if (apval->getStructNumFields() >= 8)
-                                                    pti.tileK = (int)apval->getStructField(7).getInt().getExtValue();
+                                            // Resolve the Space record name so we can disambiguate
+                                            // GemmSpace vs Conv2dSpace robustly (field counts are a
+                                            // fallback only).
+                                            std::string spaceTypeName;
+                                            {
+                                                clang::QualType spaceQT;
+                                                if (policyArg.getKind() == clang::TemplateArgument::StructuralValue) {
+                                                    spaceQT = policyArg.getStructuralValueType();
+                                                } else if (policyArg.getKind() ==
+                                                           clang::TemplateArgument::Declaration) {
+                                                    ValueDecl *decl = policyArg.getAsDecl();
+                                                    if (auto *tpo = dyn_cast<clang::TemplateParamObjectDecl>(decl))
+                                                        spaceQT = tpo->getType();
+                                                    else if (auto *vd = dyn_cast<clang::VarDecl>(decl))
+                                                        spaceQT = vd->getType();
+                                                }
+                                                if (!spaceQT.isNull())
+                                                    if (auto *rd = spaceQT->getAsCXXRecordDecl())
+                                                        spaceTypeName = rd->getName().str();
+                                            }
+
+                                            auto readTileDim = [](const APValue &f, ParsedTensorInfo::TileDim &out) {
+                                                if (!f.isStruct())
+                                                    return;
+                                                int nf = f.getStructNumFields();
+                                                // Field order (contractual for AST extraction):
+                                                //   0 fullsize   -> internal base (full PADDED dim length)
+                                                //   1 tile_round -> internal groups (explicit outer rounds)
+                                                //   2 tile_size  -> internal size  (outer per-tile slice)
+                                                //   3 stride     -> internal stride
+                                                //   4 padsize    -> internal padSize (metadata/boundary only)
+                                                //   5 slice_tiling (nested tile_level)
+                                                if (nf >= 1)
+                                                    out.base =
+                                                        (int)f.getStructField(0).getInt().getExtValue(); // fullsize
+                                                if (nf >= 2)
+                                                    out.groups =
+                                                        (int)f.getStructField(1).getInt().getExtValue(); // tile_round
+                                                if (nf >= 3)
+                                                    out.size =
+                                                        (int)f.getStructField(2).getInt().getExtValue(); // tile_size
+                                                if (nf >= 4)
+                                                    out.stride = (int)f.getStructField(3).getInt().getExtValue();
+                                                if (nf >= 5)
+                                                    out.padSize = (int)f.getStructField(4).getInt().getExtValue();
+                                                // Nested slice_tiling (struct field 5): a by-value inner
+                                                // tile_level { int tile_size; int stride; int rounds; }
+                                                // mirroring #routing.level. Realizes the second-level
+                                                // (on-core temporal) split on the SAME axis as this dim.
+                                                if (nf >= 6 && f.getStructField(5).isStruct()) {
+                                                    const APValue &l2 = f.getStructField(5);
+                                                    int l2nf = l2.getStructNumFields();
+                                                    if (l2nf >= 1)
+                                                        out.l2Size = (int)l2.getStructField(0).getInt().getExtValue();
+                                                    if (l2nf >= 2)
+                                                        out.l2Stride = (int)l2.getStructField(1).getInt().getExtValue();
+                                                    if (l2nf >= 3)
+                                                        out.l2Groups = (int)l2.getStructField(2).getInt().getExtValue();
+                                                }
+                                                // Derive groups from base (full padded dim length) when the
+                                                // user did NOT pin tile_round, so downstream `.groups` reads
+                                                // stay valid. Explicit tile_round wins.
+                                                if (out.groups <= 0 && out.base > 0 && out.size > 0) {
+                                                    int st = out.stride > 0 ? out.stride : out.size;
+                                                    out.groups = (out.base - out.size + st - 1) / st + 1;
+                                                }
+                                                // Derive L2 rounds when not explicitly given but a
+                                                // slice_tiling size/stride was provided: cover the parent
+                                                // tile `size` rows. overlap = l2Size - l2Stride.
+                                                if (out.l2Groups <= 0 && out.l2Size > 0 && out.size > 0) {
+                                                    int l2st = out.l2Stride > 0 ? out.l2Stride : out.l2Size;
+                                                    out.l2Groups = (out.size - out.l2Size + l2st - 1) / l2st + 1;
+                                                }
+                                                // Coverage validation: L2 rounds must tile the parent
+                                                // outer slice exactly. (l2Groups-1)*l2Stride + l2Size == size.
+                                                if (out.l2Groups > 1 && out.l2Size > 0) {
+                                                    int l2st = out.l2Stride > 0 ? out.l2Stride : out.l2Size;
+                                                    int covered = (out.l2Groups - 1) * l2st + out.l2Size;
+                                                    if (covered != out.size) {
+                                                        llvm::errs() << "[slice_tiling] WARNING: L2 coverage mismatch: "
+                                                                     << "(rounds-1)*stride + size = " << covered
+                                                                     << " != parent tile size " << out.size << "\n";
+                                                    }
+                                                }
+                                            };
+                                            // Read the 3-part SpatialPolicy from a struct APValue
+                                            // (used for both bare SpatialPolicy and the nested
+                                            // policy field of a composed Space). Nested layout:
+                                            //   field 0 map  { 0 act, 1 wgt, 2 layout, 3 merge_order }
+                                            //   field 1 mat  { 0 pad, 1 im2col }
+                                            //   field 2 sched{ 0 pp_depth, 1 l1_budget{ 0 value } }
+                                            // Mapping onto the internal pti fields:
+                                            //   pattern  <- role-resolved (output->Gather; input
+                                            //               ordinal 0->act, 1+->wgt)
+                                            //   distribution <- map.layout
+                                            //   mergeOrder   <- map.merge_order
+                                            //   layoutTransform <- mat.im2col==Dma ? DmaShuffle : None
+                                            //   pingPong     <- sched.pp_depth
+                                            //   maxBufferBytes <- sched.l1_budget.value
+                                            //   requireFullCoverage <- true (default)
+                                            auto readPolicy = [&](const APValue &p) {
+                                                if (!p.isStruct())
+                                                    return;
+                                                int nf = p.getStructNumFields();
+                                                // (1) map
+                                                if (nf >= 1 && p.getStructField(0).isStruct()) {
+                                                    const APValue &m = p.getStructField(0);
+                                                    int mf = m.getStructNumFields();
+                                                    int actPat =
+                                                        mf >= 1 ? (int)m.getStructField(0).getInt().getExtValue() : 0;
+                                                    int wgtPat =
+                                                        mf >= 2 ? (int)m.getStructField(1).getInt().getExtValue() : 0;
+                                                    if (mf >= 3)
+                                                        pti.distribution =
+                                                            (int)m.getStructField(2).getInt().getExtValue();
+                                                    if (mf >= 4)
+                                                        pti.mergeOrder =
+                                                            (int)m.getStructField(3).getInt().getExtValue();
+                                                    // Role-aware pattern resolution.
+                                                    if (!pti.isInput)
+                                                        pti.pattern = 3; // Gather
+                                                    else
+                                                        pti.pattern = (thisInputIdx == 0) ? actPat : wgtPat;
+                                                }
+                                                // (2) mat
+                                                if (nf >= 2 && p.getStructField(1).isStruct()) {
+                                                    const APValue &mat = p.getStructField(1);
+                                                    int matf = mat.getStructNumFields();
+                                                    int im2col = matf >= 2
+                                                                     ? (int)mat.getStructField(1).getInt().getExtValue()
+                                                                     : 0;
+                                                    pti.layoutTransform = (im2col == 1) ? 1 /*DmaShuffle*/ : 0;
+                                                }
+                                                // (3) sched
+                                                if (nf >= 3 && p.getStructField(2).isStruct()) {
+                                                    const APValue &s = p.getStructField(2);
+                                                    int sf = s.getStructNumFields();
+                                                    if (sf >= 1)
+                                                        pti.pingPong = (int)s.getStructField(0).getInt().getExtValue();
+                                                    if (sf >= 2 && s.getStructField(1).isStruct() &&
+                                                        s.getStructField(1).getStructNumFields() >= 1)
+                                                        pti.maxBufferBytes = (int)s.getStructField(1)
+                                                                                 .getStructField(0)
+                                                                                 .getInt()
+                                                                                 .getExtValue();
+                                                }
+                                                pti.requireFullCoverage = true;
+                                            };
+
+                                            if (apval && apval->isStruct() && apval->getStructNumFields() >= 1) {
+                                                // Detect composed Space by the resolved record name.
+                                                // Field-0-is-struct no longer distinguishes them: a
+                                                // bare 3-part SpatialPolicy ALSO has a struct field 0
+                                                // (map). GemmSpace/Conv2dSpace -> composed; bare
+                                                // SpatialPolicy -> not. Fallback: a bare Policy has
+                                                // exactly 3 fields (map/mat/sched), so nf>=4 ==> composed.
+                                                bool composed;
+                                                if (spaceTypeName == "GemmSpace" || spaceTypeName == "Conv2dSpace")
+                                                    composed = true;
+                                                else if (spaceTypeName == "SpatialPolicy")
+                                                    composed = false;
+                                                else
+                                                    composed = apval->getStructNumFields() >= 4;
+                                                if (spaceTypeName == "Conv2dSpace_Spatial") {
+                                                    // Declarative spatial-halo conv space:
+                                                    //   field 0 geom, 1 out_tile_h, 2 out_tile_w,
+                                                    //   3 objective, 4 policy (policy is field 4, NOT 0).
+                                                    // Derive the spatial-halo split deterministically
+                                                    // from raw geometry + the desired output tile,
+                                                    // reproducing the legacy GemmSpace d1/d2/d3 halo
+                                                    // output EXACTLY (see aiehlc.cc GemmSpace d1 path):
+                                                    //   halo_slice = (out_tile_h-1)*S + K - pad_hi
+                                                    //   halo_step  = halo_slice - (K - S)
+                                                    //   raw_h  = in_h, raw_wc = in_w * cin, mode=Overlap.
+                                                    // Done INLINE here (mirroring the GemmSpace d1 lift)
+                                                    // — do NOT set fromConvSpace (that triggers the
+                                                    // legacy Conv2dSpace post-extraction block).
+                                                    readPolicy(apval->getStructField(4));
+                                                    const APValue &g = apval->getStructField(0);
+                                                    auto gInt = [&](int idx) -> int {
+                                                        return (g.isStruct() && g.getStructNumFields() > idx)
+                                                                   ? (int)g.getStructField(idx).getInt().getExtValue()
+                                                                   : 0;
+                                                    };
+                                                    int in_h = gInt(0);
+                                                    int in_w = gInt(1);
+                                                    int cin = gInt(2);
+                                                    // cout = gInt(3) — metadata only
+                                                    int K = gInt(4);
+                                                    int S = gInt(5);
+                                                    if (S <= 0)
+                                                        S = 1;
+                                                    // pad_lo = gInt(6) — metadata only
+                                                    int pad_hi = gInt(7);
+                                                    // cin_aligned = gInt(8) — channel layout stride.
+                                                    // When > cin, the host DDR pre-pads the input with
+                                                    // zero channels so the channel-layout dimension is
+                                                    // aligned; raw_wc must use the aligned C so every
+                                                    // derived stride/length is consistent. Correctness
+                                                    // is preserved because padded input and filter
+                                                    // channels are both zero.
+                                                    int cin_aligned = gInt(8);
+                                                    int c_eff = (cin_aligned > cin) ? cin_aligned : cin;
+                                                    int oth = (int)apval->getStructField(1).getInt().getExtValue();
+                                                    // out_tile_w (field 2), objective (field 3) -> metadata
+                                                    int halo_slice = (oth - 1) * S + K - pad_hi;
+                                                    int halo_step = halo_slice - (K - S);
+                                                    pti.tileMode = 1;
+                                                    pti.shimDma.mode = 1;
+                                                    pti.shimDma.halo_slice = halo_slice;
+                                                    pti.shimDma.halo_step = halo_step;
+                                                    pti.shimDma.split_dim = 0;
+                                                    pti.shimDma.raw_h = in_h;
+                                                    pti.shimDma.raw_wc = in_w * c_eff;
+                                                    llvm::outs()
+                                                        << "[TilingLinalg] Conv2dSpace_Spatial derived: "
+                                                           "halo_slice="
+                                                        << halo_slice << " halo_step=" << halo_step << " raw_h=" << in_h
+                                                        << " raw_wc=" << in_w * c_eff << "\n";
+                                                    // Explicit halo descriptor override (Stage A):
+                                                    // fields 5 d1 (height halo), 6 d2 (width*C halo).
+                                                    // When d1.tile_size>0 the user has pinned the halo
+                                                    // split directly — override the out_tile_h/out_tile_w
+                                                    // derivation above. d1 = HEIGHT halo (mesh ROWS):
+                                                    //   halo_slice = d1.tile_size, halo_step = d1.stride,
+                                                    //   raw_h = d1.base (full padded input H).
+                                                    // d2 = WIDTH*C halo (mesh COLS); for Stage A d2 is
+                                                    //   non-split (stride==size) so raw_wc = d2.base.
+                                                    ParsedTensorInfo::TileDim sd1, sd2;
+                                                    int snf = apval->getStructNumFields();
+                                                    if (snf >= 6)
+                                                        readTileDim(apval->getStructField(5), sd1);
+                                                    if (snf >= 7)
+                                                        readTileDim(apval->getStructField(6), sd2);
+                                                    if (sd1.size > 0) {
+                                                        pti.shimDma.halo_slice = sd1.size;
+                                                        pti.shimDma.halo_step = sd1.stride > 0 ? sd1.stride : sd1.size;
+                                                        if (sd1.base > 0)
+                                                            pti.shimDma.raw_h = sd1.base;
+                                                        else if (sd1.groups > 0)
+                                                            pti.shimDma.raw_h =
+                                                                (sd1.groups - 1) * pti.shimDma.halo_step + sd1.size;
+                                                        if (sd2.base > 0)
+                                                            pti.shimDma.raw_wc = sd2.base;
+                                                        else if (sd2.size > 0)
+                                                            pti.shimDma.raw_wc = sd2.size;
+                                                        llvm::outs()
+                                                            << "[TilingLinalg] Conv2dSpace_Spatial d1/d2 override: "
+                                                               "halo_slice="
+                                                            << pti.shimDma.halo_slice
+                                                            << " halo_step=" << pti.shimDma.halo_step
+                                                            << " raw_h=" << pti.shimDma.raw_h
+                                                            << " raw_wc=" << pti.shimDma.raw_wc << "\n";
+                                                    }
+                                                } else if (composed) {
+                                                    readPolicy(apval->getStructField(0));
+                                                    bool isConv;
+                                                    if (spaceTypeName == "Conv2dSpace")
+                                                        isConv = true;
+                                                    else if (spaceTypeName == "GemmSpace")
+                                                        isConv = false;
+                                                    else
+                                                        // GemmSpace now has 7 fields (policy,m,n,k,d1,d2,d3)
+                                                        // and Conv2dSpace has 10, so the field-count fallback
+                                                        // must use >= 8 to avoid misclassifying GemmSpace.
+                                                        isConv = apval->getStructNumFields() >= 8;
+
+                                                    if (isConv) {
+                                                        // Conv2dSpace: 1 ih, 2 iw, 3 ic, 4 oc,
+                                                        // 5 kh, 6 kw, 7 stride, 8 pad. ih/iw are the
+                                                        // EXACT input spatial dims (lossless source).
+                                                        ParsedTensorInfo::TileDim ih, iw, ic, oc, kh, kw;
+                                                        int nf = apval->getStructNumFields();
+                                                        if (nf >= 2)
+                                                            readTileDim(apval->getStructField(1), ih);
+                                                        if (nf >= 3)
+                                                            readTileDim(apval->getStructField(2), iw);
+                                                        if (nf >= 4)
+                                                            readTileDim(apval->getStructField(3), ic);
+                                                        if (nf >= 5)
+                                                            readTileDim(apval->getStructField(4), oc);
+                                                        if (nf >= 6)
+                                                            readTileDim(apval->getStructField(5), kh);
+                                                        if (nf >= 7)
+                                                            readTileDim(apval->getStructField(6), kw);
+                                                        int convStride = 1, convPad = 0;
+                                                        if (nf >= 8)
+                                                            convStride =
+                                                                (int)apval->getStructField(7).getInt().getExtValue();
+                                                        if (nf >= 9)
+                                                            convPad =
+                                                                (int)apval->getStructField(8).getInt().getExtValue();
+                                                        if (convStride <= 0)
+                                                            convStride = 1;
+                                                        // Input geometry is the exact source; derive
+                                                        // output via the forward conv formula:
+                                                        //   OW = (IW + 2P - KW)/S + 1, OH analogous.
+                                                        int IW = iw.size, IH = ih.size;
+                                                        int KW = kw.size, KH = kh.size;
+                                                        int C = ic.size;
+                                                        int OW = (IW + 2 * convPad - KW) / convStride + 1;
+                                                        int OH = (IH + 2 * convPad - KH) / convStride + 1;
+                                                        pti.shimDma.fromConvSpace = true;
+                                                        pti.shimDma.kernel_h = KH;
+                                                        pti.shimDma.kernel_w = KW;
+                                                        pti.shimDma.input_c = C;
+                                                        pti.shimDma.stride = convStride;
+                                                        pti.shimDma.pad = convPad;
+                                                        pti.shimDma.ow = OW;
+                                                        pti.shimDma.conv_oh = OH;
+                                                        pti.shimDma.conv_oc = oc.size;
+                                                        pti.shimDma.conv_iw = IW;
+                                                        pti.shimDma.conv_ih = IH;
+                                                        // Field 9 (m): optional explicit spatial-halo
+                                                        // split. When present (size>0) it pins the
+                                                        // per-tile IFM slab directly, bypassing the
+                                                        // OH/HW_ROWS auto-derivation. size=halo slice
+                                                        // (input rows/tile), stride=halo step (input-row
+                                                        // stride between tiles), groups=number of
+                                                        // tile-rows. Stored via ShimDma.haloExplicit so
+                                                        // it does NOT touch tdM (no GEMM-tiling side
+                                                        // effects).
+                                                        if (nf >= 10) {
+                                                            ParsedTensorInfo::TileDim mSplit;
+                                                            readTileDim(apval->getStructField(9), mSplit);
+                                                            // Derive tileMode (Overlap) from an
+                                                            // overlapping explicit halo split.
+                                                            if (mSplit.size > 0 && mSplit.stride > 0 &&
+                                                                mSplit.stride < mSplit.size)
+                                                                pti.tileMode = 1;
+                                                            if (mSplit.size > 0) {
+                                                                pti.shimDma.halo_slice = mSplit.size;
+                                                                pti.shimDma.halo_step =
+                                                                    mSplit.stride > 0 ? mSplit.stride : mSplit.size;
+                                                                pti.shimDma.oh_per_row =
+                                                                    mSplit.groups > 0
+                                                                        ? OH / mSplit.groups
+                                                                        : (mSplit.size - KH) / convStride + 1;
+                                                                pti.shimDma.haloExplicit = true;
+                                                                llvm::outs()
+                                                                    << "[TilingLinalg] Conv2dSpace explicit "
+                                                                       "halo: halo_slice="
+                                                                    << pti.shimDma.halo_slice
+                                                                    << " halo_step=" << pti.shimDma.halo_step
+                                                                    << " oh_per_row=" << pti.shimDma.oh_per_row << "\n";
+                                                            }
+                                                        }
+                                                    } else {
+                                                        // GemmSpace: 1 m, 2 n, 3 k (legacy/global GEMM dims,
+                                                        // also conv-halo); 4 d1, 5 d2 (per-port 2D, role-aware).
+                                                        int nf = apval->getStructNumFields();
+                                                        if (nf >= 2)
+                                                            readTileDim(apval->getStructField(1), pti.tdM);
+                                                        if (nf >= 3)
+                                                            readTileDim(apval->getStructField(2), pti.tdN);
+                                                        if (nf >= 4)
+                                                            readTileDim(apval->getStructField(3), pti.tdK);
+                                                        if (nf >= 5)
+                                                            readTileDim(apval->getStructField(4), pti.tdD1);
+                                                        if (nf >= 6)
+                                                            readTileDim(apval->getStructField(5), pti.tdD2);
+                                                        if (nf >= 7)
+                                                            readTileDim(apval->getStructField(6), pti.tdD3);
+                                                        if (nf >= 8)
+                                                            readTileDim(apval->getStructField(7), pti.tdD4);
+                                                        // Per-port 2D path: when d1/d2 carry sizes the port
+                                                        // describes its own matrix. We map d1/d2 into tdM/tdN/tdK
+                                                        // role-aware (by distribution/IO direction) so the rest
+                                                        // of the derivation (explicitTile*, rounds) is unchanged,
+                                                        // and the legacy m/n/k reads above are overwritten.
+                                                        if (pti.tdD1.size > 0 || pti.tdD2.size > 0 ||
+                                                            pti.tdD3.size > 0 || pti.tdD4.size > 0) {
+                                                            pti.perPort2D = true;
+                                                        }
+                                                        // Derive tileMode (Overlap) from the split dim:
+                                                        // the policy no longer carries an explicit `mode`,
+                                                        // so an overlapping split (stride < size) on the
+                                                        // primary split dim (d1, else m) ==> Overlap(1).
+                                                        if ((pti.tdD1.size > 0 && pti.tdD1.stride > 0 &&
+                                                             pti.tdD1.stride < pti.tdD1.size) ||
+                                                            (pti.tdM.size > 0 && pti.tdM.stride > 0 &&
+                                                             pti.tdM.stride < pti.tdM.size))
+                                                            pti.tileMode = 1;
+                                                        else
+                                                            pti.tileMode = 0;
+                                                        // Spatial-halo via per-port 2D GemmSpace (d1/d2): a
+                                                        // 2D operand has only 2 dims, so the halo input is
+                                                        // described via d1/d2 instead of legacy m/n/k.
+                                                        //   d1 = row split (size=halo_slice, stride=halo_step,
+                                                        //        groups=tile-rows); an OVERLAPPING split means
+                                                        //        stride < size.
+                                                        //   d2 = raw_wc (input row width W*C -> A shape dim 1)
+                                                        //   raw_h is DERIVED from coverage:
+                                                        //        (groups-1)*stride + size.
+                                                        // After lifting we CLEAR tdD1/tdD2 and perPort2D for
+                                                        // this port so the halo input does NOT pollute the
+                                                        // im2col-GEMM M/N/K tiling (role-based d1/d2 map,
+                                                        // explicitTile*, working-set, validateDim), mirroring
+                                                        // the legacy m/n/k path below.
+                                                        if (pti.tileMode == 1 && pti.tdD1.size > 0 &&
+                                                            pti.tdD1.stride > 0 && pti.tdD1.stride < pti.tdD1.size) {
+                                                            // Pass-through spatial-halo: the authored d1/d2/d3
+                                                            // descriptors map 1:1 onto the #routing.level tiling
+                                                            // (no conv OH/kernel-geometry re-derivation). d1 is the
+                                                            // HEIGHT (mesh-ROW) outer halo and its nested
+                                                            // slice_tiling the on-core L2 rounds; d2 is the WIDTH
+                                                            // (mesh-COL) K-accum split; d3 the (unsplit) channel
+                                                            // layout stride. Downstream lifts w_slice/w_step ->
+                                                            // kSlice/kStep (scaled by C) and l2* -> slice_tiling.
+                                                            pti.shimDma.mode = 1;
+                                                            pti.shimDma.split_dim = 0;
+                                                            // d1 -> outer HEIGHT halo (mesh rows).
+                                                            pti.shimDma.halo_slice = pti.tdD1.size;
+                                                            pti.shimDma.halo_step = pti.tdD1.stride;
+                                                            // d1.slice_tiling -> nested on-core L2 row split.
+                                                            if (pti.tdD1.l2Size > 0) {
+                                                                pti.shimDma.l2Slice = pti.tdD1.l2Size;
+                                                                pti.shimDma.l2Step = pti.tdD1.l2Stride > 0
+                                                                                         ? pti.tdD1.l2Stride
+                                                                                         : pti.tdD1.l2Size;
+                                                                pti.shimDma.l2Rounds =
+                                                                    pti.tdD1.l2Groups > 0
+                                                                        ? pti.tdD1.l2Groups
+                                                                        : (pti.tdD1.size - pti.tdD1.l2Size +
+                                                                           pti.shimDma.l2Step - 1) /
+                                                                                  pti.shimDma.l2Step +
+                                                                              1;
+                                                            }
+                                                            // Channel-layout stride (d3): the channel dim is not
+                                                            // split, so its per-tile coverage IS the padded stride.
+                                                            int cDim = pti.tdD3.size > 0 ? pti.tdD3.size : 1;
+                                                            pti.shimDma.input_c = cDim;
+                                                            // d2 -> WIDTH K-accum split. w_slice/w_step are in COLS;
+                                                            // the ShimDma->DmaAddressing lift scales them by cDim
+                                                            // into kSlice/kStep ELEMENTS (d1 routing.level slice/
+                                                            // step). w_rounds covers d2.base by the halo step.
+                                                            if (pti.tdD2.size > 0) {
+                                                                pti.shimDma.w_slice = pti.tdD2.size;
+                                                                pti.shimDma.w_step = pti.tdD2.stride > 0
+                                                                                         ? pti.tdD2.stride
+                                                                                         : pti.tdD2.size;
+                                                                int wr = pti.tdD2.base > pti.tdD2.size
+                                                                             ? (pti.tdD2.base - pti.tdD2.size) /
+                                                                                       pti.shimDma.w_step +
+                                                                                   1
+                                                                             : 1;
+                                                                if (wr <= 1) {
+                                                                    int mc = localMeshCols > 0 ? localMeshCols
+                                                                                               : tilingMeshCols;
+                                                                    if (mc > 1)
+                                                                        wr = mc;
+                                                                }
+                                                                pti.shimDma.w_rounds = wr;
+                                                                // Per-chunk raw row width (cols*C) + full PADDED row
+                                                                // pitch (base*C).
+                                                                pti.shimDma.raw_wc = pti.tdD2.size * cDim;
+                                                                pti.shimDma.row_pitch =
+                                                                    (pti.tdD2.base > 0 ? pti.tdD2.base
+                                                                                       : pti.tdD2.size) *
+                                                                    cDim;
+                                                            } else {
+                                                                pti.shimDma.raw_wc = cDim;
+                                                            }
+                                                            // raw_h = full PADDED input H (d1.base), else coverage.
+                                                            if (pti.tdD1.base > 0)
+                                                                pti.shimDma.raw_h = pti.tdD1.base;
+                                                            else if (pti.tdD1.groups > 0)
+                                                                pti.shimDma.raw_h =
+                                                                    (pti.tdD1.groups - 1) * pti.tdD1.stride +
+                                                                    pti.tdD1.size;
+                                                            llvm::outs() << "[TilingLinalg] GemmSpace spatial-halo "
+                                                                            "pass-through: "
+                                                                         << "halo_slice=" << pti.shimDma.halo_slice
+                                                                         << " halo_step=" << pti.shimDma.halo_step
+                                                                         << " l2_slice=" << pti.shimDma.l2Slice
+                                                                         << " l2_step=" << pti.shimDma.l2Step
+                                                                         << " l2_rounds=" << pti.shimDma.l2Rounds
+                                                                         << " k_slice=" << pti.shimDma.w_slice * cDim
+                                                                         << " k_step=" << pti.shimDma.w_step * cDim
+                                                                         << " k_rounds=" << pti.shimDma.w_rounds
+                                                                         << " raw_h=" << pti.shimDma.raw_h
+                                                                         << " row_pitch=" << pti.shimDma.row_pitch
+                                                                         << " raw_wc=" << pti.shimDma.raw_wc << "\n";
+                                                            pti.tdD1 = {};
+                                                            pti.tdD2 = {};
+                                                            pti.tdD3 = {};
+                                                            pti.tdD4 = {};
+                                                            pti.perPort2D = false;
+                                                        }
+                                                        // Spatial-halo via GemmSpace: when policy.mode is
+                                                        // Overlap and m is an overlapping split, treat this
+                                                        // input as a RAW 2D buffer [raw_h, raw_wc] that is
+                                                        // row-split into overlapping halo slabs. Convention:
+                                                        //   m = row split (size=halo_slice, stride=halo_step,
+                                                        //       groups=tile-rows)
+                                                        //   n = raw_h  (full input rows -> A shape dim 0)
+                                                        //   k = raw_wc (input row width W*C -> A shape dim 1)
+                                                        // The conv geometry the kernel needs (KH/KW/C/S/OW/
+                                                        // oh_per_row) is NOT carried here — the kernel reads
+                                                        // it from compile-time macros instead. After lifting
+                                                        // the split into ShimDma we CLEAR tdM/tdN/tdK so they
+                                                        // do not pollute the im2col-GEMM M/N/K tiling math
+                                                        // (explicitTileM, working-set check, validateDim).
+                                                        if (pti.tileMode == 1 && pti.tdM.size > 0 &&
+                                                            pti.tdM.stride > 0 && pti.tdM.stride < pti.tdM.size) {
+                                                            pti.shimDma.mode = 1;
+                                                            pti.shimDma.halo_slice = pti.tdM.size;
+                                                            pti.shimDma.halo_step = pti.tdM.stride;
+                                                            pti.shimDma.split_dim = 0;
+                                                            if (pti.tdN.size > 0)
+                                                                pti.shimDma.raw_h = pti.tdN.size;
+                                                            if (pti.tdK.size > 0)
+                                                                pti.shimDma.raw_wc = pti.tdK.size;
+                                                            llvm::outs() << "[TilingLinalg] GemmSpace spatial-halo: "
+                                                                         << "halo_slice=" << pti.shimDma.halo_slice
+                                                                         << " halo_step=" << pti.shimDma.halo_step
+                                                                         << " raw_h=" << pti.shimDma.raw_h
+                                                                         << " raw_wc=" << pti.shimDma.raw_wc << "\n";
+                                                            pti.tdM = {};
+                                                            pti.tdN = {};
+                                                            pti.tdK = {};
+                                                        }
+                                                    }
+                                                } else {
+                                                    // Bare (legacy) lean SpatialPolicy.
+                                                    readPolicy(*apval);
+                                                }
                                                 pti.policyResolved = true;
                                                 llvm::outs()
                                                     << "[TilingLinalg] Policy resolved: pattern=" << pti.pattern
                                                     << " distribution=" << pti.distribution
                                                     << " mergeOrder=" << pti.mergeOrder << " ppDepth=" << pti.pingPong
                                                     << " maxBufferBytes=" << pti.maxBufferBytes;
-                                                if (pti.tileM > 0 || pti.tileN > 0 || pti.tileK > 0)
-                                                    llvm::outs() << " tile_m=" << pti.tileM << " tile_n=" << pti.tileN
-                                                                 << " tile_k=" << pti.tileK;
+                                                if (pti.tdM.size > 0 || pti.tdN.size > 0 || pti.tdK.size > 0)
+                                                    llvm::outs()
+                                                        << " m{size=" << pti.tdM.size << ",stride=" << pti.tdM.stride
+                                                        << ",groups=" << pti.tdM.groups << "}"
+                                                        << " n{size=" << pti.tdN.size << ",stride=" << pti.tdN.stride
+                                                        << ",groups=" << pti.tdN.groups << "}"
+                                                        << " k{size=" << pti.tdK.size << ",stride=" << pti.tdK.stride
+                                                        << ",groups=" << pti.tdK.groups << "}";
+                                                if (pti.shimDma.fromConvSpace)
+                                                    llvm::outs()
+                                                        << " conv2d{KH=" << pti.shimDma.kernel_h
+                                                        << ",KW=" << pti.shimDma.kernel_w
+                                                        << ",C=" << pti.shimDma.input_c << ",S=" << pti.shimDma.stride
+                                                        << ",P=" << pti.shimDma.pad << ",OH=" << pti.shimDma.conv_oh
+                                                        << ",OW=" << pti.shimDma.ow << ",IH=" << pti.shimDma.conv_ih
+                                                        << ",IW=" << pti.shimDma.conv_iw << "}";
+                                                llvm::outs() << " mode=" << pti.tileMode;
+                                                if (pti.layoutTransform > 0)
+                                                    llvm::outs() << " layout_transform=" << pti.layoutTransform;
                                                 llvm::outs() << "\n";
                                             } else if (!apval) {
                                                 llvm::errs()
                                                     << "[TilingLinalg] DEBUG: policy arg kind="
                                                     << (int)policyArg.getKind() << " — could not obtain APValue\n";
+                                            }
+
+                                            // --- AST-based DmaTransform struct extraction (targs[2]) ---
+                                            // Extract the constexpr DmaTransform struct from the 3rd template
+                                            // argument of aie::port<T, Policy, DmaTransform>.
+                                            // DmaTransform struct layout:
+                                            //   Field 0: dims — array of 4 Dim structs (each: {stride, wrap})
+                                            //   Field 1: num_dims — int
+                                            //   Field 2: iter_step — int
+                                            //   Field 3: iter_wrap — int
+                                            //   Field 4: mode — int (0=flat/im2col, 1=spatial_halo)
+                                            //   Field 5: halo_slice — int
+                                            //   Field 6: halo_step — int
+                                            //   Field 7: split_dim — int
+                                            //   Field 8: raw_h — int
+                                            //   Field 9: raw_wc — int
+                                            if (targs.size() >= 3) {
+                                                const auto &dmaArg = targs[2];
+                                                const APValue *dmaApval = nullptr;
+
+                                                if (dmaArg.getKind() == clang::TemplateArgument::StructuralValue) {
+                                                    dmaApval = &dmaArg.getAsStructuralValue();
+                                                } else if (dmaArg.getKind() == clang::TemplateArgument::Declaration) {
+                                                    ValueDecl *decl = dmaArg.getAsDecl();
+                                                    if (auto *tpo = dyn_cast<clang::TemplateParamObjectDecl>(decl))
+                                                        dmaApval = &tpo->getValue();
+                                                    else if (auto *vd = dyn_cast<clang::VarDecl>(decl)) {
+                                                        dmaApval = vd->getEvaluatedValue();
+                                                        if (!dmaApval)
+                                                            vd->evaluateValue(), dmaApval = vd->getEvaluatedValue();
+                                                    }
+                                                } else if (dmaArg.getKind() == clang::TemplateArgument::Expression) {
+                                                    clang::Expr::EvalResult evalRes;
+                                                    if (dmaArg.getAsExpr()->EvaluateAsConstantExpr(evalRes, *Context))
+                                                        dmaApval = &evalRes.Val;
+                                                }
+
+                                                if (dmaApval && dmaApval->isStruct() &&
+                                                    dmaApval->getStructNumFields() >= 4) {
+                                                    // Field 0: dims array (APValue::Array of 4 structs)
+                                                    const auto &dimsField = dmaApval->getStructField(0);
+                                                    // Field 1: num_dims
+                                                    int numDims =
+                                                        (int)dmaApval->getStructField(1).getInt().getExtValue();
+                                                    pti.shimDma.num_dims = numDims;
+                                                    // Extract each Dim{stride, wrap} from the array
+                                                    if (dimsField.isArray()) {
+                                                        for (int di = 0; di < numDims && di < 4; ++di) {
+                                                            const auto &dimStruct =
+                                                                dimsField.getArrayInitializedElt(di);
+                                                            if (dimStruct.isStruct() &&
+                                                                dimStruct.getStructNumFields() >= 2) {
+                                                                pti.shimDma.dims[di].stride =
+                                                                    (int)dimStruct.getStructField(0)
+                                                                        .getInt()
+                                                                        .getExtValue();
+                                                                pti.shimDma.dims[di].wrap =
+                                                                    (int)dimStruct.getStructField(1)
+                                                                        .getInt()
+                                                                        .getExtValue();
+                                                            }
+                                                        }
+                                                    }
+                                                    // Field 2: iter_step, Field 3: iter_wrap
+                                                    pti.shimDma.iter_step =
+                                                        (int)dmaApval->getStructField(2).getInt().getExtValue();
+                                                    pti.shimDma.iter_wrap =
+                                                        (int)dmaApval->getStructField(3).getInt().getExtValue();
+
+                                                    // Peek the transform mode (field 4) so we can detect a
+                                                    // flat() DmaTransform. The port's 3rd template arg always
+                                                    // exists (defaulted to flat()), so an unspecified transform
+                                                    // shows up here as flat (num_dims==0 && mode==0). A flat
+                                                    // transform carries no geometry — applying its all-zero
+                                                    // fields would CLOBBER any Conv2dSpace-derived conv geometry
+                                                    // (kernel_h/input_c/stride). Skip those overwrites when flat.
+                                                    int dmaModePeek = 0;
+                                                    if (dmaApval->getStructNumFields() >= 10)
+                                                        dmaModePeek =
+                                                            (int)dmaApval->getStructField(4).getInt().getExtValue();
+                                                    bool dmaIsFlat = (numDims == 0 && dmaModePeek == 0);
+
+                                                    // Fields 4-9: spatial-halo metadata (present when the
+                                                    // DmaTransform was built by ConvTiling::spatial). Older
+                                                    // DmaTransform structs (4 fields) leave these at 0.
+                                                    if (!dmaIsFlat && dmaApval->getStructNumFields() >= 10) {
+                                                        pti.shimDma.mode =
+                                                            (int)dmaApval->getStructField(4).getInt().getExtValue();
+                                                        pti.shimDma.halo_slice =
+                                                            (int)dmaApval->getStructField(5).getInt().getExtValue();
+                                                        pti.shimDma.halo_step =
+                                                            (int)dmaApval->getStructField(6).getInt().getExtValue();
+                                                        pti.shimDma.split_dim =
+                                                            (int)dmaApval->getStructField(7).getInt().getExtValue();
+                                                        pti.shimDma.raw_h =
+                                                            (int)dmaApval->getStructField(8).getInt().getExtValue();
+                                                        pti.shimDma.raw_wc =
+                                                            (int)dmaApval->getStructField(9).getInt().getExtValue();
+                                                    }
+
+                                                    // Fields 10-15: conv geometry carried from
+                                                    // ConvTiling::spatial (KH/KW/C/S/OW/oh_per_row).
+                                                    if (!dmaIsFlat && dmaApval->getStructNumFields() >= 16) {
+                                                        pti.shimDma.kernel_h =
+                                                            (int)dmaApval->getStructField(10).getInt().getExtValue();
+                                                        pti.shimDma.kernel_w =
+                                                            (int)dmaApval->getStructField(11).getInt().getExtValue();
+                                                        pti.shimDma.input_c =
+                                                            (int)dmaApval->getStructField(12).getInt().getExtValue();
+                                                        pti.shimDma.stride =
+                                                            (int)dmaApval->getStructField(13).getInt().getExtValue();
+                                                        pti.shimDma.ow =
+                                                            (int)dmaApval->getStructField(14).getInt().getExtValue();
+                                                        pti.shimDma.oh_per_row =
+                                                            (int)dmaApval->getStructField(15).getInt().getExtValue();
+                                                    }
+
+                                                    if (pti.shimDma.mode == 1) {
+                                                        llvm::outs()
+                                                            << "[TilingLinalg] DmaTransform spatial-halo resolved: "
+                                                            << "halo_slice=" << pti.shimDma.halo_slice
+                                                            << " halo_step=" << pti.shimDma.halo_step
+                                                            << " split_dim=" << pti.shimDma.split_dim
+                                                            << " raw_h=" << pti.shimDma.raw_h
+                                                            << " raw_wc=" << pti.shimDma.raw_wc << "\n";
+                                                    }
+
+                                                    if (!pti.shimDma.empty()) {
+                                                        llvm::outs()
+                                                            << "[TilingLinalg] DmaTransform resolved: num_dims="
+                                                            << numDims;
+                                                        for (int di = 0; di < numDims; ++di)
+                                                            llvm::outs()
+                                                                << " dim" << di << "={" << pti.shimDma.dims[di].stride
+                                                                << "," << pti.shimDma.dims[di].wrap << "}";
+                                                        if (pti.shimDma.iter_step > 0)
+                                                            llvm::outs() << " iter_step=" << pti.shimDma.iter_step
+                                                                         << " iter_wrap=" << pti.shimDma.iter_wrap;
+                                                        llvm::outs() << "\n";
+                                                    }
+                                                }
                                             }
                                         }
                                     }
@@ -1064,7 +1890,9 @@ public:
                                     }
                                 }
 
-                                // Re-assign shape from resolved policy fields
+                                // Re-assign shape from resolved policy fields. NOTE: a
+                                // spatial-halo input overrides this to the RAW padded DDR
+                                // buffer shape below (search "Spatial-halo override").
                                 if (pti.policyResolved && macroDimM > 0 && macroDimN > 0 && macroDimK > 0) {
                                     if (pti.pattern == 0 && pti.distribution == 0) // Broadcast+Row -> A
                                         pti.shape = {macroDimM, macroDimK};
@@ -1072,6 +1900,96 @@ public:
                                         pti.shape = {macroDimK, macroDimN};
                                     else // Gather/Scatter -> C
                                         pti.shape = {macroDimM, macroDimN};
+                                }
+
+                                // Conv2dSpace-derived shim DMA. The Conv2dSpace carries the
+                                // conv iteration space; when the port's explicit DmaTransform
+                                // is flat() (num_dims==0 && mode==0) we synthesize the same
+                                // im2col / spatial-halo shim DMA that DmaTransform::im2col /
+                                // ConvTiling::spatial would have produced. An explicit
+                                // DmaTransform always wins (single source of truth).
+                                if (pti.shimDma.fromConvSpace && pti.shimDma.num_dims == 0 && pti.shimDma.mode == 0) {
+                                    const int IH = pti.shimDma.conv_ih;
+                                    const int IW = pti.shimDma.conv_iw;
+                                    const int C = pti.shimDma.input_c;
+                                    const int KH = pti.shimDma.kernel_h;
+                                    const int KW = pti.shimDma.kernel_w;
+                                    const int S = pti.shimDma.stride > 0 ? pti.shimDma.stride : 1;
+                                    const int OH = pti.shimDma.conv_oh;
+                                    const int OW = pti.shimDma.ow;
+                                    if (pti.tileMode == 1 /*Overlap -> spatial halo*/) {
+                                        int convR = localMeshRows > 0 ? localMeshRows : tilingMeshRows;
+                                        if (convR <= 0)
+                                            convR = 1;
+                                        // Honor an explicit Conv2dSpace.m halo split: only
+                                        // auto-derive halo_slice/halo_step/oh_per_row when the
+                                        // user did NOT pin them via Conv2dSpace.m.
+                                        if (!pti.shimDma.haloExplicit) {
+                                            int oh_per_row = OH / convR;
+                                            pti.shimDma.halo_slice = (oh_per_row - 1) * S + KH;
+                                            pti.shimDma.halo_step = oh_per_row * S;
+                                            pti.shimDma.oh_per_row = oh_per_row;
+                                        }
+                                        pti.shimDma.mode = 1;
+                                        pti.shimDma.split_dim = 0;
+                                        pti.shimDma.raw_h = IH;
+                                        pti.shimDma.raw_wc = IW * C;
+                                        // Coverage check: the union of all tile slabs must span IH.
+                                        if (convR > 0 &&
+                                            (convR - 1) * pti.shimDma.halo_step + pti.shimDma.halo_slice < IH)
+                                            llvm::errs() << "[TilingLinalg] WARNING: spatial-halo coverage gap: "
+                                                         << "(" << convR << "-1)*" << pti.shimDma.halo_step << "+"
+                                                         << pti.shimDma.halo_slice << " < IH=" << IH << "\n";
+                                        llvm::outs()
+                                            << "[TilingLinalg] Conv2dSpace spatial-halo derived: "
+                                            << "halo_slice=" << pti.shimDma.halo_slice
+                                            << " halo_step=" << pti.shimDma.halo_step << " raw_h=" << pti.shimDma.raw_h
+                                            << " raw_wc=" << pti.shimDma.raw_wc
+                                            << " oh_per_row=" << pti.shimDma.oh_per_row << "\n";
+                                    } else if (IW > 0 && C > 0 && OW > 0) {
+                                        // im2col: matches DmaTransform::im2col(IH, IW, C, KH, KW, S, P)
+                                        pti.shimDma.dims[0] = {1, KW * C};
+                                        pti.shimDma.dims[1] = {IW * C, KH};
+                                        pti.shimDma.dims[2] = {S * C, OW};
+                                        pti.shimDma.num_dims = 3;
+                                        pti.shimDma.iter_step = IW * C * S;
+                                        pti.shimDma.iter_wrap = OH;
+                                        llvm::outs() << "[TilingLinalg] Conv2dSpace im2col derived: num_dims=3"
+                                                     << " dim0={" << pti.shimDma.dims[0].stride << ","
+                                                     << pti.shimDma.dims[0].wrap << "}"
+                                                     << " dim1={" << pti.shimDma.dims[1].stride << ","
+                                                     << pti.shimDma.dims[1].wrap << "}"
+                                                     << " dim2={" << pti.shimDma.dims[2].stride << ","
+                                                     << pti.shimDma.dims[2].wrap << "}"
+                                                     << " iter_step=" << pti.shimDma.iter_step
+                                                     << " iter_wrap=" << pti.shimDma.iter_wrap << "\n";
+                                    }
+                                }
+
+                                // Unify SpatialPolicy Overlap mode into the conv-halo path.
+                                // tile_dim describes the *split* (size/stride/groups); the
+                                // DmaTransform still provides the windowing math. When the
+                                // policy declares m as an Overlap split, drive the existing
+                                // halo plumbing from tile_dim (size -> halo_slice,
+                                // stride -> halo_step) so it is the single declarative source.
+                                if (pti.tileMode == 1 /*Overlap*/ && pti.tdM.size > 0 && pti.tdM.stride > 0 &&
+                                    pti.tdM.stride < pti.tdM.size) {
+                                    pti.shimDma.mode = 1;
+                                    pti.shimDma.halo_slice = pti.tdM.size;
+                                    pti.shimDma.halo_step = pti.tdM.stride;
+                                }
+
+                                // Spatial-halo override: the A-tensor is declared as the RAW input
+                                // [raw_h, raw_wc] (e.g. [224, 672]), NOT the im2col GEMM [M, K].
+                                // The partition slices this into overlapping [halo_slice, raw_wc]
+                                // row-blocks; the user conv kernel does on-chip windowing.
+                                // With a 2D width-split raw_wc holds the PER-CHUNK width, so the
+                                // full DDR buffer dim1 is the PADDED row pitch (row_pitch); prefer
+                                // it so @main arg1 spans the whole padded buffer (e.g. 230x920).
+                                if (pti.shimDma.mode == 1 && pti.shimDma.raw_h > 0 && pti.shimDma.raw_wc > 0) {
+                                    int64_t dim1 = pti.shimDma.row_pitch > 0 ? (int64_t)pti.shimDma.row_pitch
+                                                                             : (int64_t)pti.shimDma.raw_wc;
+                                    pti.shape = {(int64_t)pti.shimDma.raw_h, dim1};
                                 }
 
                                 parsedTensors.push_back(pti);
@@ -1102,21 +2020,91 @@ public:
                         const int64_t AIE_DATA_MEM_BYTES = hwResForMemCheck->getTileMemoryBytes();
                         const int64_t AIE_USABLE_MEM_BYTES = hwResForMemCheck->getUsableDataBytes();
 
-                        // Collect explicit tiling hints from any resolved policy
+                        // Collect explicit tiling hints from any resolved policy.
+                        // The per-tile length is tile_dim.size (stride/groups feed
+                        // coverage validation and round derivation below).
                         int explicitTileM = 0, explicitTileN = 0, explicitTileK = 0;
+                        int explicitGroupsM = 0, explicitGroupsN = 0, explicitGroupsK = 0;
                         int elementBytes = 1; // default int8
                         for (const auto &pt : parsedTensors) {
                             if (pt.policyResolved) {
-                                if (pt.tileM > 0)
-                                    explicitTileM = pt.tileM;
-                                if (pt.tileN > 0)
-                                    explicitTileN = pt.tileN;
-                                if (pt.tileK > 0)
-                                    explicitTileK = pt.tileK;
+                                if (pt.perPort2D) {
+                                    // Per-port 2D GemmSpace: each port describes its OWN
+                                    // matrix. Map d1/d2 into the shared M/N/K tile hints by
+                                    // role (IO direction + distribution):
+                                    //   input  + Row (A=[M,K]) -> d1=M-tile, d2=K-chunk
+                                    //   input  + Col (B=[N,K]) -> d1=N-tile, d2=K-chunk
+                                    //   output       (C=[M,N]) -> d1=M-tile, d2=N-tile
+                                    if (pt.isInput && pt.distribution == 0) { // A (Row)
+                                        explicitTileM = pt.tdD1.size;
+                                        explicitGroupsM = pt.tdD1.groups;
+                                        explicitTileK = pt.tdD2.size;
+                                        explicitGroupsK = pt.tdD2.groups;
+                                    } else if (pt.isInput && pt.distribution == 1) { // B (Col)
+                                        explicitTileN = pt.tdD1.size;
+                                        explicitGroupsN = pt.tdD1.groups;
+                                        explicitTileK = pt.tdD2.size;
+                                        explicitGroupsK = pt.tdD2.groups;
+                                    } else if (!pt.isInput) { // C (output)
+                                        explicitTileM = pt.tdD1.size;
+                                        explicitGroupsM = pt.tdD1.groups;
+                                        explicitTileN = pt.tdD2.size;
+                                        explicitGroupsN = pt.tdD2.groups;
+                                    }
+                                } else {
+                                    if (pt.tdM.size > 0) {
+                                        explicitTileM = pt.tdM.size;
+                                        explicitGroupsM = pt.tdM.groups;
+                                    }
+                                    if (pt.tdN.size > 0) {
+                                        explicitTileN = pt.tdN.size;
+                                        explicitGroupsN = pt.tdN.groups;
+                                    }
+                                    if (pt.tdK.size > 0) {
+                                        explicitTileK = pt.tdK.size;
+                                        explicitGroupsK = pt.tdK.groups;
+                                    }
+                                }
                             }
                             int eb = pt.elementBitWidth / 8;
                             if (eb > elementBytes)
                                 elementBytes = eb;
+                        }
+
+                        // ---- Coverage & consistency validation (per dimension) ----
+                        // total: M/N partition tiling is temporal *inside* a core
+                        // (total = tileRows / tileCols); K is temporal over the full K.
+                        auto validateDim = [&](const char *name, const ParsedTensorInfo::TileDim &td, int64_t total) {
+                            if (td.size <= 0 || total <= 0)
+                                return; // auto-derive: nothing to validate
+                            int stride = td.stride > 0 ? td.stride : td.size;
+                            int overlap = td.size - stride;
+                            int groups = td.groups > 0 ? td.groups : (int)((total - td.size + stride - 1) / stride + 1);
+                            int64_t covered = (int64_t)(groups - 1) * stride + td.size;
+                            bool isOverlap = overlap > 0;
+                            if (isOverlap) {
+                                if (stride > td.size)
+                                    llvm::errs() << "[TilingLinalg] ERROR: dim " << name << " stride (" << stride
+                                                 << ") > size (" << td.size << ") — invalid overlap.\n";
+                                // Overlap: tiles must still cover the whole dim.
+                                if (covered < total)
+                                    llvm::errs() << "[TilingLinalg] ERROR: dim " << name << " Overlap coverage "
+                                                 << covered << " < total " << total << " (size=" << td.size
+                                                 << " stride=" << stride << " groups=" << groups << ").\n";
+                            } else {
+                                // Partition: require exact coverage and zero overlap.
+                                if (covered != total)
+                                    llvm::errs() << "[TilingLinalg] ERROR: dim " << name << " Partition coverage "
+                                                 << covered << " != total " << total << " (size=" << td.size
+                                                 << " stride=" << stride << " groups=" << groups << ").\n";
+                            }
+                        };
+                        for (const auto &pt : parsedTensors) {
+                            if (!pt.policyResolved || !pt.requireFullCoverage)
+                                continue;
+                            validateDim("m", pt.tdM, derivedTilingParams.tileRows);
+                            validateDim("n", pt.tdN, derivedTilingParams.tileCols);
+                            validateDim("k", pt.tdK, macroDimK);
                         }
 
                         int64_t tileM_eff = explicitTileM > 0 ? explicitTileM : derivedTilingParams.tileRows;
@@ -1213,14 +2201,196 @@ public:
                         derivedTilingParams.tileM = tileM_eff;
                         derivedTilingParams.tileN = tileN_eff;
                         derivedTilingParams.effectiveK = tileK_eff;
-                        derivedTilingParams.spatialMRounds = (tileM_eff > 0 && tileM_eff < derivedTilingParams.tileRows)
-                                                                 ? derivedTilingParams.tileRows / tileM_eff
-                                                                 : 1;
-                        derivedTilingParams.spatialNRounds = (tileN_eff > 0 && tileN_eff < derivedTilingParams.tileCols)
-                                                                 ? derivedTilingParams.tileCols / tileN_eff
-                                                                 : 1;
+                        // Prefer the explicit tile_dim.groups when the user pinned it;
+                        // otherwise fall back to the (total / size) formula. Both must
+                        // agree for a valid Partition (checked by validateDim above).
+                        derivedTilingParams.spatialMRounds =
+                            explicitGroupsM > 0 ? explicitGroupsM
+                                                : ((tileM_eff > 0 && tileM_eff < derivedTilingParams.tileRows)
+                                                       ? derivedTilingParams.tileRows / tileM_eff
+                                                       : 1);
+                        derivedTilingParams.spatialNRounds =
+                            explicitGroupsN > 0 ? explicitGroupsN
+                                                : ((tileN_eff > 0 && tileN_eff < derivedTilingParams.tileCols)
+                                                       ? derivedTilingParams.tileCols / tileN_eff
+                                                       : 1);
                         derivedTilingParams.kRounds =
-                            (tileK_eff > 0 && tileK_eff < macroDimK) ? macroDimK / tileK_eff : 1;
+                            explicitGroupsK > 0
+                                ? explicitGroupsK
+                                : ((tileK_eff > 0 && tileK_eff < macroDimK) ? macroDimK / tileK_eff : 1);
+
+                        // ---- Conv (spatial-halo) geometry: lift from the spatial input tensor ----
+                        // The IFM port carries mode==1 with conv geometry captured from
+                        // ConvTiling::spatial. Populate derivedTilingParams so the kernel-side
+                        // get_kernel_h()/get_halo_slice()/... accessors resolve to real values.
+                        bool isSpatialHaloConv = false;
+                        // Set when the spatial-halo M-round derivation below detects an
+                        // inconsistency (non-divisible tile_rows or C-output geometry mismatch);
+                        // propagated to derivedTilingParams.valid so downstream passes skip a
+                        // malformed schedule instead of emitting wrong DMA counts.
+                        bool convHaloDeriveError = false;
+                        for (const auto &pt : parsedTensors) {
+                            if (pt.shimDma.mode == 1) {
+                                const auto &sd = pt.shimDma;
+                                isSpatialHaloConv = true;
+                                derivedTilingParams.convHaloSlice = sd.halo_slice;
+                                derivedTilingParams.convKernelH = sd.kernel_h;
+                                derivedTilingParams.convKernelW = sd.kernel_w;
+                                derivedTilingParams.convInputC = sd.input_c;
+                                derivedTilingParams.convStride = sd.stride;
+                                derivedTilingParams.convOW = sd.ow;
+                                derivedTilingParams.convOHPerRow = sd.oh_per_row;
+                                // 2D width-split: lift the per-chunk width geometry so the
+                                // kernel/output sizing below uses the NARROW per-chunk width.
+                                derivedTilingParams.convWRounds = sd.w_rounds;
+                                derivedTilingParams.convOWT = sd.ow_t;
+                                derivedTilingParams.convWSlice = sd.w_slice;
+                                derivedTilingParams.convWStep = sd.w_step;
+                                derivedTilingParams.convRowPitch = sd.row_pitch;
+                                // Nested L2 (on-core temporal ROW-split) lift: the per-tile
+                                // halo_slice rows are chunked into l2Rounds on-core rounds of
+                                // l2Slice rows. Drives the kernel A-port round multiplier and
+                                // per-round A window below.
+                                derivedTilingParams.convL2Rounds = sd.l2Rounds;
+                                derivedTilingParams.convL2Slice = sd.l2Slice;
+                                derivedTilingParams.convL2Step = sd.l2Step;
+                                llvm::outs()
+                                    << "[TilingLinalg] Conv spatial-halo params: kernel_h=" << sd.kernel_h
+                                    << " kernel_w=" << sd.kernel_w << " input_c=" << sd.input_c
+                                    << " stride=" << sd.stride << " ow=" << sd.ow << " oh_per_row=" << sd.oh_per_row
+                                    << " halo_slice=" << sd.halo_slice << "\n";
+                                if (sd.w_rounds > 1)
+                                    llvm::outs()
+                                        << "[TilingLinalg] Conv spatial-halo WIDTH-SPLIT lift: w_rounds=" << sd.w_rounds
+                                        << " ow_t=" << sd.ow_t << " w_slice=" << sd.w_slice << " w_step=" << sd.w_step
+                                        << " row_pitch=" << sd.row_pitch << "\n";
+                                break;
+                            }
+                        }
+
+                        // Capture the OUTPUT (C) tile geometry from its per-port d1/d2
+                        // descriptor. For the spatial-halo conv the C output space (LtoR_Merge)
+                        // carries d1.tile_size = oh_per_row (output rows per slab) and
+                        // d2.tile_size = ow_t (output cols per width-chunk). These supply ow_t
+                        // (needed by the output width-split scatter) and cross-check the
+                        // halo-derived flat per-slab M-tile below.
+                        int64_t convOutOhPerRow = 0, convOutOwT = 0;
+                        if (isSpatialHaloConv) {
+                            for (const auto &pt : parsedTensors) {
+                                if (!pt.isInput && pt.perPort2D && pt.tdD1.size > 0 && pt.tdD2.size > 0) {
+                                    convOutOhPerRow = pt.tdD1.size;
+                                    convOutOwT = pt.tdD2.size;
+                                    break;
+                                }
+                            }
+                        }
+
+                        // Spatial-halo conv: derive the on-core M-round count and the flat
+                        // per-slab M-tile DIRECTLY from the per-tensor halo slice info instead
+                        // of the fragile ow_t-gated flat tileRows/tileM division. The kernel
+                        // (conv2d_spatial) emits ONE [oh_per_row*ow_t, tile_cols] output slab
+                        // per (width-round, L2-row-round) pair, so the number of on-core M
+                        // rounds is the PRODUCT of the two temporal splits carried by the halo
+                        // descriptor:
+                        //   spatialMRounds = max(1,w_rounds) * max(1,l2_rounds)   (= 4*4 = 16)
+                        //   tile_m         = tile_rows / spatialMRounds           (= 3136/16 = 196)
+                        // Both temporal splits are folded into ONE M-round count; the per-port A
+                        // spatialRounds below therefore no longer multiplies l2Rounds again. The
+                        // result is cross-checked against the C output tile geometry
+                        // (oh_per_row * ow_t) and errors on any inconsistency.
+                        if (isSpatialHaloConv && derivedTilingParams.tileRows > 0) {
+                            int64_t wR = derivedTilingParams.convWRounds > 0 ? derivedTilingParams.convWRounds : 1;
+                            int64_t l2R = derivedTilingParams.convL2Rounds > 0 ? derivedTilingParams.convL2Rounds : 1;
+                            int64_t spatialMRounds = wR * l2R;
+                            if (spatialMRounds <= 0 || (derivedTilingParams.tileRows % spatialMRounds) != 0) {
+                                llvm::errs()
+                                    << "[TilingLinalg] ERROR: conv spatial-halo tile_rows="
+                                    << derivedTilingParams.tileRows
+                                    << " not divisible by spatialMRounds=" << spatialMRounds << " (w_rounds=" << wR
+                                    << " * l2_rounds=" << l2R << "); cannot derive a consistent tile_m\n";
+                                convHaloDeriveError = true;
+                            } else {
+                                int64_t flatTileM = derivedTilingParams.tileRows / spatialMRounds;
+                                // Cross-check against the C output tile geometry when available:
+                                // oh_per_row(=C.d1) * ow_t(=C.d2) must equal the flat per-slab
+                                // M-tile.
+                                if (convOutOhPerRow > 0 && convOutOwT > 0) {
+                                    int64_t cTileM = convOutOhPerRow * convOutOwT;
+                                    if (cTileM != flatTileM) {
+                                        llvm::errs()
+                                            << "[TilingLinalg] ERROR: conv spatial-halo M-tile mismatch: "
+                                            << "halo-derived tile_m=" << flatTileM << " != C output oh_per_row("
+                                            << convOutOhPerRow << ")*ow_t(" << convOutOwT << ")=" << cTileM << "\n";
+                                        convHaloDeriveError = true;
+                                    }
+                                }
+                                derivedTilingParams.tileM = flatTileM;
+                                tileM_eff = flatTileM;
+                                derivedTilingParams.spatialMRounds = spatialMRounds;
+                                // ow_t comes from the C output width tile (OW_T); carry it on the
+                                // input halo tensor so tensor_N.halo emits a non-zero ow_t and the
+                                // output width-split scatter descriptor
+                                // (buildOutputTileDescriptor) fires instead of the GEMM
+                                // contiguous-M fallback. Also expose it via derivedTilingParams.
+                                if (convOutOwT > 0) {
+                                    derivedTilingParams.convOWT = convOutOwT;
+                                    for (auto &wpt : parsedTensors)
+                                        if (wpt.shimDma.mode == 1)
+                                            wpt.shimDma.ow_t = (int)convOutOwT;
+                                }
+                                assert(spatialMRounds * flatTileM == derivedTilingParams.tileRows &&
+                                       "conv spatial-halo M coverage: spatialMRounds*tile_m must equal tile_rows");
+                                llvm::outs()
+                                    << "[TilingLinalg] Conv spatial-halo: derived M-rounds from halo slice info: "
+                                    << "w_rounds=" << wR << " * l2_rounds=" << l2R
+                                    << " -> spatialMRounds=" << spatialMRounds << ", tile_m=tile_rows("
+                                    << derivedTilingParams.tileRows << ")/" << spatialMRounds << "=" << flatTileM
+                                    << " (ow_t=" << convOutOwT << ", oh_per_row=" << convOutOhPerRow << ")\n";
+                            }
+                        }
+
+                        // Spatial-halo conv: the kernel does on-chip im2col with FULL-K dot
+                        // products (one pass over k_dim=KH*KW*C), it does NOT k-accumulate.
+                        // The GEMM auto-tiler may have split K (effective_k<full_k, k_rounds>1)
+                        // based on a GEMM working-set model that does not apply here (the conv
+                        // core memory is governed by slab[halo_slice*raw_wc] + local_out, not
+                        // A/B/C tiles). Force full-K / single k-round so the filter window
+                        // carries the whole [tile_cols, full_k] block the kernel reads.
+                        if (isSpatialHaloConv && macroDimK > 0 &&
+                            (derivedTilingParams.effectiveK != macroDimK || derivedTilingParams.kRounds != 1)) {
+                            llvm::outs() << "[TilingLinalg] Conv spatial-halo: forcing full-K: effective_k="
+                                         << derivedTilingParams.effectiveK << "->" << macroDimK
+                                         << " k_rounds=" << derivedTilingParams.kRounds << "->1\n";
+                            derivedTilingParams.effectiveK = macroDimK;
+                            tileK_eff = macroDimK;
+                            derivedTilingParams.kRounds = 1;
+                        }
+
+                        // Spatial-halo conv: the matmul N (output channels per core) used by
+                        // the kernel body's `tile_cols` is the per-mesh-col output-channel
+                        // split == tileCols, NOT the flattened output-tile width that the C
+                        // output port's d2 (= OW_T * OC_PER_G) carries for transfer geometry.
+                        // The C output's d2 inflated explicitTileN (e.g. 128) above, which
+                        // would size local_out[oh_per_row*OW*tile_cols] far beyond core
+                        // memory. For conv, pin tileN to the GEMM N per core so get_tile_cols()
+                        // resolves to the correct matmul inner dimension.
+                        if (isSpatialHaloConv && derivedTilingParams.tileCols > 0) {
+                            if (derivedTilingParams.tileN != derivedTilingParams.tileCols) {
+                                llvm::outs()
+                                    << "[TilingLinalg] Conv spatial-halo: overriding tileN="
+                                    << derivedTilingParams.tileN << " -> tileCols=" << derivedTilingParams.tileCols
+                                    << " (matmul N per core)\n";
+                                derivedTilingParams.tileN = derivedTilingParams.tileCols;
+                                // Keep the local tileN_eff in sync so the per-port DMA
+                                // round/buffer math below (esp. the C-output chunking,
+                                // which sizes rounds by tileN_eff) uses the matmul N per
+                                // core (tileCols=16), NOT the C-port d2 transfer width
+                                // (OW_T*OC_PER_G=128) that inflated bufferSize/numRounds.
+                                tileN_eff = derivedTilingParams.tileCols;
+                                // N is not sub-tiled within a core for conv (one matmul N pass).
+                                derivedTilingParams.spatialNRounds = 1;
+                            }
+                        }
 
                         // ---- Compute per-port DMA round/buffer parameters ----
                         // Use effectiveK for DMA buffer sizing (temporal tiling of K)
@@ -1232,7 +2402,29 @@ public:
                             int maxBuf = pt.maxBufferBytes > 0 ? pt.maxBufferBytes : 4096;
 
                             if (pt.isInput) {
-                                if (pt.policyResolved) {
+                                if (pt.shimDma.mode == 1 && pt.shimDma.halo_slice > 0 && pt.shimDma.raw_wc > 0) {
+                                    // Spatial-halo IFM: ship the whole contiguous halo slab
+                                    // (halo_slice * raw_wc) in a single transfer. On-chip windowing
+                                    // requires the contiguous slab, so do NOT cap at maxBuf.
+                                    // Nested L2 (on-core temporal ROW-split): when l2Rounds>1 the
+                                    // per-round slab is the SMALLER l2Slice rows (not the whole
+                                    // halo_slice); the kernel iterates l2Rounds such slabs via the
+                                    // BD iteration dim. The per-round A window = l2Slice * raw_wc.
+                                    int64_t slabRows = (pt.shimDma.l2Rounds > 1 && pt.shimDma.l2Slice > 0)
+                                                           ? (int64_t)pt.shimDma.l2Slice
+                                                           : (int64_t)pt.shimDma.halo_slice;
+                                    pp.bufferSize = slabRows * pt.shimDma.raw_wc;
+                                    pp.numRounds = 1;
+                                    // Carry the contiguous slab size to the kernel pass so
+                                    // window allocation (BUF_SZ_IN/window_init) matches the
+                                    // kernel body's buf_sz (= slabRows * raw_wc), bypassing
+                                    // the GEMM flow-view partition size + maxPingPong clamp.
+                                    derivedTilingParams.convHaloBufSize = pp.bufferSize;
+                                    llvm::outs() << "[TilingLinalg] Spatial-halo IFM buffer: slab_rows=" << slabRows
+                                                 << " * raw_wc=" << pt.shimDma.raw_wc << " = " << pp.bufferSize
+                                                 << " (numRounds=1" << (pt.shimDma.l2Rounds > 1 ? ", L2 per-round" : "")
+                                                 << ")\n";
+                                } else if (pt.policyResolved) {
                                     if (pt.pattern == 0 && pt.distribution == 0) {
                                         // Input A: Broadcast+Row — tileM rows × effectiveK per k-round
                                         // pp_depth only controls physical ping-pong buffer count,
@@ -1301,14 +2493,76 @@ public:
                                 if (outputPerCore <= maxBuf) {
                                     pp.bufferSize = outputPerCore;
                                     pp.numRounds = 1;
+                                } else if (derivedTilingParams.convOW > 0) {
+                                    // Conv2d output: the per-core output band is
+                                    // [tileM_eff, tileN_eff] where tileM_eff = OH_band * OW
+                                    // (M = OH*OW flattened). Chunk along M so each round
+                                    // covers a whole number of output-image rows (a multiple
+                                    // of convOW), keeping the producer's transfer geometry
+                                    // aligned with the shim S2MM consumer (which reassembles
+                                    // the band row-by-row). Maximize rows per round under
+                                    // maxBuf. Generic 4096-byte chunking would split across
+                                    // image-row boundaries (e.g. 4096 vs the conv 3584) and
+                                    // desync producer/consumer transfer counts.
+                                    int64_t outW = derivedTilingParams.convOW; // image cols
+                                    int64_t rowElems = tileN_eff;              // elems per M-row
+                                    int64_t maxRows = rowElems > 0 ? maxBuf / rowElems : 0;
+                                    // Number of output-IMAGE-rows that fit per round.
+                                    int64_t imgRowsPerRound = outW > 0 ? maxRows / outW : 0;
+                                    // Total output-image-rows in this band (= oh_per_row).
+                                    int64_t totalImgRows = outW > 0 ? tileM_eff / outW : 0;
+                                    if (imgRowsPerRound <= 0)
+                                        imgRowsPerRound = 1; // at least one image-row band
+                                    if (imgRowsPerRound > totalImgRows && totalImgRows > 0)
+                                        imgRowsPerRound = totalImgRows;
+                                    // Snap DOWN to a divisor of totalImgRows so the rounds tile
+                                    // the band EXACTLY (numRounds*bufferSize == outputPerCore).
+                                    // Uneven chunking (e.g. 2 img-rows over a 7-row band -> 4
+                                    // rounds covering 8 rows) overruns local_out and desyncs the
+                                    // S2MM consumer count. oh_per_row is small, so linear scan.
+                                    if (totalImgRows > 0) {
+                                        while (imgRowsPerRound > 1 && (totalImgRows % imgRowsPerRound) != 0)
+                                            imgRowsPerRound--;
+                                    }
+                                    int64_t rowsPerRound = imgRowsPerRound * outW;
+                                    if (rowsPerRound <= 0)
+                                        rowsPerRound = outW;
+                                    pp.bufferSize = rowsPerRound * rowElems;
+                                    pp.numRounds = (tileM_eff + rowsPerRound - 1) / rowsPerRound;
+                                    llvm::outs()
+                                        << "[TilingLinalg] Conv output chunking: tileM=" << tileM_eff
+                                        << " tileN=" << tileN_eff << " outW=" << outW
+                                        << " imgRowsPerRound=" << imgRowsPerRound << " rowsPerRound=" << rowsPerRound
+                                        << " bufferSize=" << pp.bufferSize << " numRounds=" << pp.numRounds << "\n";
                                 } else {
                                     pp.bufferSize = maxBuf;
                                     pp.numRounds = (outputPerCore + maxBuf - 1) / maxBuf;
                                 }
                             }
+                            // Per-port spatial sub-tile round count for
+                            // get_spatial_multiple_rounds(win): an A (input+Row) port
+                            // iterates M sub-tiles, a B (input+Col) port iterates N
+                            // sub-tiles, and the C (output) port iterates the full
+                            // M*N output-tile grid.
+                            if (pt.isInput && pt.distribution == 0) {
+                                // Both on-core temporal splits (WIDTH rounds AND the nested L2
+                                // ROW-split) are ALREADY folded into spatialMRounds
+                                // (= w_rounds * l2_rounds) by the halo M-round derivation above,
+                                // so the A (Row) port's spatialRounds is spatialMRounds directly.
+                                // Do NOT multiply by l2Rounds again here — that double-counted the
+                                // L2 split (e.g. 448*4=1792 instead of 16).
+                                pp.spatialRounds = derivedTilingParams.spatialMRounds;
+                            } else if (pt.isInput && pt.distribution == 1)
+                                pp.spatialRounds = derivedTilingParams.spatialNRounds;
+                            else if (!pt.isInput)
+                                pp.spatialRounds =
+                                    derivedTilingParams.spatialMRounds * derivedTilingParams.spatialNRounds;
                             derivedTilingParams.portParams.push_back(pp);
                         }
-                        derivedTilingParams.valid = true;
+                        // Mark invalid if the spatial-halo M-round derivation found an
+                        // inconsistency (see convHaloDeriveError above) so downstream passes do
+                        // not act on a malformed tiling.
+                        derivedTilingParams.valid = !convHaloDeriveError;
                         llvm::outs() << "[TilingLinalg] Derived tiling: tileRows=" << derivedTilingParams.tileRows
                                      << " tileCols=" << derivedTilingParams.tileCols
                                      << " kDim=" << derivedTilingParams.kDim << "\n";
@@ -1378,7 +2632,41 @@ public:
                         mkd.partition = localPartition.isValid() ? localPartition : parsedPartition;
                         mkd.meshId = (int)parsedMeshKernels.size();
                         for (auto &pt : parsedTensors) {
-                            mkd.tensors.push_back({pt.shape, pt.elementBitWidth, pt.isInput});
+                            DmaAddressing shimDma;
+                            if (pt.shimDma.mode == 1) {
+                                // Spatial-halo: no multi-dim strides; carry halo descriptor only.
+                                shimDma.mode = 1;
+                                shimDma.haloSlice = pt.shimDma.halo_slice;
+                                shimDma.haloStep = pt.shimDma.halo_step;
+                                shimDma.splitDim = pt.shimDma.split_dim;
+                                // 2D width-split geometry (only meaningful when w_rounds > 1).
+                                shimDma.wSlice = pt.shimDma.w_slice;
+                                shimDma.wStep = pt.shimDma.w_step;
+                                shimDma.wRounds = pt.shimDma.w_rounds;
+                                shimDma.rowPitch = pt.shimDma.row_pitch;
+                                shimDma.owT = pt.shimDma.ow_t;
+                                // Nested L2 (on-core temporal ROW-split) geometry (only
+                                // meaningful when l2Rounds > 1).
+                                shimDma.l2Slice = pt.shimDma.l2Slice;
+                                shimDma.l2Step = pt.shimDma.l2Step;
+                                shimDma.l2Rounds = pt.shimDma.l2Rounds;
+                                // K-accum (WIDTH) split -> partitiontensor d1 tiling level.
+                                // The width chunks become on-core accumulate rounds; scale
+                                // cols by the channel stride so kSlice/kStep are in ELEMENTS
+                                // of the padded row pitch (d1 slice=244/step=224/rounds=4).
+                                if (pt.shimDma.w_rounds > 1 && pt.shimDma.w_slice > 0) {
+                                    int C = pt.shimDma.input_c > 0 ? pt.shimDma.input_c : 1;
+                                    shimDma.kSlice = pt.shimDma.w_slice * C;
+                                    shimDma.kStep = pt.shimDma.w_step * C;
+                                    shimDma.kRounds = pt.shimDma.w_rounds;
+                                }
+                            } else if (!pt.shimDma.empty()) {
+                                for (int i = 0; i < pt.shimDma.num_dims; ++i)
+                                    shimDma.dims.push_back({pt.shimDma.dims[i].stride, pt.shimDma.dims[i].wrap});
+                                shimDma.iter_step = pt.shimDma.iter_step;
+                                shimDma.iter_wrap = pt.shimDma.iter_wrap;
+                            }
+                            mkd.tensors.push_back({pt.shape, pt.elementBitWidth, pt.isInput, shimDma});
                         }
                         // Store per-kernel body from globalKernelBodies map
                         auto bodyIt = globalKernelBodies.find(currentLaunchKernel);
@@ -1388,15 +2676,30 @@ public:
                         // Build per-kernel SplitModel from parsedTensors
                         for (auto &pt : parsedTensors) {
                             if (pt.policyResolved) {
-                                mkd.splitModel.tensorSplits.push_back(
-                                    SplitModel::fromPolicyFields(pt.pattern, pt.distribution, pt.mergeOrder,
-                                                                 pt.pingPong, pt.isInput, pt.maxBufferBytes));
+                                mkd.splitModel.tensorSplits.push_back(SplitModel::fromPolicyFields(
+                                    pt.pattern, pt.distribution, pt.mergeOrder, pt.pingPong, pt.isInput,
+                                    pt.maxBufferBytes, pt.layoutTransform));
                             } else if (!pt.spatialTag.empty()) {
                                 mkd.splitModel.tensorSplits.push_back(
                                     SplitModel::fromSpatialTag(pt.spatialTag, pt.isInput));
                             } else {
                                 mkd.splitModel.tensorSplits.push_back(SplitModel::fromPolicyFields(
                                     pt.isInput ? 0 : 3, 0, pt.isInput ? 0 : 1, 2, pt.isInput, pt.maxBufferBytes));
+                            }
+                            // Spatial-halo: mirror halo descriptor onto the just-pushed split
+                            // so createroutingfuncBySplitModel produces overlapping partitions.
+                            if (pt.shimDma.mode == 1 && pt.shimDma.halo_slice > 0) {
+                                auto &ts = mkd.splitModel.tensorSplits.back();
+                                ts.haloMode = 1;
+                                ts.haloSlice = pt.shimDma.halo_slice;
+                                ts.haloStep = pt.shimDma.halo_step;
+                                ts.splitDim = pt.shimDma.split_dim;
+                                // Nested L2 (on-core temporal) split -> partitiontensor
+                                // l2_slice/l2_step/l2_rounds attrs in
+                                // createroutingfuncBySplitModel.
+                                ts.haloL2Slice = pt.shimDma.l2Slice;
+                                ts.haloL2Step = pt.shimDma.l2Step;
+                                ts.haloL2Rounds = pt.shimDma.l2Rounds;
                             }
                         }
                         // Store per-kernel maxPPBytes (minimum across ports)
@@ -1410,6 +2713,12 @@ public:
                         // Store per-kernel derivedTilingParams and port var names
                         // for aie::get_*() replacement in multi-kernel mode
                         mkd.derivedParams = derivedTilingParams;
+                        // Carry the fullconnect_auto flag parsed from the kernel's
+                        // keyword annotation (default true when absent).
+                        {
+                            auto fcaIt = kernelFullConnectAuto.find(currentLaunchKernel);
+                            mkd.fullConnectAuto = (fcaIt != kernelFullConnectAuto.end()) ? fcaIt->second : true;
+                        }
                         for (auto &pt : parsedTensors) {
                             mkd.portVarNames.push_back(pt.varName);
                         }
@@ -1619,7 +2928,7 @@ class AieDebugLevelPragmaHandler : public clang::PragmaHandler {
         static const std::unordered_map<std::string, int> knownFlags = {
             {"AIE_DEBUG_FLAG_DISABLE_MULTID_DIM_DMA", 1 << 4},
             {"AIE_DEBUG_FLAG_DISABLE_PARTITIONTEARDOWN", 1 << 5},
-            {"AIE_DEBUG_FLAG_MM2SBDFINISH_COUNTER", 1 << 6},
+            {"AIE_DMA_ISSUE_COUNT", 1 << 7},
         };
 
         clang::Token Tok;
@@ -1779,29 +3088,53 @@ public:
 				//llvm::StringRef UpdatedSource;
 				std::string SourceCodeString = SourceCode.str();
 
-                // Collect user #define macros before any rewriting
+                // Collect user #define macros before any rewriting.
+                // Track #if/#else/#endif nesting to skip macros inside
+                // conditional blocks (they cause redefinition warnings when
+                // both branches are flattened into the kernel file).
                 {
                     userMacroDefines.clear();
                     std::istringstream iss(SourceCodeString);
                     std::string line;
                     std::string currentDefine;
                     bool inMultiLine = false;
+                    int ifDepth = 0; // nesting depth of #if/#ifdef/#ifndef
                     while (std::getline(iss, line)) {
                         if (inMultiLine) {
                             currentDefine += "\n" + line;
                             if (line.empty() || line.back() != '\\') {
-                                userMacroDefines.push_back(currentDefine);
+                                if (ifDepth == 0)
+                                    userMacroDefines.push_back(currentDefine);
                                 inMultiLine = false;
                             }
                             continue;
                         }
                         size_t firstNonSpace = line.find_first_not_of(" \t");
-                        if (firstNonSpace != std::string::npos && line.substr(firstNonSpace, 7) == "#define") {
+                        if (firstNonSpace == std::string::npos)
+                            continue;
+                        std::string trimmed = line.substr(firstNonSpace);
+                        // Track preprocessor conditional nesting
+                        if (trimmed.substr(0, 3) == "#if") {
+                            ifDepth++;
+                            continue;
+                        }
+                        if (trimmed.substr(0, 5) == "#else" || trimmed.substr(0, 5) == "#elif") {
+                            continue;
+                        }
+                        if (trimmed.substr(0, 6) == "#endif") {
+                            if (ifDepth > 0)
+                                ifDepth--;
+                            continue;
+                        }
+                        if (trimmed.substr(0, 7) == "#define") {
                             // Skip aiehlc-internal stub macros
                             if (line.find("AIEHLC_STUBS_DEFINED") != std::string::npos ||
                                 line.find("AIEHLC_TILING_STUBS_DEFINED") != std::string::npos) {
                                 continue;
                             }
+                            // Skip macros inside #if/#else blocks
+                            if (ifDepth > 0)
+                                continue;
                             currentDefine = line;
                             if (!line.empty() && line.back() == '\\') {
                                 inMultiLine = true;
@@ -1845,9 +3178,38 @@ public:
 								}
 								kernel_name_list.push_back(str);
 							}
-							//replace
-							SourceCodeString.replace(KeywordPos, KeywordToReplace.size(), Replacement);
-							KeywordPos += Replacement.size();
+                            // replace
+                            //  Handle explicit policy binding: __global__(<policyVar>)
+                            bool didPolicyReplace = false;
+                            if (KeywordToReplace == "__global__") {
+                                size_t afterKw = KeywordPos + KeywordToReplace.size();
+                                size_t p = afterKw;
+                                while (p < SourceCodeString.size() && SourceCodeString[p] == ' ')
+                                    p++;
+                                if (p < SourceCodeString.size() && SourceCodeString[p] == '(') {
+                                    size_t closeParen = SourceCodeString.find(")", p);
+                                    if (closeParen != std::string::npos) {
+                                        std::string policyVar = SourceCodeString.substr(p + 1, closeParen - (p + 1));
+                                        // trim surrounding whitespace
+                                        size_t s = policyVar.find_first_not_of(" \t");
+                                        size_t e = policyVar.find_last_not_of(" \t");
+                                        if (s != std::string::npos)
+                                            policyVar = policyVar.substr(s, e - s + 1);
+                                        else
+                                            policyVar.clear();
+                                        std::string fullReplacement =
+                                            Replacement + " __attribute__((annotate(\"aiepolicy:" + policyVar + "\")))";
+                                        size_t spanLen = (closeParen + 1) - KeywordPos;
+                                        SourceCodeString.replace(KeywordPos, spanLen, fullReplacement);
+                                        KeywordPos += fullReplacement.size();
+                                        didPolicyReplace = true;
+                                    }
+                                }
+                            }
+                            if (!didPolicyReplace) {
+                                SourceCodeString.replace(KeywordPos, KeywordToReplace.size(), Replacement);
+                                KeywordPos += Replacement.size();
+                            }
 
                             // For __global__ functions, wrap body with #ifdef KERNEL_COMPILE
                             if (KeywordToReplace == "__global__") {
@@ -1973,20 +3335,259 @@ public:
                     // SpatialPolicy struct + port<T, Policy> system (C++20 struct NTTP)
                     // Types and port template only — policy constants are user-defined
                     ret += "namespace aie {\n";
-                    ret += "enum class Pattern  { Broadcast = 0, Scatter = 1, Multicast = 2, Gather = 3 };\n";
+                    ret += "enum class Pattern  { Broadcast = 0, Scatter = 1, Distribute = 1, Multicast = 2, Gather = "
+                           "3 };\n";
                     ret += "enum class Layout   { Row = 0, Col = 1, Grid = 2 };\n";
                     ret += "enum class Flow     { Default = 0, LeftToRight = 1, RightToLeft = 2 };\n";
-                    ret += "struct SpatialPolicy {\n";
-                    ret += "  Pattern pattern      = Pattern::Broadcast;\n";
-                    ret += "  Layout  distribution = Layout::Row;\n";
-                    ret += "  Flow    merge_order  = Flow::Default;\n";
-                    ret += "  int     pp_depth     = 2;\n";
-                    ret += "  int     max_buffer_bytes = 4096;\n";
-                    ret += "  int     tile_m       = 0;\n";
-                    ret += "  int     tile_n       = 0;\n";
-                    ret += "  int     tile_k       = 0;\n";
+                    ret += "enum class PadMaterialize { DDR = 0, Memtile = 1 };\n";
+                    ret += "enum class Im2col   { None = 0, Dma = 1 };\n";
+                    // Kept for back-compat (no longer policy fields):
+                    ret += "enum class LayoutTransform { None = 0, DmaShuffle = 1, CoreShuffle = 2 };\n";
+                    ret += "enum class TileMode { Partition = 0, Overlap = 1 };\n";
+                    // Objective — declarative optimization goal for a spatial space
+                    // (metadata only today; no autotuner/search yet).
+                    ret += "enum class Objective { MaxArrayUtil = 0, MinLatency = 1, MinDma = 2 };\n";
+                    ret += "struct Bytes { int value = 0; };\n";
+                    // tile_dim — structured per-dimension split descriptor that maps
+                    // 1:1 onto a #routing.level. Field order is contractual for AST
+                    // extraction:
+                    //   fullsize   (0): full PADDED dim length (raw shape source)
+                    //   tile_round (1): explicit outer round/group count (0 => derive)
+                    //   tile_size  (2): outer per-tile slice length
+                    //   stride     (3): outer step (overlap = tile_size - stride)
+                    //   padsize    (4): per-side pad (metadata/boundary only)
+                    //   slice_tiling (5): nested inner level (tile_level)
+                    // tile_level — nested second-level (on-core temporal) split on the
+                    // SAME axis as the parent tile_dim, mirroring #routing.level. A
+                    // by-value inner member (a struct cannot contain itself by value,
+                    // hence the separate type). Field order (tile_size=0, stride=1,
+                    // rounds=2) is contractual for AST extraction.
+                    ret += "struct tile_level {\n";
+                    ret += "  int tile_size = 0;\n";
+                    ret += "  int stride    = 0;\n";
+                    ret += "  int rounds    = 0;\n";
                     ret += "};\n";
-                    ret += "template<typename T, SpatialPolicy P> struct port { using type = T; };\n";
+                    ret += "struct tile_dim {\n";
+                    ret += "  int fullsize   = 0;\n";
+                    ret += "  int tile_round = 0;\n";
+                    ret += "  int tile_size  = 0;\n";
+                    ret += "  int stride     = 0;\n";
+                    ret += "  int padsize    = 0;\n";
+                    ret += "  tile_level slice_tiling;\n"; // nested inner level (field 5)
+                    ret += "};\n";
+                    // SpatialPolicy — 3-part orthogonal policy: array mapping
+                    // (map), materialization (mat), and resource/pipeline
+                    // schedule (sched). Field order (map=0, mat=1, sched=2) is
+                    // contractual for AST extraction. The struct name stays
+                    // `SpatialPolicy` so GemmSpace/Conv2dSpace field indices and
+                    // the `.policy = {...}` initializer syntax are untouched.
+                    ret += "struct SpatialMap {\n";
+                    ret += "  Pattern act         = Pattern::Broadcast;\n";
+                    ret += "  Pattern wgt         = Pattern::Broadcast;\n";
+                    ret += "  Layout  layout      = Layout::Row;\n";
+                    ret += "  Flow    merge_order = Flow::Default;\n";
+                    ret += "};\n";
+                    ret += "struct Materialize {\n";
+                    ret += "  PadMaterialize pad    = PadMaterialize::DDR;\n";
+                    ret += "  Im2col         im2col = Im2col::None;\n";
+                    ret += "};\n";
+                    ret += "struct Schedule {\n";
+                    ret += "  int   pp_depth  = 2;\n";
+                    ret += "  Bytes l1_budget = Bytes{32*1024};\n";
+                    ret += "};\n";
+                    ret += "struct SpatialPolicy {\n";
+                    ret += "  SpatialMap  map;\n";
+                    ret += "  Materialize mat;\n";
+                    ret += "  Schedule    sched;\n";
+                    ret += "};\n";
+                    // GlobalPolicy — per-kernel GLOBAL (module-level) policy, NOT a
+                    // per-port space. A file-scope constexpr instance named
+                    // `<kernelName>_policy` binds by name convention to that kernel.
+                    // fullconnect_auto: 1 (default) = full-connect M×N cartesian DMA
+                    // repeat (A repeats while B cycles); 0 = no repeat (A and B each
+                    // sent once, following the tiling/halo distribution).
+                    ret += "struct GlobalPolicy {\n";
+                    ret += "  int fullconnect_auto = 1;\n";
+                    ret += "};\n";
+                    // GemmSpace — composes a SpatialPolicy with the GEMM iteration
+                    // space. Field order is contractual for AST extraction:
+                    // 0 policy, 1 m, 2 n, 3 k (legacy/global GEMM dims, also used
+                    // by conv-halo path), 4 d1, 5 d2, 6 d3, 7 d4 (NEW per-port
+                    // 2D/3D/4D dims). When d1/d2 are set the port describes its OWN
+                    // matrix (role-aware); otherwise the legacy m/n/k path is used.
+                    // Keeping m/n/k means conv2d's positional field indices
+                    // (1,2,3) stay untouched. d3/d4 are bookkeeping/coalescing dims
+                    // (e.g. d4 carries the padded channel coverage for the filter).
+                    ret += "struct GemmSpace {\n";
+                    ret += "  SpatialPolicy policy;\n";
+                    ret += "  tile_dim m;\n";
+                    ret += "  tile_dim n;\n";
+                    ret += "  tile_dim k;\n";
+                    ret += "  tile_dim d1;\n";
+                    ret += "  tile_dim d2;\n";
+                    ret += "  tile_dim d3;\n";
+                    ret += "  tile_dim d4;\n";
+                    ret += "};\n";
+                    // Conv2dSpace — composes a SpatialPolicy with the conv iteration
+                    // space. Field order is contractual: 0 policy, 1 ih, 2 iw,
+                    // 3 ic, 4 oc, 5 kh, 6 kw, 7 stride, 8 pad, 9 m. ih/iw carry the
+                    // EXACT input spatial dims (output OH/OW are derived via the
+                    // forward conv formula) so strided convs stay lossless. Field 9
+                    // (m) is the optional explicit spatial-halo split (size=halo
+                    // slice rows, stride=halo step, groups=tile-rows); when omitted
+                    // (size==0) the OH/HW_ROWS auto-derivation is used instead.
+                    ret += "struct Conv2dSpace {\n";
+                    ret += "  SpatialPolicy policy;\n";
+                    ret += "  tile_dim ih;\n";
+                    ret += "  tile_dim iw;\n";
+                    ret += "  tile_dim ic;\n";
+                    ret += "  tile_dim oc;\n";
+                    ret += "  tile_dim kh;\n";
+                    ret += "  tile_dim kw;\n";
+                    ret += "  int stride = 1;\n";
+                    ret += "  int pad = 0;\n";
+                    ret += "  tile_dim m;\n";
+                    ret += "};\n";
+                    // ConvGeom — raw conv2d geometry for the declarative
+                    // Conv2dSpace_Spatial. Field order is contractual for AST
+                    // extraction: 0 in_h,1 in_w,2 cin,3 cout,4 ksize,5 S,
+                    // 6 pad_lo,7 pad_hi,8 cin_aligned. cin_aligned is metadata
+                    // only (does NOT change the contraction K or raw_wc).
+                    // NOTE: the kernel-size field is `ksize` (not `K`) to avoid
+                    // colliding with a user `#define K ...` (e.g. GEMM K macro).
+                    ret += "struct ConvGeom {\n";
+                    ret += "  int in_h=0; int in_w=0; int cin=0; int cout=0;\n";
+                    ret += "  int ksize=0; int S=1; int pad_lo=0; int pad_hi=0; int cin_aligned=0;\n";
+                    ret += "};\n";
+                    // Conv2dSpace_Spatial — declarative spatial-halo conv space.
+                    // The user describes raw geometry (geom) + a desired output
+                    // tile (out_tile_h/out_tile_w) + an objective; the compiler
+                    // derives the spatial-halo split deterministically. Field
+                    // order is contractual: 0 geom,1 out_tile_h,2 out_tile_w,
+                    // 3 objective,4 policy (policy is field 4, not 0). Fields
+                    // 5 d1, 6 d2 are the NEW explicit halo descriptors: d1 =
+                    // height halo (split across mesh ROWS), d2 = width*C halo
+                    // (split across mesh COLS). When d1.tile_size>0 the explicit
+                    // descriptor OVERRIDES the out_tile_h/out_tile_w derivation.
+                    // Legacy .out_tile_h forms leave d1/d2 zero (no override).
+                    ret += "struct Conv2dSpace_Spatial {\n";
+                    ret += "  ConvGeom      geom;\n";
+                    ret += "  int           out_tile_h = 0;\n";
+                    ret += "  int           out_tile_w = 0;\n";
+                    ret += "  Objective     objective  = Objective::MaxArrayUtil;\n";
+                    ret += "  SpatialPolicy policy;\n";
+                    ret += "  tile_dim      d1;\n";
+                    ret += "  tile_dim      d2;\n";
+                    ret += "};\n";
+                    // DmaTransform — general multi-dim DMA descriptor with factory methods
+                    ret += "struct DmaTransform {\n";
+                    ret += "  struct Dim { int stride; int wrap; };\n";
+                    ret += "  Dim dims[4] = {};\n";
+                    ret += "  int num_dims = 0;\n";
+                    ret += "  int iter_step = 0;\n";
+                    ret += "  int iter_wrap = 0;\n";
+                    ret += "  int mode = 0;\n";       // 0 = flat/im2col-by-dims, 1 = spatial_halo
+                    ret += "  int halo_slice = 0;\n"; // input rows per tile-row
+                    ret += "  int halo_step = 0;\n";  // row stride between tile-rows
+                    ret += "  int split_dim = 0;\n";  // dim carrying the halo split
+                    ret += "  int raw_h = 0;\n";      // raw input H
+                    ret += "  int raw_wc = 0;\n";     // raw input W*C
+                    ret += "  int kernel_h = 0;\n";   // KERNEL_H
+                    ret += "  int kernel_w = 0;\n";   // KERNEL_W
+                    ret += "  int input_c = 0;\n";    // INPUT_C
+                    ret += "  int stride = 0;\n";     // STRIDE
+                    ret += "  int ow = 0;\n";         // OUTPUT_W
+                    ret += "  int oh_per_row = 0;\n"; // OUTPUT_H / HW_ROWS
+                    ret += "  static constexpr DmaTransform flat() { return {}; }\n";
+                    ret += "  static constexpr DmaTransform im2col(int H, int W, int C,\n";
+                    ret += "      int KH, int KW, int S, int P) {\n";
+                    ret += "    DmaTransform d;\n";
+                    ret += "    int OW = (W + 2*P - KW) / S + 1;\n";
+                    ret += "    int OH = (H + 2*P - KH) / S + 1;\n";
+                    ret += "    d.dims[0] = {1, KW * C}; d.dims[1] = {W * C, KH}; d.dims[2] = {S * C, OW};\n";
+                    ret += "    d.num_dims = 3;\n";
+                    ret += "    d.iter_step = W * C * S; d.iter_wrap = OH;\n";
+                    ret += "    return d;\n";
+                    ret += "  }\n";
+                    ret += "  static constexpr DmaTransform dilated_im2col(int H, int W, int C,\n";
+                    ret += "      int KH, int KW, int S, int P, int D) {\n";
+                    ret += "    DmaTransform d;\n";
+                    ret += "    int OW = (W + 2*P - D*(KW-1) - 1) / S + 1;\n";
+                    ret += "    int OH = (H + 2*P - D*(KH-1) - 1) / S + 1;\n";
+                    ret += "    d.dims[0] = {D * C, KW}; d.dims[1] = {W * C * D, KH}; d.dims[2] = {S * C, OW};\n";
+                    ret += "    d.num_dims = 3;\n";
+                    ret += "    d.iter_step = W * C * S; d.iter_wrap = OH;\n";
+                    ret += "    return d;\n";
+                    ret += "  }\n";
+                    ret += "  static constexpr DmaTransform pool(int H, int W, int C,\n";
+                    ret += "      int KH, int KW, int S, int P) {\n";
+                    ret += "    return im2col(H, W, C, KH, KW, S, P);\n";
+                    ret += "  }\n";
+                    ret += "  static constexpr DmaTransform depthwise_im2col(int H, int W, int C,\n";
+                    ret += "      int KH, int KW, int S, int P, int G) {\n";
+                    ret += "    DmaTransform d;\n";
+                    ret += "    int CPG = C / G;\n";
+                    ret += "    int OW = (W + 2*P - KW) / S + 1;\n";
+                    ret += "    int OH = (H + 2*P - KH) / S + 1;\n";
+                    ret += "    d.dims[0] = {1, KW * CPG}; d.dims[1] = {W * C, KH}; d.dims[2] = {S * C, OW};\n";
+                    ret += "    d.num_dims = 3;\n";
+                    ret += "    d.iter_step = W * C * S; d.iter_wrap = OH;\n";
+                    ret += "    return d;\n";
+                    ret += "  }\n";
+                    ret += "  static constexpr DmaTransform transpose(int rows, int cols) {\n";
+                    ret += "    DmaTransform d;\n";
+                    ret += "    d.dims[0] = {cols, rows}; d.dims[1] = {1, cols};\n";
+                    ret += "    d.num_dims = 2;\n";
+                    ret += "    return d;\n";
+                    ret += "  }\n";
+                    ret += "  static constexpr DmaTransform chw_to_hwc(int C, int H, int W) {\n";
+                    ret += "    DmaTransform d;\n";
+                    ret += "    d.dims[0] = {H * W, C};\n";
+                    ret += "    d.dims[1] = {1, W};\n";
+                    ret += "    d.num_dims = 2;\n";
+                    ret += "    d.iter_step = W;\n";
+                    ret += "    d.iter_wrap = H;\n";
+                    ret += "    return d;\n";
+                    ret += "  }\n";
+                    ret += "  static constexpr DmaTransform hwc_to_chw(int H, int W, int C) {\n";
+                    ret += "    DmaTransform d;\n";
+                    ret += "    d.dims[0] = {C, W}; d.dims[1] = {W * C, H};\n";
+                    ret += "    d.num_dims = 2;\n";
+                    ret += "    d.iter_step = 1; d.iter_wrap = C;\n";
+                    ret += "    return d;\n";
+                    ret += "  }\n";
+                    // Spatial-halo conv tiling: distribute the RAW input [H, W*C] across
+                    // R tile-rows as overlapping contiguous row-blocks. Each tile-row owns
+                    // OH/R output rows -> needs ((OH/R)-1)*S + KH input rows (halo_slice),
+                    // advancing by (OH/R)*S input rows per tile-row (halo_step). The shim
+                    // BD stays flat; overlap is realized via per-tile DDR base offsets.
+                    ret += "  static constexpr DmaTransform spatial(int H, int W, int C,\n";
+                    ret += "      int KH, int KW, int S, int P, int R) {\n";
+                    ret += "    DmaTransform d;\n";
+                    ret += "    int OH = (H + 2*P - KH) / S + 1;\n";
+                    ret += "    int oh_per_row = OH / R;\n";
+                    ret += "    d.mode = 1;\n";
+                    ret += "    d.halo_slice = (oh_per_row - 1) * S + KH;\n";
+                    ret += "    d.halo_step  = oh_per_row * S;\n";
+                    ret += "    d.split_dim  = 0;\n";
+                    ret += "    d.raw_h  = H;\n";
+                    ret += "    d.raw_wc = W * C;\n";
+                    ret += "    d.kernel_h = KH; d.kernel_w = KW; d.input_c = C; d.stride = S;\n";
+                    ret += "    d.ow = (W + 2*P - KW) / S + 1; d.oh_per_row = oh_per_row;\n";
+                    ret += "    return d;\n";
+                    ret += "  }\n";
+                    ret += "};\n";
+                    // ConvTiling — convenience namespace-like struct exposing spatial().
+                    ret += "struct ConvTiling {\n";
+                    ret += "  static constexpr DmaTransform spatial(int H, int W, int C,\n";
+                    ret += "      int KH, int KW, int S, int P, int R) {\n";
+                    ret += "    return DmaTransform::spatial(H, W, C, KH, KW, S, P, R);\n";
+                    ret += "  }\n";
+                    ret += "};\n";
+                    // port — Space NTTP accepts a bare SpatialPolicy (legacy),
+                    // a GemmSpace, or a Conv2dSpace (all C++20 structural NTTP types).
+                    ret += "template<typename T, auto Space, DmaTransform D = DmaTransform::flat()> struct port { "
+                           "using type = T; };\n";
                     // Built-in query function stubs — Clang parses these but the compiler
                     // replaces the calls with computed integer literals during kernel body rewriting.
                     ret += "template<typename T> constexpr int get_num_rounds(T) { return 0; }\n";
@@ -2002,6 +3603,16 @@ public:
                     ret += "constexpr int get_k_rounds() { return 0; }\n";
                     ret += "constexpr int get_spatial_m_rounds() { return 0; }\n";
                     ret += "constexpr int get_spatial_n_rounds() { return 0; }\n";
+                    ret += "template<typename T> constexpr int get_spatial_multiple_rounds(T) { return 0; }\n";
+                    // Conv accessors (spatial-halo kernel): resolved to integer literals
+                    // during kernel body rewriting (DerivedTilingParams).
+                    ret += "constexpr int get_kernel_h() { return 0; }\n";
+                    ret += "constexpr int get_kernel_w() { return 0; }\n";
+                    ret += "constexpr int get_input_c() { return 0; }\n";
+                    ret += "constexpr int get_stride() { return 0; }\n";
+                    ret += "constexpr int get_ow() { return 0; }\n";
+                    ret += "constexpr int get_oh_per_row() { return 0; }\n";
+                    ret += "constexpr int get_halo_slice() { return 0; }\n";
                     ret += "}\n";
                     ret += "struct aiePartition {\n";
                     ret += "    int startCol, endCol, startRow, endRow;\n";
@@ -2030,6 +3641,11 @@ public:
                     ret += "        _dev = __Runtime_init_mesh_partition(meshId, p.startCol, p.endCol - p.startCol + "
                            "1);\n";
                     ret += "        return aieMesh{rows, cols, p, meshId};\n";
+                    ret += "    }\n";
+                    ret += "    aieMesh partition(int rows, int cols) {\n";
+                    ret += "        int meshId = nextMeshId++;\n";
+                    ret += "        _dev = __Runtime_init_mesh_partition(meshId, 0, cols);\n";
+                    ret += "        return aieMesh{rows, cols, {0, cols - 1, 0, rows - 1}, meshId};\n";
                     ret += "    }\n";
                     ret += "    void* alloc(__SIZE_TYPE__ size) { return __Runtime_alloc_buffer(_dev, size); }\n";
                     ret += "    void free(void* ptr) { __Runtime_free_buffer(_dev, ptr); }\n";
@@ -2318,26 +3934,73 @@ public:
                     // Set K-round module attributes for downstream DMA passes
                     if (mkd.derivedParams.valid && mkd.derivedParams.kRounds > 1) {
                         mlir::OpBuilder attrBuilder(&ctx);
+                        // K-accumulation attrs are orthogonal to M×N tiling — always emit.
                         module->setAttr("routing.effective_k",
                                         attrBuilder.getI64IntegerAttr(mkd.derivedParams.effectiveK));
                         module->setAttr("routing.k_rounds", attrBuilder.getI64IntegerAttr(mkd.derivedParams.kRounds));
                         module->setAttr("routing.full_k", attrBuilder.getI64IntegerAttr(mkd.derivedParams.kDim));
-                        module->setAttr("routing.tile_m", attrBuilder.getI64IntegerAttr(mkd.derivedParams.tileM));
-                        module->setAttr("routing.tile_rows", attrBuilder.getI64IntegerAttr(mkd.derivedParams.tileRows));
-                        module->setAttr("routing.m_rounds",
-                                        attrBuilder.getI64IntegerAttr(mkd.derivedParams.spatialMRounds));
-                        module->setAttr("routing.tile_n", attrBuilder.getI64IntegerAttr(mkd.derivedParams.tileN));
-                        module->setAttr("routing.tile_cols", attrBuilder.getI64IntegerAttr(mkd.derivedParams.tileCols));
-                        module->setAttr("routing.n_rounds",
-                                        attrBuilder.getI64IntegerAttr(mkd.derivedParams.spatialNRounds));
-                        llvm::outs() << "[TilingLinalg] Set K-round module attrs: effective_k="
-                                     << mkd.derivedParams.effectiveK << " k_rounds=" << mkd.derivedParams.kRounds
-                                     << " full_k=" << mkd.derivedParams.kDim << " tile_m=" << mkd.derivedParams.tileM
-                                     << " tile_rows=" << mkd.derivedParams.tileRows
-                                     << " m_rounds=" << mkd.derivedParams.spatialMRounds
-                                     << " tile_n=" << mkd.derivedParams.tileN
-                                     << " tile_cols=" << mkd.derivedParams.tileCols
-                                     << " n_rounds=" << mkd.derivedParams.spatialNRounds << "\n";
+                        // M×N cartesian repeat / spatial sub-tiling attrs are only meaningful
+                        // when fullconnect_auto is enabled. Dropping them for fullconnect_auto=0
+                        // lets the downstream passes fall through to the pure-K-round path.
+                        if (mkd.fullConnectAuto) {
+                            module->setAttr("routing.tile_m", attrBuilder.getI64IntegerAttr(mkd.derivedParams.tileM));
+                            module->setAttr("routing.tile_rows",
+                                            attrBuilder.getI64IntegerAttr(mkd.derivedParams.tileRows));
+                            module->setAttr("routing.m_rounds",
+                                            attrBuilder.getI64IntegerAttr(mkd.derivedParams.spatialMRounds));
+                            module->setAttr("routing.tile_n", attrBuilder.getI64IntegerAttr(mkd.derivedParams.tileN));
+                            module->setAttr("routing.tile_cols",
+                                            attrBuilder.getI64IntegerAttr(mkd.derivedParams.tileCols));
+                            module->setAttr("routing.n_rounds",
+                                            attrBuilder.getI64IntegerAttr(mkd.derivedParams.spatialNRounds));
+                            llvm::outs() << "[TilingLinalg] Set K-round module attrs: effective_k="
+                                         << mkd.derivedParams.effectiveK << " k_rounds=" << mkd.derivedParams.kRounds
+                                         << " full_k=" << mkd.derivedParams.kDim
+                                         << " tile_m=" << mkd.derivedParams.tileM
+                                         << " tile_rows=" << mkd.derivedParams.tileRows
+                                         << " m_rounds=" << mkd.derivedParams.spatialMRounds
+                                         << " tile_n=" << mkd.derivedParams.tileN
+                                         << " tile_cols=" << mkd.derivedParams.tileCols
+                                         << " n_rounds=" << mkd.derivedParams.spatialNRounds << "\n";
+                        } else {
+                            llvm::outs() << "[TilingLinalg] Set K-round module attrs (fullconnect_auto=0, "
+                                            "tile_*/m_rounds/n_rounds dropped): effective_k="
+                                         << mkd.derivedParams.effectiveK << " k_rounds=" << mkd.derivedParams.kRounds
+                                         << " full_k=" << mkd.derivedParams.kDim << "\n";
+                        }
+                    }
+
+                    // Spatial-halo conv: carry the contiguous IFM slab size so the
+                    // kernel pass allocates the input window (BUF_SZ_IN/window_init)
+                    // to match the kernel body's buf_sz (= halo_slice * raw_wc).
+                    // Set unconditionally (kRounds may be 1 for conv2d), unlike the
+                    // K-round attrs above.
+                    if (mkd.derivedParams.valid && mkd.derivedParams.convHaloBufSize > 0) {
+                        mlir::OpBuilder haloAttrBuilder(&ctx);
+                        module->setAttr("routing.spatial_halo_buf_size",
+                                        haloAttrBuilder.getI64IntegerAttr(mkd.derivedParams.convHaloBufSize));
+                        llvm::outs() << "[TilingLinalg] Set spatial_halo_buf_size=" << mkd.derivedParams.convHaloBufSize
+                                     << "\n";
+                        // OUTPUT per-slab division count (see single-kernel path for the
+                        // rationale): the conv2d_spatial kernel always emits one output
+                        // slab per on-core round (spatialMRounds*spatialNRounds) regardless
+                        // of fullconnect_auto, so emit the divisor UNCONDITIONALLY.
+                        int64_t outRounds = mkd.derivedParams.spatialMRounds * mkd.derivedParams.spatialNRounds;
+                        if (outRounds > 1) {
+                            module->setAttr("routing.spatial_out_rounds", haloAttrBuilder.getI64IntegerAttr(outRounds));
+                            llvm::outs() << "[TilingLinalg] Set spatial_out_rounds=" << outRounds << "\n";
+                        }
+                    }
+
+                    // Full-connect auto flag (aie::GlobalPolicy <kernel>_policy).
+                    // Set UNCONDITIONALLY (applies even when kRounds==1). 1 = default
+                    // M×N cartesian DMA repeat; 0 = A/B each sent once.
+                    {
+                        mlir::OpBuilder fcAttrBuilder(&ctx);
+                        module->setAttr("routing.fullconnect_auto",
+                                        fcAttrBuilder.getI64IntegerAttr(mkd.fullConnectAuto ? 1 : 0));
+                        llvm::outs() << "[TilingLinalg] Set fullconnect_auto=" << (mkd.fullConnectAuto ? 1 : 0)
+                                     << " for kernel " << mkd.kernelName << "\n";
                     }
 
                     // Replace aie::get_*() calls in kernel body with computed integer literals
@@ -2352,8 +4015,10 @@ public:
                             paramToPort[mkd.portVarNames[pi]] = pi;
                         }
 
-                        // Replace aie::get_num_rounds(win_x) and aie::get_buffer_size(win_x)
-                        for (const auto &funcName : {"aie::get_num_rounds", "aie::get_buffer_size"}) {
+                        // Replace per-port queries: aie::get_num_rounds(win_x),
+                        // aie::get_buffer_size(win_x), aie::get_spatial_multiple_rounds(win_x)
+                        for (const auto &funcName :
+                             {"aie::get_num_rounds", "aie::get_buffer_size", "aie::get_spatial_multiple_rounds"}) {
                             std::string prefix = std::string(funcName) + "(";
                             size_t pos = 0;
                             while ((pos = resolvedBody.find(prefix, pos)) != std::string::npos) {
@@ -2371,8 +4036,10 @@ public:
                                     int64_t val;
                                     if (std::string(funcName) == "aie::get_num_rounds")
                                         val = mkd.derivedParams.portParams[it->second].numRounds;
-                                    else
+                                    else if (std::string(funcName) == "aie::get_buffer_size")
                                         val = mkd.derivedParams.portParams[it->second].bufferSize;
+                                    else
+                                        val = mkd.derivedParams.portParams[it->second].spatialRounds;
                                     std::string replacement = std::to_string(val);
                                     resolvedBody.replace(pos, argEnd + 1 - pos, replacement);
                                     pos += replacement.size();
@@ -2413,6 +4080,14 @@ public:
                         replaceSimpleCall("aie::get_k_rounds()", mkd.derivedParams.kRounds);
                         replaceSimpleCall("aie::get_spatial_m_rounds()", mkd.derivedParams.spatialMRounds);
                         replaceSimpleCall("aie::get_spatial_n_rounds()", mkd.derivedParams.spatialNRounds);
+                        // Conv (spatial-halo) accessors
+                        replaceSimpleCall("aie::get_kernel_h()", mkd.derivedParams.convKernelH);
+                        replaceSimpleCall("aie::get_kernel_w()", mkd.derivedParams.convKernelW);
+                        replaceSimpleCall("aie::get_input_c()", mkd.derivedParams.convInputC);
+                        replaceSimpleCall("aie::get_stride()", mkd.derivedParams.convStride);
+                        replaceSimpleCall("aie::get_ow()", mkd.derivedParams.convOW);
+                        replaceSimpleCall("aie::get_oh_per_row()", mkd.derivedParams.convOHPerRow);
+                        replaceSimpleCall("aie::get_halo_slice()", mkd.derivedParams.convHaloSlice);
                     }
 
                     // Prepend user macros to kernel body
@@ -2459,20 +4134,195 @@ public:
                     stream << "#include <cstring>\n";
                     // Re-emit SpatialPolicy types so user source constexpr definitions compile
                     stream << "namespace aie {\n";
-                    stream << "enum class Pattern  { Broadcast = 0, Scatter = 1, Multicast = 2, Gather = 3 };\n";
+                    stream << "enum class Pattern  { Broadcast = 0, Scatter = 1, Distribute = 1, Multicast = 2, Gather "
+                              "= 3 };\n";
                     stream << "enum class Layout   { Row = 0, Col = 1, Grid = 2 };\n";
                     stream << "enum class Flow     { Default = 0, LeftToRight = 1, RightToLeft = 2 };\n";
-                    stream << "struct SpatialPolicy {\n";
-                    stream << "  Pattern pattern      = Pattern::Broadcast;\n";
-                    stream << "  Layout  distribution = Layout::Row;\n";
-                    stream << "  Flow    merge_order  = Flow::Default;\n";
-                    stream << "  int     pp_depth     = 2;\n";
-                    stream << "  int     max_buffer_bytes = 4096;\n";
-                    stream << "  int     tile_m       = 0;\n";
-                    stream << "  int     tile_n       = 0;\n";
-                    stream << "  int     tile_k       = 0;\n";
+                    stream << "enum class PadMaterialize { DDR = 0, Memtile = 1 };\n";
+                    stream << "enum class Im2col   { None = 0, Dma = 1 };\n";
+                    stream << "enum class LayoutTransform { None = 0, DmaShuffle = 1, CoreShuffle = 2 };\n";
+                    stream << "enum class TileMode { Partition = 0, Overlap = 1 };\n";
+                    stream << "enum class Objective { MaxArrayUtil = 0, MinLatency = 1, MinDma = 2 };\n";
+                    stream << "struct Bytes { int value = 0; };\n";
+                    // tile_level — nested second-level (on-core temporal) split (see
+                    // Clang stub above). Field order (tile_size=0, stride=1, rounds=2).
+                    stream << "struct tile_level {\n";
+                    stream << "  int tile_size = 0;\n";
+                    stream << "  int stride    = 0;\n";
+                    stream << "  int rounds    = 0;\n";
                     stream << "};\n";
-                    stream << "template<typename T, SpatialPolicy P> struct port { using type = T; };\n";
+                    stream << "struct tile_dim {\n";
+                    stream << "  int fullsize   = 0;\n";
+                    stream << "  int tile_round = 0;\n";
+                    stream << "  int tile_size  = 0;\n";
+                    stream << "  int stride     = 0;\n";
+                    stream << "  int padsize    = 0;\n";
+                    stream << "  tile_level slice_tiling;\n"; // nested inner level (field 5)
+                    stream << "};\n";
+                    // SpatialPolicy — 3-part orthogonal policy (map/mat/sched).
+                    stream << "struct SpatialMap {\n";
+                    stream << "  Pattern act         = Pattern::Broadcast;\n";
+                    stream << "  Pattern wgt         = Pattern::Broadcast;\n";
+                    stream << "  Layout  layout      = Layout::Row;\n";
+                    stream << "  Flow    merge_order = Flow::Default;\n";
+                    stream << "};\n";
+                    stream << "struct Materialize {\n";
+                    stream << "  PadMaterialize pad    = PadMaterialize::DDR;\n";
+                    stream << "  Im2col         im2col = Im2col::None;\n";
+                    stream << "};\n";
+                    stream << "struct Schedule {\n";
+                    stream << "  int   pp_depth  = 2;\n";
+                    stream << "  Bytes l1_budget = Bytes{32*1024};\n";
+                    stream << "};\n";
+                    stream << "struct SpatialPolicy {\n";
+                    stream << "  SpatialMap  map;\n";
+                    stream << "  Materialize mat;\n";
+                    stream << "  Schedule    sched;\n";
+                    stream << "};\n";
+                    // GlobalPolicy — per-kernel GLOBAL policy bound by name convention
+                    // (<kernelName>_policy). fullconnect_auto: 1 (default) = M×N repeat,
+                    // 0 = no repeat (A/B each sent once).
+                    stream << "struct GlobalPolicy {\n";
+                    stream << "  int fullconnect_auto = 1;\n";
+                    stream << "};\n";
+                    // GemmSpace — policy + GEMM iteration space
+                    // (0 policy,1 m,2 n,3 k legacy; 4 d1,5 d2,6 d3,7 d4 per-port 2D/3D/4D).
+                    stream << "struct GemmSpace {\n";
+                    stream << "  SpatialPolicy policy;\n";
+                    stream << "  tile_dim m;\n";
+                    stream << "  tile_dim n;\n";
+                    stream << "  tile_dim k;\n";
+                    stream << "  tile_dim d1;\n";
+                    stream << "  tile_dim d2;\n";
+                    stream << "  tile_dim d3;\n";
+                    stream << "  tile_dim d4;\n";
+                    stream << "};\n";
+                    // Conv2dSpace — policy + conv iteration space; ih/iw carry the
+                    // EXACT input spatial dims (OH/OW derived via forward conv).
+                    // (0 policy,1 ih,2 iw,3 ic,4 oc,5 kh,6 kw,7 stride,8 pad,9 m).
+                    // Field 9 (m) is the optional explicit spatial-halo split.
+                    stream << "struct Conv2dSpace {\n";
+                    stream << "  SpatialPolicy policy;\n";
+                    stream << "  tile_dim ih;\n";
+                    stream << "  tile_dim iw;\n";
+                    stream << "  tile_dim ic;\n";
+                    stream << "  tile_dim oc;\n";
+                    stream << "  tile_dim kh;\n";
+                    stream << "  tile_dim kw;\n";
+                    stream << "  int stride = 1;\n";
+                    stream << "  int pad = 0;\n";
+                    stream << "  tile_dim m;\n";
+                    stream << "};\n";
+                    // ConvGeom + Conv2dSpace_Spatial — declarative spatial-halo
+                    // conv space (geom field order 0 in_h,1 in_w,2 cin,3 cout,
+                    // 4 ksize,5 S,6 pad_lo,7 pad_hi,8 cin_aligned; space field
+                    // order 0 geom,1 out_tile_h,2 out_tile_w,3 objective,4 policy).
+                    stream << "struct ConvGeom {\n";
+                    stream << "  int in_h=0; int in_w=0; int cin=0; int cout=0;\n";
+                    stream << "  int ksize=0; int S=1; int pad_lo=0; int pad_hi=0; int cin_aligned=0;\n";
+                    stream << "};\n";
+                    stream << "struct Conv2dSpace_Spatial {\n";
+                    stream << "  ConvGeom      geom;\n";
+                    stream << "  int           out_tile_h = 0;\n";
+                    stream << "  int           out_tile_w = 0;\n";
+                    stream << "  Objective     objective  = Objective::MaxArrayUtil;\n";
+                    stream << "  SpatialPolicy policy;\n";
+                    stream << "  tile_dim      d1;\n";
+                    stream << "  tile_dim      d2;\n";
+                    stream << "};\n";
+                    // DmaTransform — general multi-dim DMA descriptor with factory methods
+                    stream << "struct DmaTransform {\n";
+                    stream << "  struct Dim { int stride; int wrap; };\n";
+                    stream << "  Dim dims[4] = {};\n";
+                    stream << "  int num_dims = 0;\n";
+                    stream << "  int iter_step = 0;\n";
+                    stream << "  int iter_wrap = 0;\n";
+                    stream << "  int mode = 0;\n";
+                    stream << "  int halo_slice = 0;\n";
+                    stream << "  int halo_step = 0;\n";
+                    stream << "  int split_dim = 0;\n";
+                    stream << "  int raw_h = 0;\n";
+                    stream << "  int raw_wc = 0;\n";
+                    stream << "  static constexpr DmaTransform flat() { return {}; }\n";
+                    stream << "  static constexpr DmaTransform im2col(int H, int W, int C,\n";
+                    stream << "      int KH, int KW, int S, int P) {\n";
+                    stream << "    DmaTransform d;\n";
+                    stream << "    int OW = (W + 2*P - KW) / S + 1;\n";
+                    stream << "    int OH = (H + 2*P - KH) / S + 1;\n";
+                    stream << "    d.dims[0] = {1, KW * C}; d.dims[1] = {W * C, KH}; d.dims[2] = {S * C, OW};\n";
+                    stream << "    d.num_dims = 3;\n";
+                    stream << "    d.iter_step = W * C * S; d.iter_wrap = OH;\n";
+                    stream << "    return d;\n";
+                    stream << "  }\n";
+                    stream << "  static constexpr DmaTransform dilated_im2col(int H, int W, int C,\n";
+                    stream << "      int KH, int KW, int S, int P, int D) {\n";
+                    stream << "    DmaTransform d;\n";
+                    stream << "    int OW = (W + 2*P - D*(KW-1) - 1) / S + 1;\n";
+                    stream << "    int OH = (H + 2*P - D*(KH-1) - 1) / S + 1;\n";
+                    stream << "    d.dims[0] = {D * C, KW}; d.dims[1] = {W * C * D, KH}; d.dims[2] = {S * C, OW};\n";
+                    stream << "    d.num_dims = 3;\n";
+                    stream << "    d.iter_step = W * C * S; d.iter_wrap = OH;\n";
+                    stream << "    return d;\n";
+                    stream << "  }\n";
+                    stream << "  static constexpr DmaTransform pool(int H, int W, int C,\n";
+                    stream << "      int KH, int KW, int S, int P) {\n";
+                    stream << "    return im2col(H, W, C, KH, KW, S, P);\n";
+                    stream << "  }\n";
+                    stream << "  static constexpr DmaTransform depthwise_im2col(int H, int W, int C,\n";
+                    stream << "      int KH, int KW, int S, int P, int G) {\n";
+                    stream << "    DmaTransform d;\n";
+                    stream << "    int CPG = C / G;\n";
+                    stream << "    int OW = (W + 2*P - KW) / S + 1;\n";
+                    stream << "    int OH = (H + 2*P - KH) / S + 1;\n";
+                    stream << "    d.dims[0] = {1, KW * CPG}; d.dims[1] = {W * C, KH}; d.dims[2] = {S * C, OW};\n";
+                    stream << "    d.num_dims = 3;\n";
+                    stream << "    d.iter_step = W * C * S; d.iter_wrap = OH;\n";
+                    stream << "    return d;\n";
+                    stream << "  }\n";
+                    stream << "  static constexpr DmaTransform transpose(int rows, int cols) {\n";
+                    stream << "    DmaTransform d;\n";
+                    stream << "    d.dims[0] = {cols, rows}; d.dims[1] = {1, cols};\n";
+                    stream << "    d.num_dims = 2;\n";
+                    stream << "    return d;\n";
+                    stream << "  }\n";
+                    stream << "  static constexpr DmaTransform chw_to_hwc(int C, int H, int W) {\n";
+                    stream << "    DmaTransform d;\n";
+                    stream << "    d.dims[0] = {H * W, C};\n";
+                    stream << "    d.dims[1] = {1, W};\n";
+                    stream << "    d.num_dims = 2;\n";
+                    stream << "    d.iter_step = W;\n";
+                    stream << "    d.iter_wrap = H;\n";
+                    stream << "    return d;\n";
+                    stream << "  }\n";
+                    stream << "  static constexpr DmaTransform hwc_to_chw(int H, int W, int C) {\n";
+                    stream << "    DmaTransform d;\n";
+                    stream << "    d.dims[0] = {C, W}; d.dims[1] = {W * C, H};\n";
+                    stream << "    d.num_dims = 2;\n";
+                    stream << "    d.iter_step = 1; d.iter_wrap = C;\n";
+                    stream << "    return d;\n";
+                    stream << "  }\n";
+                    stream << "  static constexpr DmaTransform spatial(int H, int W, int C,\n";
+                    stream << "      int KH, int KW, int S, int P, int R) {\n";
+                    stream << "    DmaTransform d;\n";
+                    stream << "    int OH = (H + 2*P - KH) / S + 1;\n";
+                    stream << "    int oh_per_row = OH / R;\n";
+                    stream << "    d.mode = 1;\n";
+                    stream << "    d.halo_slice = (oh_per_row - 1) * S + KH;\n";
+                    stream << "    d.halo_step  = oh_per_row * S;\n";
+                    stream << "    d.split_dim  = 0;\n";
+                    stream << "    d.raw_h  = H;\n";
+                    stream << "    d.raw_wc = W * C;\n";
+                    stream << "    return d;\n";
+                    stream << "  }\n";
+                    stream << "};\n";
+                    stream << "struct ConvTiling {\n";
+                    stream << "  static constexpr DmaTransform spatial(int H, int W, int C,\n";
+                    stream << "      int KH, int KW, int S, int P, int R) {\n";
+                    stream << "    return DmaTransform::spatial(H, W, C, KH, KW, S, P, R);\n";
+                    stream << "  }\n";
+                    stream << "};\n";
+                    stream << "template<typename T, auto Space, DmaTransform D = DmaTransform::flat()> struct "
+                              "port { using type = T; };\n";
                     stream << "template<typename T> constexpr int get_num_rounds(T) { return 0; }\n";
                     stream << "template<typename T> constexpr int get_buffer_size(T) { return 0; }\n";
                     stream << "constexpr int get_tile_rows() { return 0; }\n";
@@ -2486,6 +4336,14 @@ public:
                     stream << "constexpr int get_k_rounds() { return 0; }\n";
                     stream << "constexpr int get_spatial_m_rounds() { return 0; }\n";
                     stream << "constexpr int get_spatial_n_rounds() { return 0; }\n";
+                    stream << "template<typename T> constexpr int get_spatial_multiple_rounds(T) { return 0; }\n";
+                    stream << "constexpr int get_kernel_h() { return 0; }\n";
+                    stream << "constexpr int get_kernel_w() { return 0; }\n";
+                    stream << "constexpr int get_input_c() { return 0; }\n";
+                    stream << "constexpr int get_stride() { return 0; }\n";
+                    stream << "constexpr int get_ow() { return 0; }\n";
+                    stream << "constexpr int get_oh_per_row() { return 0; }\n";
+                    stream << "constexpr int get_halo_slice() { return 0; }\n";
                     stream << "}\n";
                     // aiePartition struct
                     stream << "struct aiePartition {\n";
@@ -2507,6 +4365,11 @@ public:
                     stream << "        _dev = __Runtime_init_mesh_partition(meshId, p.startCol, p.endCol - p.startCol "
                               "+ 1);\n";
                     stream << "        return aieMesh{rows, cols, p, meshId};\n";
+                    stream << "    }\n";
+                    stream << "    aieMesh partition(int rows, int cols) {\n";
+                    stream << "        int meshId = nextMeshId++;\n";
+                    stream << "        _dev = __Runtime_init_mesh_partition(meshId, 0, cols);\n";
+                    stream << "        return aieMesh{rows, cols, {0, cols - 1, 0, rows - 1}, meshId};\n";
                     stream << "    }\n";
                     stream << "    void* alloc(size_t size) { return __Runtime_alloc_buffer(_dev, size); }\n";
                     stream << "    void free(void* ptr) { __Runtime_free_buffer(_dev, ptr); }\n";
@@ -2659,7 +4522,14 @@ public:
                     splitModel = SplitModel::gemm();
                 } else {
                     for (auto &pt : parsedTensors) {
-                        tensors.push_back({pt.shape, pt.elementBitWidth, pt.isInput});
+                        DmaAddressing shimDma;
+                        if (!pt.shimDma.empty()) {
+                            for (int i = 0; i < pt.shimDma.num_dims; ++i)
+                                shimDma.dims.push_back({pt.shimDma.dims[i].stride, pt.shimDma.dims[i].wrap});
+                            shimDma.iter_step = pt.shimDma.iter_step;
+                            shimDma.iter_wrap = pt.shimDma.iter_wrap;
+                        }
+                        tensors.push_back({pt.shape, pt.elementBitWidth, pt.isInput, shimDma});
                     }
                     splitModel = SplitModel::gemm();
                 }
@@ -2674,29 +4544,111 @@ public:
                 auto module = TilingLinalgPipeline::buildRoutingIR(ctx, rows, cols, tensors, splitModel,
                                                                    parsedPartition, aieGenStr);
 
+                // Full-connect auto flag (aie::GlobalPolicy <kernel>_policy). Resolved
+                // here (before the K-round block) so it can gate the M×N tiling attrs.
+                bool singleFullConnectAuto = true;
+                {
+                    auto fcaIt = kernelFullConnectAuto.find(singleKernelFuncName);
+                    if (fcaIt != kernelFullConnectAuto.end())
+                        singleFullConnectAuto = fcaIt->second;
+                }
+
                 // Set K-round module attributes for downstream DMA passes
                 if (derivedTilingParams.valid && derivedTilingParams.kRounds > 1) {
                     mlir::OpBuilder attrBuilder(&ctx);
+                    // K-accumulation attrs are orthogonal to M×N tiling — always emit.
                     module->setAttr("routing.effective_k",
                                     attrBuilder.getI64IntegerAttr(derivedTilingParams.effectiveK));
                     module->setAttr("routing.k_rounds", attrBuilder.getI64IntegerAttr(derivedTilingParams.kRounds));
                     module->setAttr("routing.full_k", attrBuilder.getI64IntegerAttr(derivedTilingParams.kDim));
-                    module->setAttr("routing.tile_m", attrBuilder.getI64IntegerAttr(derivedTilingParams.tileM));
-                    module->setAttr("routing.tile_rows", attrBuilder.getI64IntegerAttr(derivedTilingParams.tileRows));
-                    module->setAttr("routing.m_rounds",
-                                    attrBuilder.getI64IntegerAttr(derivedTilingParams.spatialMRounds));
-                    module->setAttr("routing.tile_n", attrBuilder.getI64IntegerAttr(derivedTilingParams.tileN));
-                    module->setAttr("routing.tile_cols", attrBuilder.getI64IntegerAttr(derivedTilingParams.tileCols));
-                    module->setAttr("routing.n_rounds",
-                                    attrBuilder.getI64IntegerAttr(derivedTilingParams.spatialNRounds));
-                    llvm::outs() << "[TilingLinalg] Set K-round module attrs: effective_k="
-                                 << derivedTilingParams.effectiveK << " k_rounds=" << derivedTilingParams.kRounds
-                                 << " full_k=" << derivedTilingParams.kDim << " tile_m=" << derivedTilingParams.tileM
-                                 << " tile_rows=" << derivedTilingParams.tileRows
-                                 << " m_rounds=" << derivedTilingParams.spatialMRounds
-                                 << " tile_n=" << derivedTilingParams.tileN
-                                 << " tile_cols=" << derivedTilingParams.tileCols
-                                 << " n_rounds=" << derivedTilingParams.spatialNRounds << "\n";
+                    // M×N cartesian repeat / spatial sub-tiling attrs are only meaningful
+                    // when fullconnect_auto is enabled. Dropping them for fullconnect_auto=0
+                    // lets the downstream passes fall through to the pure-K-round path.
+                    if (singleFullConnectAuto) {
+                        module->setAttr("routing.tile_m", attrBuilder.getI64IntegerAttr(derivedTilingParams.tileM));
+                        module->setAttr("routing.tile_rows",
+                                        attrBuilder.getI64IntegerAttr(derivedTilingParams.tileRows));
+                        module->setAttr("routing.m_rounds",
+                                        attrBuilder.getI64IntegerAttr(derivedTilingParams.spatialMRounds));
+                        module->setAttr("routing.tile_n", attrBuilder.getI64IntegerAttr(derivedTilingParams.tileN));
+                        module->setAttr("routing.tile_cols",
+                                        attrBuilder.getI64IntegerAttr(derivedTilingParams.tileCols));
+                        module->setAttr("routing.n_rounds",
+                                        attrBuilder.getI64IntegerAttr(derivedTilingParams.spatialNRounds));
+                        llvm::outs() << "[TilingLinalg] Set K-round module attrs: effective_k="
+                                     << derivedTilingParams.effectiveK << " k_rounds=" << derivedTilingParams.kRounds
+                                     << " full_k=" << derivedTilingParams.kDim
+                                     << " tile_m=" << derivedTilingParams.tileM
+                                     << " tile_rows=" << derivedTilingParams.tileRows
+                                     << " m_rounds=" << derivedTilingParams.spatialMRounds
+                                     << " tile_n=" << derivedTilingParams.tileN
+                                     << " tile_cols=" << derivedTilingParams.tileCols
+                                     << " n_rounds=" << derivedTilingParams.spatialNRounds << "\n";
+                    } else {
+                        llvm::outs() << "[TilingLinalg] Set K-round module attrs (fullconnect_auto=0, "
+                                        "tile_*/m_rounds/n_rounds dropped): effective_k="
+                                     << derivedTilingParams.effectiveK << " k_rounds=" << derivedTilingParams.kRounds
+                                     << " full_k=" << derivedTilingParams.kDim << "\n";
+                    }
+                }
+
+                // Spatial-halo conv: carry the contiguous IFM slab size so the kernel
+                // pass allocates the input window to match the kernel body's buf_sz
+                // (= halo_slice * raw_wc). Set unconditionally (kRounds may be 1).
+                if (derivedTilingParams.valid && derivedTilingParams.convHaloBufSize > 0) {
+                    mlir::OpBuilder haloAttrBuilder(&ctx);
+                    module->setAttr("routing.spatial_halo_buf_size",
+                                    haloAttrBuilder.getI64IntegerAttr(derivedTilingParams.convHaloBufSize));
+                    llvm::outs() << "[TilingLinalg] Set spatial_halo_buf_size=" << derivedTilingParams.convHaloBufSize
+                                 << "\n";
+                    // Spatial-halo conv has kRounds==1, so the K-round attr block above is
+                    // skipped and routing.tile_m is never set. Emit ONLY the M-dimension
+                    // tiling attrs here so classifyTiling returns Multiple(mRounds) and the
+                    // host scf.for round loop streams one slab per round. Do NOT emit
+                    // tile_n/tile_cols: that would trigger nMode=Multiple and spurious
+                    // filter-B N-round iteration (the filter is re-sent unchanged per round).
+                    // Gated on fullconnect_auto: a halo kernel that set fullconnect_auto=0
+                    // opts out of the M-round repeat entirely.
+                    if (singleFullConnectAuto && derivedTilingParams.spatialMRounds > 1 &&
+                        derivedTilingParams.tileM > 0 && derivedTilingParams.tileRows > derivedTilingParams.tileM) {
+                        module->setAttr("routing.tile_m", haloAttrBuilder.getI64IntegerAttr(derivedTilingParams.tileM));
+                        module->setAttr("routing.tile_rows",
+                                        haloAttrBuilder.getI64IntegerAttr(derivedTilingParams.tileRows));
+                        module->setAttr("routing.m_rounds",
+                                        haloAttrBuilder.getI64IntegerAttr(derivedTilingParams.spatialMRounds));
+                        llvm::outs() << "[TilingLinalg] Set spatial-halo M-round attrs: tile_m="
+                                     << derivedTilingParams.tileM << " tile_rows=" << derivedTilingParams.tileRows
+                                     << " m_rounds=" << derivedTilingParams.spatialMRounds << "\n";
+                    }
+                    // OUTPUT per-slab division count. The conv2d_spatial kernel ALWAYS
+                    // emits one [oh_per_row*ow_t, tile_n] output slab per on-core round
+                    // (m_rounds = spatialMRounds*spatialNRounds), independent of the
+                    // fullconnect_auto DMA-repeat policy (which only governs how the
+                    // INPUT filter/A ports are re-sent). The core MM2S output BD must
+                    // therefore be sized to ONE slab (perCoreElements / out_rounds) and
+                    // iterate out_rounds times. Emit this divisor UNCONDITIONALLY so the
+                    // schedule passes divide the output even when fullconnect_auto=0
+                    // dropped routing.tile_m/m_rounds above.
+                    {
+                        int64_t outRounds = derivedTilingParams.spatialMRounds * derivedTilingParams.spatialNRounds;
+                        if (outRounds > 1) {
+                            module->setAttr("routing.spatial_out_rounds", haloAttrBuilder.getI64IntegerAttr(outRounds));
+                            llvm::outs() << "[TilingLinalg] Set spatial_out_rounds=" << outRounds
+                                         << " (spatialMRounds=" << derivedTilingParams.spatialMRounds
+                                         << " * spatialNRounds=" << derivedTilingParams.spatialNRounds << ")\n";
+                        }
+                    }
+                }
+
+                // Full-connect auto flag (aie::GlobalPolicy <kernel>_policy).
+                // Set UNCONDITIONALLY (applies even when kRounds==1). 1 = default
+                // M×N cartesian DMA repeat; 0 = A/B each sent once.
+                {
+                    mlir::OpBuilder fcAttrBuilder(&ctx);
+                    module->setAttr("routing.fullconnect_auto",
+                                    fcAttrBuilder.getI64IntegerAttr(singleFullConnectAuto ? 1 : 0));
+                    llvm::outs() << "[TilingLinalg] Set fullconnect_auto=" << (singleFullConnectAuto ? 1 : 0)
+                                 << " for kernel " << singleKernelFuncName << "\n";
                 }
 
                 // Replace aie::get_*() calls in kernel body with computed integer literals
@@ -2708,7 +4660,8 @@ public:
                         paramToPort[parsedTensors[i].varName] = i;
                     }
 
-                    for (const auto &funcName : {"aie::get_num_rounds", "aie::get_buffer_size"}) {
+                    for (const auto &funcName :
+                         {"aie::get_num_rounds", "aie::get_buffer_size", "aie::get_spatial_multiple_rounds"}) {
                         std::string prefix = std::string(funcName) + "(";
                         size_t pos = 0;
                         while ((pos = singleKernelBody.find(prefix, pos)) != std::string::npos) {
@@ -2726,8 +4679,10 @@ public:
                                 int64_t val;
                                 if (std::string(funcName) == "aie::get_num_rounds")
                                     val = derivedTilingParams.portParams[it->second].numRounds;
-                                else
+                                else if (std::string(funcName) == "aie::get_buffer_size")
                                     val = derivedTilingParams.portParams[it->second].bufferSize;
+                                else
+                                    val = derivedTilingParams.portParams[it->second].spatialRounds;
                                 std::string replacement = std::to_string(val);
                                 singleKernelBody.replace(pos, argEnd + 1 - pos, replacement);
                                 pos += replacement.size();
@@ -2767,6 +4722,14 @@ public:
                     replaceSimpleCall("aie::get_k_rounds()", derivedTilingParams.kRounds);
                     replaceSimpleCall("aie::get_spatial_m_rounds()", derivedTilingParams.spatialMRounds);
                     replaceSimpleCall("aie::get_spatial_n_rounds()", derivedTilingParams.spatialNRounds);
+                    // Conv (spatial-halo) accessors
+                    replaceSimpleCall("aie::get_kernel_h()", derivedTilingParams.convKernelH);
+                    replaceSimpleCall("aie::get_kernel_w()", derivedTilingParams.convKernelW);
+                    replaceSimpleCall("aie::get_input_c()", derivedTilingParams.convInputC);
+                    replaceSimpleCall("aie::get_stride()", derivedTilingParams.convStride);
+                    replaceSimpleCall("aie::get_ow()", derivedTilingParams.convOW);
+                    replaceSimpleCall("aie::get_oh_per_row()", derivedTilingParams.convOHPerRow);
+                    replaceSimpleCall("aie::get_halo_slice()", derivedTilingParams.convHaloSlice);
                 }
 
                 // Prepend user macros to kernel body for multi-tile path

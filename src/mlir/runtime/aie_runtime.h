@@ -1,6 +1,6 @@
 /******************************************************************************
  * Copyright (C) 2026 Advanced Micro Devices, Inc. All Rights Reserved.
- * SPDX-License-Identifier: MIT
+ * SPDX-License-Identifier: Apache-2.0
  ******************************************************************************/
 
 #ifndef AIE_RUNTIME_H
@@ -46,7 +46,12 @@ extern XAie_RoutingInstance *g_RoutingInst;
 #define AIE_DEBUG_LEVEL(v) ((v) & 0xF)
 #define AIE_DEBUG_FLAG_DISABLE_MULTID_DIM_DMA (1 << 4)
 #define AIE_DEBUG_FLAG_DISABLE_PARTITIONTEARDOWN (1 << 5)
+// When set, device init arms our own MM2S BD-finished perf counters (MEM
+// module counters 0/1) across the whole partition via
+// __Runtime_perfcnt_setup_mm2s_bd_finished_partition(); teardown reads them
+// back. These are the same counters aiegdb.py "dma counter" reads (0x11020/24).
 #define AIE_DEBUG_FLAG_MM2SBDFINISH_COUNTER (1 << 6)
+// bit 7 reserved
 #define AIE_DEBUG_HAS_FLAG(v, flag) (((v) & (flag)) != 0)
 extern int g_runtime_debug_level;
 

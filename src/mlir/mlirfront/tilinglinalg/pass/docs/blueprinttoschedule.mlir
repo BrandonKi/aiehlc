@@ -1,10 +1,10 @@
 // *****************************************************************************
 // * Copyright (C) 2026 Advanced Micro Devices, Inc. All Rights Reserved.
-// * SPDX-License-Identifier: MIT
+// * SPDX-License-Identifier: Apache-2.0
 // *****************************************************************************
 // *****************************************************************************
 // * Copyright (C) 2026 Advanced Micro Devices, Inc. All Rights Reserved.
-// * SPDX-License-Identifier: MIT
+// * SPDX-License-Identifier: Apache-2.0
 // *****************************************************************************
 module attributes {codegen.headers = ["stdint.h", "stdio.h", "custom_lib.h"]} {
   func.func @main() {

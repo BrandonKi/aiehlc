@@ -1,5 +1,5 @@
 <!-- Copyright (C) 2025 Advanced Micro Devices, Inc. All Rights Reserved.
-     SPDX-License-Identifier: MIT -->
+     SPDX-License-Identifier: Apache-2.0 -->
 ---
 name: Fix dfschedule tensor-memref lowering
 overview: Redesign BlueprintToSchedulePass using a 6-stage progressive lowering (logical -> bufferization -> physical mapping -> DMA schedule -> routing -> cleanup) with dual-memory-space (DDR/L1) awareness, standard MLIR bufferization bridge, and proper memory lifecycle.

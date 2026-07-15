@@ -1,6 +1,6 @@
 /******************************************************************************
 * Copyright (C) 2026 Advanced Micro Devices, Inc. All Rights Reserved.
-* SPDX-License-Identifier: MIT
+* SPDX-License-Identifier: Apache-2.0
 ******************************************************************************/
 #ifndef _TYPE_DMAMAP_
 #define _TYPE_DMAMAP_

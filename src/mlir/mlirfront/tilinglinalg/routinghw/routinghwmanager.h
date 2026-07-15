@@ -1,7 +1,7 @@
 /******************************************************************************
-* Copyright (C) 2025 Advanced Micro Devices, Inc. All Rights Reserved.
-* SPDX-License-Identifier: MIT
-******************************************************************************/
+ * Copyright (C) 2025 Advanced Micro Devices, Inc. All Rights Reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ ******************************************************************************/
 
 #ifndef __ROUTINGHW__
 #define __ROUTINGHW__
@@ -44,12 +44,12 @@
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/EmitC/IR/EmitC.h"
-//fieldparser
+// fieldparser
 #include "mlir/IR/DialectImplementation.h"
-//llvm dialect
+// llvm dialect
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/LLVMIR/LLVMTypes.h"
-//#include "mlir/Dialect/LLVM/Transforms/Passes.h"
+// #include "mlir/Dialect/LLVM/Transforms/Passes.h"
 
 #include "routinghwdialect.h.inc"
 

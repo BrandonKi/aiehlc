@@ -1,6 +1,6 @@
 /******************************************************************************
  * Copyright (C) 2026 Advanced Micro Devices, Inc. All Rights Reserved.
- * SPDX-License-Identifier: MIT
+ * SPDX-License-Identifier: Apache-2.0
  ******************************************************************************/
 #include "routingconstantfold.h"
 #include "mlir/Dialect/EmitC/IR/EmitC.h"

@@ -1,49 +1,49 @@
 /******************************************************************************
-* Copyright (C) 2025 Advanced Micro Devices, Inc. All Rights Reserved.
-* SPDX-License-Identifier: MIT
-*
-* AIE Programming Model — Matrix Multiplication (GEMM)
-*
-* Demonstrates how the MLIR tilinglinalg pipeline maps a GEMM operation
-* (C = A * B) onto a 2x2 AIE tile mesh.
-*
-* Data partitioning strategy (matches tilinglinalg routing dialect):
-*
-*   A [16x16] — row-partitioned across tile rows, replicated on cols
-*     tile row 0: A[0:7,  0:15]  (rows 0-7,   all 16 columns)
-*     tile row 1: A[8:15, 0:15]  (rows 8-15,  all 16 columns)
-*
-*   B [16x16] — broadcast (full tensor) to all tile groups
-*     every tile receives B[0:15, 0:15]
-*
-*   C [16x16] — row-partitioned across tile rows, gathered from tiles
-*     tile row 0: computes C[0:7,  0:15]
-*     tile row 1: computes C[8:15, 0:15]
-*
-* This matches `routingmanager::createroutingfuncGEMM()` in the MLIR pipeline:
-*   - partitiontensor A: splitnum=2, splitdim=0, hw_axis_owner="row", replicate_on="col"
-*   - partitiontensor B: splitnum=1 (no split, broadcast along split axis)
-*   - partitiontensor C: splitnum=2, splitdim=0, hw_axis_owner="row", replicate_on="col"
-*
-* Each tile receives:
-*   window_in_0  = A partition [M_TILE x K]    (8x16 = 128 bytes)
-*   window_in_1  = B full      [K x N]         (16x16 = 256 bytes)
-*   window_out_0 = C partition [M_TILE x N]    (8x16 = 128 bytes)
-*
-* The kernel computes: C_tile = A_tile * B
-*   C_tile[i][j] = sum_k( A_tile[i][k] * B[k][j] )
-*
-* CUDA concepts kept (honest mapping):
-*   __global__             - kernel runs on AIE tiles
-*   kernel<<<mesh>>>()     - launch kernel across tile mesh
-*   aieDeviceSynchronize() - wait for all tiles to finish
-*   malloc/free            - plain C host memory allocation
-*
-* What the compiler handles automatically:
-*   DDR <-> tile DMA transfers, tensor partitioning, stream switch routing,
-*   buffer descriptors, lock synchronization, core load/run/wait
-*
-******************************************************************************/
+ * Copyright (C) 2025 Advanced Micro Devices, Inc. All Rights Reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * AIE Programming Model — Matrix Multiplication (GEMM)
+ *
+ * Demonstrates how the MLIR tilinglinalg pipeline maps a GEMM operation
+ * (C = A * B) onto a 2x2 AIE tile mesh.
+ *
+ * Data partitioning strategy (matches tilinglinalg routing dialect):
+ *
+ *   A [16x16] — row-partitioned across tile rows, replicated on cols
+ *     tile row 0: A[0:7,  0:15]  (rows 0-7,   all 16 columns)
+ *     tile row 1: A[8:15, 0:15]  (rows 8-15,  all 16 columns)
+ *
+ *   B [16x16] — broadcast (full tensor) to all tile groups
+ *     every tile receives B[0:15, 0:15]
+ *
+ *   C [16x16] — row-partitioned across tile rows, gathered from tiles
+ *     tile row 0: computes C[0:7,  0:15]
+ *     tile row 1: computes C[8:15, 0:15]
+ *
+ * This matches `routingmanager::createroutingfuncGEMM()` in the MLIR pipeline:
+ *   - partitiontensor A: splitnum=2, splitdim=0, hw_axis_owner="row", replicate_on="col"
+ *   - partitiontensor B: splitnum=1 (no split, broadcast along split axis)
+ *   - partitiontensor C: splitnum=2, splitdim=0, hw_axis_owner="row", replicate_on="col"
+ *
+ * Each tile receives:
+ *   window_in_0  = A partition [M_TILE x K]    (8x16 = 128 bytes)
+ *   window_in_1  = B full      [K x N]         (16x16 = 256 bytes)
+ *   window_out_0 = C partition [M_TILE x N]    (8x16 = 128 bytes)
+ *
+ * The kernel computes: C_tile = A_tile * B
+ *   C_tile[i][j] = sum_k( A_tile[i][k] * B[k][j] )
+ *
+ * CUDA concepts kept (honest mapping):
+ *   __global__             - kernel runs on AIE tiles
+ *   kernel<<<mesh>>>()     - launch kernel across tile mesh
+ *   aieDeviceSynchronize() - wait for all tiles to finish
+ *   malloc/free            - plain C host memory allocation
+ *
+ * What the compiler handles automatically:
+ *   DDR <-> tile DMA transfers, tensor partitioning, stream switch routing,
+ *   buffer descriptors, lock synchronization, core load/run/wait
+ *
+ ******************************************************************************/
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>

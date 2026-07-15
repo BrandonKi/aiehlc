@@ -1,29 +1,29 @@
 /******************************************************************************
-* Copyright (C) 2025 Advanced Micro Devices, Inc. All Rights Reserved.
-* SPDX-License-Identifier: MIT
-*
-* AIE Programming Model — KV Cache Autoregressive Decoding
-*
-* Single-head attention with KV cache for autoregressive text generation.
-* Two phases: prefill (process prompt at once) and decode (one token at a
-* time, growing the KV cache each step).
-*
-* Dimensions: MAX_SEQ=16, EMBED_DIM=8, PROMPT_LEN=4, GEN_LEN=4, VOCAB=8
-* Data type: int8, Q7 fixed-point where needed.
-*
-*   PREFILL:  embed prompt → Q,K,V projections → cache K,V
-*             → attention on last prompt token → first generated token
-*
-*   DECODE:   embed new token → project q,k,v → append to cache
-*             → attend over full cache → output proj → residual → next token
-*
-* CUDA concepts kept (honest mapping):
-*   __global__             - kernel runs on AIE tiles
-*   kernel<<<mesh>>>()     - launch kernel across tile mesh
-*   aieDeviceSynchronize() - wait for all tiles to finish
-*   malloc/free            - plain C host memory allocation
-*
-******************************************************************************/
+ * Copyright (C) 2025 Advanced Micro Devices, Inc. All Rights Reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * AIE Programming Model — KV Cache Autoregressive Decoding
+ *
+ * Single-head attention with KV cache for autoregressive text generation.
+ * Two phases: prefill (process prompt at once) and decode (one token at a
+ * time, growing the KV cache each step).
+ *
+ * Dimensions: MAX_SEQ=16, EMBED_DIM=8, PROMPT_LEN=4, GEN_LEN=4, VOCAB=8
+ * Data type: int8, Q7 fixed-point where needed.
+ *
+ *   PREFILL:  embed prompt → Q,K,V projections → cache K,V
+ *             → attention on last prompt token → first generated token
+ *
+ *   DECODE:   embed new token → project q,k,v → append to cache
+ *             → attend over full cache → output proj → residual → next token
+ *
+ * CUDA concepts kept (honest mapping):
+ *   __global__             - kernel runs on AIE tiles
+ *   kernel<<<mesh>>>()     - launch kernel across tile mesh
+ *   aieDeviceSynchronize() - wait for all tiles to finish
+ *   malloc/free            - plain C host memory allocation
+ *
+ ******************************************************************************/
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>

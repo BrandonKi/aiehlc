@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # Copyright (C) 2025 Advanced Micro Devices, Inc. All Rights Reserved.
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """
 Unified AIE visualizer: routing topology + DMA BD configuration.
 
@@ -2356,11 +2356,24 @@ def serve_html(html_path: str, port: int) -> None:
 # ---------------------------------------------------------------------------
 
 def _find_default_worklocal() -> Path:
-    """Locate the worklocal directory relative to this script or the repo root."""
+    """Locate the worklocal directory holding routing.cc/host.cc.
+
+    Searches likely output dirs (aiehlc.sh's aout/worklocal first, then the
+    unitest worklocal) and returns the first that actually contains a
+    routing.cc or host.cc. Falls back to aout/worklocal so the error message
+    points at the primary location when nothing is found."""
     script_dir = Path(__file__).resolve().parent
     repo_root = script_dir.parent.parent
-    worklocal = repo_root / "src" / "mlir" / "mlirfront" / "tilinglinalg" / "pass" / "unitest" / "worklocal"
-    return worklocal
+    candidates = [
+        repo_root / "aout" / "worklocal",
+        Path.cwd() / "aout" / "worklocal",
+        repo_root / "src" / "mlir" / "mlirfront" / "tilinglinalg"
+        / "pass" / "unitest" / "worklocal",
+    ]
+    for wl in candidates:
+        if (wl / "routing.cc").exists() or (wl / "host.cc").exists():
+            return wl
+    return candidates[0]
 
 
 def main():

@@ -361,28 +361,77 @@ cd build
 ### 5.4 Compile Kernel (xchesscc flow)
 
 ```bash
-cd worklocal
-source compile_kernel.sh dskernel_receiver
+WORKLOCAL_DIR="$(pwd)/aout/worklocal" source script/compile_kernel.sh dskernel_receiver
 ```
 
 Internally calls `script/kc.sh`:
-1. `xchesscc` — `kernel.cc` → `kernel_orig.ll` (AIE2PS flags)
-2. `opt` — two `xlopt` passes on LLVM IR
-3. `xchessmk` — `aie2ps.prx` + IR → `build/kernel` (AIE ELF)
-4. `ld` — `aarch64-none-elf-ld -EL -r -b binary build/kernel -o kernel.o`
-5. `objcopy` — rename symbols to `_binary_kernel_<func>_{start,end,size}`
+1. `xchesscc` — `kernel.cc` → `kernel_orig.ll` (AIE2PS flags, **always-on `-g`** for DWARF)
+2. `opt` — two `xlopt` passes on LLVM IR (preserves debug metadata)
+3. `xchessmk` — `aie2ps.prx` + IR → `build/kernel` (AIE ELF, carries `.debug_line`)
+4. `readelf --debug-dump=decodedline` → `build/kernel.decodedline.txt`, then
+   `script/parse_linemap.py` → `build/kernel.linemap.json` (PC→source map)
+5. `ld` — `aarch64-none-elf-ld -EL -r -b binary build/kernel -o kernel.o`
+6. `objcopy` — rename symbols to `_binary_kernel_<func>_{start,end,size}`
 
 Output: `build/kernel.o` (relocatable for host linking)
+
+#### DWARF line info / PC→source debug
+
+`-g` is always enabled in the three xchesscc flag strings (`kc.sh`, routed through
+`+Wllvm,-O2,-g,...`), so the kernel ELF embeds a `.debug_line` table referencing
+`kernel.cc`. The build emits two extra artifacts next to the ELF:
+
+| Artifact | Producer | Use |
+|----------|----------|-----|
+| `build/kernel.decodedline.txt` | `readelf --debug-dump=decodedline` | human-readable addr→file:line |
+| `build/kernel.linemap.json` | `script/parse_linemap.py` | sorted addr→{file,line} for tooling |
+
+> **Artifact location (tiling pipeline):** the kernel is compiled by `kc.sh` via
+> `aiehlc.sh → script/hostcompile.sh → script/compile_kernel.sh`, which build directly in
+> `WORKLOCAL_DIR` (set to `aout/worklocal` by `aiehlc.sh`). The ELF and DWARF artifacts
+> therefore land under **`aout/worklocal/build/`**. Verified end-to-end on
+> `example/tileprogram/ccode/simplematmul2.cc` (kernel ELF + `.debug_line`,
+> 412-entry `kernel.linemap.json`, offline `aiediag pc` lookup all OK).
+> The standalone unitest flow (`piplinerun.sh`) sets `WORKLOCAL_DIR=unitest/worklocal`,
+> so it builds under `unitest/worklocal/build/` instead.
+> Note: `simpleconv2d.cc` currently aborts at `xchessmk` (no ELF produced) for a
+> separate, non-`-g` reason — track that build issue independently.
+
+Verify DWARF is present:
+
+```bash
+readelf -S build/kernel | grep debug_line                 # section exists
+readelf --debug-dump=decodedline build/kernel | head      # non-empty, kernel.cc lines
+grep -c DILocation build/kernel.ll                          # > 0: -g survived xchesscc+xlopt
+python3 -c "import json;json.load(open('build/kernel.linemap.json'))"  # JSON parses
+```
+
+`.debug_line` parsing is architecture-agnostic, so the system (or aarch64) `readelf`
+works on the AIE ELF. The artifacts are best-effort: a missing/empty table only warns,
+the kernel build still succeeds. With `-O2` the line table is approximate (inlining/
+optimization) — treat PC→line as coarse. If a future toolchain rejects bare `-g`, fall
+back to `+Wllvm,-g`; if `xchessmk` strips DWARF at link, add a debug flag to the PRX
+`llvm.xargs` in `kernelconfig.h`.
+
+Map a stuck core's program counter back to source with `aiediag pc` (reads the AIE2PS
+core PC register `0x30F00`, 20-bit value mask, and bisects the line map):
+
+```bash
+python3 src/tool/debug/aiediag.py pc <col> <row> startcol <s> -dev pal     # live HW read
+python3 src/tool/debug/aiediag.py pc <col> <row> --pc 0x1234 --linemap build/kernel.linemap.json
+```
+
+`aiediag dig` also prints `Core PC=0x.... -> kernel.cc:<line>` for core tiles when the
+line map is found.
 
 ### 5.5 Compile Host + Link
 
 ```bash
-cd worklocal
-source hostcompile.sh
+WORKLOCAL_DIR="$(pwd)/aout/worklocal" source script/hostcompile.sh
 ```
 
 Steps:
-1. Source `compile_kernel.sh` (kernel.o)
+1. Source `script/compile_kernel.sh` (kernel.o)
 2. Fix `host.cc` → `host_fixed.cc` (sed: add forward decl, fix `void main→int main`)
 3. `aarch64-none-elf-g++ -Os -std=c++17 -DAIE_GEN=5 -mcpu=cortex-a78 -c host_fixed.cc -o host.o`
 4. `aarch64-none-elf-g++ ... -c aie_runtime.c -o aie_runtime.o`
@@ -438,7 +487,7 @@ source piplinerun.sh
 | 2 | `mkdir -p build` → `cmake ..` → `make -j4` |
 | 3 | `./test dfschedule` → `host.cc`, `kernel.cc` |
 | 3b | **Codegen validation**: grep generated files for `XAie_*` / `__Runtime_*` API calls. If none found, clean files, rebuild, and retry (up to 3 attempts). Exits with error if all retries fail. |
-| 4 | `cd worklocal/` → `source hostcompile.sh` → `build/host` |
+| 4 | `WORKLOCAL_DIR=$(pwd)/worklocal source ../../../../../../script/hostcompile.sh` → `worklocal/build/host` |
 | 5 | `source envlocal.sh` → `apppaltest.py ./worklocal/build/host` |
 
 ---
@@ -454,8 +503,8 @@ source piplinerun.sh
 | Test driver | `pass/unitest/test.cpp` |
 | Build | `pass/unitest/CMakeLists.txt` |
 | Automation | `pass/unitest/piplinerun.sh` |
-| Host compile | `pass/unitest/worklocal/hostcompile.sh` |
-| Kernel compile | `pass/unitest/worklocal/compile_kernel.sh`, `script/kc.sh` |
+| Host compile | `script/hostcompile.sh` |
+| Kernel compile | `script/compile_kernel.sh`, `script/kc.sh` |
 | HW run | `script/test/apppaltest.py` |
 | Verification | `.cursor/skills/hostcodegen/scripts/verify_host.sh` |
 | Example routing | `pass/routingimplement/codegenexample/aie_control.cpp` |

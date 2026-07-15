@@ -1,11 +1,11 @@
 #!/bin/bash
 ###############################################################################
 # Copyright (C) 2026 Advanced Micro Devices, Inc. All Rights Reserved.
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 ###############################################################################
 # aiehlcrebuild.sh — Rebuild host+kernel ELFs from aout/ without re-running
-# the MLIR pipeline. Copies generated .cc files from aout/worklocal/ into
-# the unitest worklocal/ directory, then compiles kernel and host.
+# the MLIR pipeline. Compiles kernel and host directly in aout/worklocal/
+# (artifacts in aout/worklocal/build/).
 #
 # Usage: script/aiehlcrebuild.sh [--aout-dir <path>] [--aie-version 5] [--platform baremetal]
 #
@@ -15,8 +15,6 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 AIEHLC_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-UNITEST_DIR="${AIEHLC_ROOT}/src/mlir/mlirfront/tilinglinalg/pass/unitest"
-WORKLOCAL_DIR="${UNITEST_DIR}/worklocal"
 AOUT_DIR="${AIEHLC_ROOT}/aout"
 
 # Defaults
@@ -78,34 +76,18 @@ echo "============================================"
 echo "aiehlcrebuild: Rebuild from aout"
 echo "============================================"
 echo "  aout dir:     ${AOUT_DIR}"
-echo "  worklocal:    ${WORKLOCAL_DIR}"
+echo "  worklocal:    ${AOUT_WORKLOCAL}"
 echo "  AIE version:  ${aie_version}"
 echo "  platform:     ${platform}"
 echo ""
 
-# Step 1: Copy all generated files from aout/worklocal/ to unitest/worklocal/
-echo "=== Step 1: Copy generated files from aout/worklocal/ ==="
-mkdir -p "${WORKLOCAL_DIR}"
+# Step 1: Compile kernel + host via hostcompile.sh, building in aout/worklocal/.
+echo "=== Step 1: Compile kernel + host ==="
+WORKLOCAL_DIR="${AOUT_WORKLOCAL}" AIE_VERSION="${aie_version}" PLATFORM="${platform}" \
+    bash "${AIEHLC_ROOT}/script/hostcompile.sh"
 
-for f in "${AOUT_WORKLOCAL}"/*; do
-    [ -f "$f" ] || continue
-    fname="$(basename "$f")"
-    cp -f "$f" "${WORKLOCAL_DIR}/${fname}"
-    echo "  copied: ${fname}"
-done
-echo ""
-
-# Step 2: Compile kernel + host via hostcompile.sh
-echo "=== Step 2: Compile kernel + host ==="
-export AIE_VERSION="${aie_version}"
-export PLATFORM="${platform}"
-
-pushd "${WORKLOCAL_DIR}" > /dev/null
-source ./hostcompile.sh
-popd > /dev/null
-
-# Step 3: Copy the built ELF to aout/main.elf
-BUILD_ELF="${WORKLOCAL_DIR}/build/host"
+# Step 2: Copy the built ELF to aout/main.elf
+BUILD_ELF="${AOUT_WORKLOCAL}/build/host"
 if [ -f "${BUILD_ELF}" ]; then
     cp -f "${BUILD_ELF}" "${AOUT_DIR}/main.elf"
     echo ""

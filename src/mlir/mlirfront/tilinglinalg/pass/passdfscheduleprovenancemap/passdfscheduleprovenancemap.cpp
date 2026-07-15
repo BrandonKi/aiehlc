@@ -1,6 +1,6 @@
 /******************************************************************************
  * Copyright (C) 2025 Advanced Micro Devices, Inc. All Rights Reserved.
- * SPDX-License-Identifier: MIT
+ * SPDX-License-Identifier: Apache-2.0
  ******************************************************************************/
 
 #include "passdfscheduleprovenancemap.h"
@@ -537,6 +537,14 @@ void DfscheduleProvenanceMapPass::runOnOperation() {
     jw.beginRoot();
 
     jw.keyValue("version", 1);
+
+    // partition origin (absolute physical start column); phys_col = col + startcol
+    if (startCol >= 0)
+        jw.keyValue("startcol", startCol);
+
+    // compiler aie-gen (raw --aie-version value); Python tools map it to debug offset-map
+    if (!aieGen.empty())
+        jw.keyValue("aie_gen", StringRef(aieGen));
 
     // module_attrs
     {

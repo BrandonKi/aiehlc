@@ -227,7 +227,7 @@ This connects senders (core MM2S) to receivers (shim S2MM), enabling aiediag to 
 
 ## Layer 3: aiediag
 
-**Source:** `script/aiediag.py`
+**Source:** `src/tool/debug/aiediag.py`
 **Inputs:** Both JSON provenance maps + live HW via `aiedbg`
 
 ### 7-Step Diagnostic Flow
@@ -402,5 +402,5 @@ Root cause: The host code never reached the `__Runtime_startio()` call for this 
 |------|------|
 | `pass/passdmaphopprovenancemap/passdmaphopprovenancemap.cpp` | Generates `dmaphopprovenacemap.json` |
 | `pass/passdfscheduleprovenancemap/passdfscheduleprovenancemap.cpp` | Generates `dfscheduleprovenancemap.json` |
-| `script/aiediag.py` | Runtime diagnostic tool |
+| `src/tool/debug/aiediag.py` | Runtime diagnostic tool |
 | `~/aiejson/shimtile_events.json` | Shim event ID reference (optional) |

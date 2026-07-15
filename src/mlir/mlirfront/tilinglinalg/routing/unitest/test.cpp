@@ -1,11 +1,11 @@
 /******************************************************************************
-* Copyright (C) 2025 Advanced Micro Devices, Inc. All Rights Reserved.
-* SPDX-License-Identifier: MIT
-******************************************************************************/
+ * Copyright (C) 2025 Advanced Micro Devices, Inc. All Rights Reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ ******************************************************************************/
 #include <iostream>
 #include "routingmanager.h"
 /*
-void routingdialect::initialize()  { 
+void routingdialect::initialize()  {
     addOperations<
     #define GET_OP_LIST
     #include "routingop.cc.inc"
@@ -28,12 +28,12 @@ int64_t tilearrayType::getTileBase() const {
 }
 
 // implement creattilearrayop result assembly
-LogicalResult createtilearrayOp::inferReturnTypes(mlir::MLIRContext* ctx, 
-    std::optional<mlir::Location>, 
-    mlir::ValueRange, 
-    mlir::DictionaryAttr args, 
-    mlir::OpaqueProperties, 
-    mlir::RegionRange, 
+LogicalResult createtilearrayOp::inferReturnTypes(mlir::MLIRContext* ctx,
+    std::optional<mlir::Location>,
+    mlir::ValueRange,
+    mlir::DictionaryAttr args,
+    mlir::OpaqueProperties,
+    mlir::RegionRange,
     llvm::SmallVectorImpl<mlir::Type>& infer) {
         //args is arguments
         //auto items = args.get("items").dyn_cast_or_null<TileRangeArrayAttr>();
@@ -47,12 +47,12 @@ LogicalResult createtilearrayOp::inferReturnTypes(mlir::MLIRContext* ctx,
 
 }
 
-LogicalResult createdataio::inferReturnTypes(mlir::MLIRContext* ctx, 
-    std::optional<mlir::Location>, 
-    mlir::ValueRange, 
-    mlir::DictionaryAttr args, 
-    mlir::OpaqueProperties, 
-    mlir::RegionRange, 
+LogicalResult createdataio::inferReturnTypes(mlir::MLIRContext* ctx,
+    std::optional<mlir::Location>,
+    mlir::ValueRange,
+    mlir::DictionaryAttr args,
+    mlir::OpaqueProperties,
+    mlir::RegionRange,
     llvm::SmallVectorImpl<mlir::Type>& infer) {
         //args is arguments
         auto items = args.get("iotype").dyn_cast_or_null<StringAttr>();
@@ -78,7 +78,7 @@ public:
             llvm::outs() << tt.getTileBase() << "\n";
         }
         auto len = ttype.getItems().size();
-        llvm::outs() << len << " is the length\n"; 
+        llvm::outs() << len << " is the length\n";
     }
     void ops_test(MLIRContext* ctx) {
         ctx->getOrLoadDialect<mlir::func::FuncDialect>();
@@ -86,13 +86,13 @@ public:
         ctx->getOrLoadDialect<mlir::scf::SCFDialect>();
         ctx->getOrLoadDialect<mlir::arith::ArithDialect>();
 
-    
+
         OpBuilder builder(ctx);
         auto location = builder.getUnknownLoc();
         ModuleOp module= ModuleOp::create(builder.getUnknownLoc());
         mlir::FunctionType ftype = builder.getFunctionType({},{});
-        func::FuncOp routing = builder.create<func::FuncOp>(builder.getUnknownLoc(), 
-                                                         "routingcreate", 
+        func::FuncOp routing = builder.create<func::FuncOp>(builder.getUnknownLoc(),
+                                                         "routingcreate",
                                                          ftype);
         {
         OpBuilder::InsertionGuard guard(builder);
@@ -116,7 +116,7 @@ public:
                     ValueRange{},
                     std::nullopt,
                     [&](OpBuilder &sbuilder, Location bloc, ValueRange ivs) {
-                    
+
                         Value iv = ivs.front();
                         TileRangeAttr ta = TileRangeAttr::get(ctx, 1,2);
                         llvm::SmallVector<TileRangeAttr,4> slist;
@@ -128,7 +128,8 @@ public:
                         createtilearrayOp op = builder.create<createtilearrayOp>(builder.getUnknownLoc(), rnum, cnum);
                         auto op2 = builder.create<createdataio>(builder.getUnknownLoc(), "mem", "input");
                         auto output = builder.getI32Type();
-                        auto op3 = builder.create<creatbroadcast>(builder.getUnknownLoc(), output, op.getResult(), op2.getResult());
+                        auto op3 = builder.create<creatbroadcast>(builder.getUnknownLoc(), output, op.getResult(),
+op2.getResult());
                         //test the result
 
                         auto result = op.getResult().getType().dyn_cast<tilearrayType>();

@@ -1,6 +1,6 @@
 // *****************************************************************************
 // * Copyright (C) 2026 Advanced Micro Devices, Inc. All Rights Reserved.
-// * SPDX-License-Identifier: MIT
+// * SPDX-License-Identifier: Apache-2.0
 // *****************************************************************************
 // Module-level constant: read-only 16x16 matrix of i8 values.
 // Replaces: arith.constant dense<"0x..."> : tensor<16x16xi8>

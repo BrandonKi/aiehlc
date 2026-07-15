@@ -1,7 +1,7 @@
 /******************************************************************************
-* Copyright (C) 2025 Advanced Micro Devices, Inc. All Rights Reserved.
-* SPDX-License-Identifier: MIT
-******************************************************************************/
+ * Copyright (C) 2025 Advanced Micro Devices, Inc. All Rights Reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ ******************************************************************************/
 
 #include "passdmaphoptodfscheblueprint.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -55,6 +55,56 @@ static dmaphop::port resolvePortFromPathSymbol(Operation *contextOp, FlatSymbolR
         return SymbolTable::lookupNearestSymbolFrom<dmaphop::port>(contextOp, tpRef);
     }
     return nullptr;
+}
+
+// Helper: resolve the canonical tensor index (= func-arg number) for a root
+// view value. Per-tensor module attributes (tensor_N.halo, tensor_N.shim_dma,
+// tensor_N.layout_transform) are keyed by func-arg order (arg0=tensor_0, ...),
+// NOT by the encounter-order data_id. Walk the def-use chain from the root view
+// back to a func.func BlockArgument and return its arg number. Returns -1 if the
+// root view does not trace to a block argument (e.g. an intermediate buffer).
+static int32_t resolveFuncArgIndexForRootView(Value rootView) {
+    Value cur = rootView;
+    // Bounded walk to avoid cycles.
+    for (int guard = 0; guard < 64 && cur; ++guard) {
+        if (auto blockArg = dyn_cast<BlockArgument>(cur)) {
+            // Only func.func entry-block arguments are canonical tensor indices.
+            if (isa_and_nonnull<func::FuncOp>(blockArg.getOwner()->getParentOp()))
+                return static_cast<int32_t>(blockArg.getArgNumber());
+            return -1;
+        }
+        Operation *def = cur.getDefiningOp();
+        if (!def)
+            return -1;
+        // Step through value-forwarding ops that preserve tensor identity.
+        if (auto toTensor = dyn_cast<bufferization::ToTensorOp>(def)) {
+            cur = toTensor.getMemref();
+            continue;
+        }
+        if (auto sched = dyn_cast<routing::createscheduletensor>(def)) {
+            cur = sched.getInitTensor();
+            continue;
+        }
+        if (auto part = dyn_cast<routing::partitiontensor>(def)) {
+            cur = part.getTensor();
+            continue;
+        }
+        if (auto extractData = dyn_cast<routing::extract_data>(def)) {
+            cur = extractData.getTensor();
+            continue;
+        }
+        if (auto extract = dyn_cast<tensor::ExtractSliceOp>(def)) {
+            cur = extract.getSource();
+            continue;
+        }
+        // Generic single-operand forwarding fallback (e.g. casts/materializations).
+        if (def->getNumOperands() == 1) {
+            cur = def->getOperand(0);
+            continue;
+        }
+        return -1;
+    }
+    return -1;
 }
 
 // Helper: look up dma_port from a dmaphop.consumer or dmaphop.producer op
@@ -497,16 +547,27 @@ struct ExtractDataConversion : public OpConversionPattern<routing::extract_data>
         int64_t splitDim = 0;
         int64_t sliceSize = 0;
         bool partitionFound = false;
+        // Halo (spatial overlap) step: when set (>0), consecutive tile-rows advance
+        // by `haloStep` rows instead of by `sliceSize`, producing overlapping slices.
+        int64_t haloStep = 0;
+        // Full tiling descriptor (incl. nested levels); kept to annotate the slice.
+        routing::TilingAttr tilingAttr;
 
         // 1. Try to get partition info
         if (auto partitionOp = dyn_cast_or_null<routing::partitiontensor>(op.getTensor().getDefiningOp())) {
-            splitDim = partitionOp.getSplitdim();
-        int64_t splitNum = partitionOp.getSplitnum();
+            splitDim = partitionOp.getPartition().getSplitdim();
+            int64_t splitNum = partitionOp.getPartition().getSplitnum();
             if (splitNum > 0) {
                  if (splitDim == 0) sliceSize = inputShape[0] / splitNum;
                  else sliceSize = inputShape[1] / splitNum;
             }
             partitionFound = true;
+            // Read halo step from the optional #routing.tiling attr propagated from
+            // createroutingfuncBySplitModel (the split dim's outer level step).
+            if (auto tiling = partitionOp.getTilingAttr()) {
+                haloStep = tiling.getDims()[splitDim].getOuter().getStep();
+                tilingAttr = tiling;
+            }
         }
 
         // 2. Infer/Override from result shape (Crucial for validity)
@@ -559,10 +620,14 @@ struct ExtractDataConversion : public OpConversionPattern<routing::extract_data>
         // Always use resultShape for sizes to ensure type match
         sizes[0] = rewriter.getIndexAttr(resultShape[0]);
         sizes[1] = rewriter.getIndexAttr(resultShape[1]);
-        
+
+        // Halo mode: offset advances by haloStep (overlap), size stays sliceSize.
+        // Non-halo: offset advances by sliceSize (contiguous, non-overlapping).
+        int64_t offsetStride = (haloStep > 0) ? haloStep : sliceSize;
+
         if (isConstIndex) {
              // Static offset calculation
-             int64_t offset = constIndex * sliceSize;
+             int64_t offset = constIndex * offsetStride;
              Attribute offsetAttr = rewriter.getIndexAttr(offset);
              
              if (splitDim == 0) {
@@ -579,16 +644,16 @@ struct ExtractDataConversion : public OpConversionPattern<routing::extract_data>
             indexVal = rewriter.create<arith::IndexCastOp>(op.getLoc(), rewriter.getIndexType(), indexVal);
         }
 
-             Value sliceSizeVal = rewriter.create<arith::ConstantIndexOp>(op.getLoc(), sliceSize);
-             Value offsetVal = rewriter.create<arith::MulIOp>(op.getLoc(), indexVal, sliceSizeVal);
-             
-             if (splitDim == 0) {
-                 offsets[0] = offsetVal;
-                 offsets[1] = rewriter.getIndexAttr(0);
-            } else {
-                 offsets[0] = rewriter.getIndexAttr(0);
-                 offsets[1] = offsetVal;
-             }
+        Value sliceSizeVal = rewriter.create<arith::ConstantIndexOp>(op.getLoc(), offsetStride);
+        Value offsetVal = rewriter.create<arith::MulIOp>(op.getLoc(), indexVal, sliceSizeVal);
+
+        if (splitDim == 0) {
+            offsets[0] = offsetVal;
+            offsets[1] = rewriter.getIndexAttr(0);
+        } else {
+            offsets[0] = rewriter.getIndexAttr(0);
+            offsets[1] = offsetVal;
+        }
         }
         
         // Create tensor.extract_slice with "partitionsliceN" tag
@@ -607,7 +672,17 @@ struct ExtractDataConversion : public OpConversionPattern<routing::extract_data>
             tagName += std::to_string(constIndex);
         }
         extractSlice->setAttr("tag", rewriter.getStringAttr(tagName));
-        
+
+        // Carry the nested-tiling descriptor onto the slice for traceability.
+        // Source of truth for codegen remains the module-level tensor_N.halo dict;
+        // this annotation is additive. Gated on a nested (L2) slice_tiling level
+        // so non-L2 IR is unchanged.
+        if (tilingAttr) {
+            auto inner = tilingAttr.getDims()[splitDim].getOuter().getSliceTiling();
+            if (inner && inner.getRounds() > 1)
+                extractSlice->setAttr("tiling", tilingAttr);
+        }
+
         rewriter.replaceOp(op, extractSlice.getResult());
         return success();
     }
@@ -819,80 +894,286 @@ struct PushOpConversion : public OpConversionPattern<dmaphop::push> {
 
         if (srcTileType == "shim") {
             auto moduleOp = op->getParentOfType<ModuleOp>();
+            // Per-tensor module attributes (tensor_N.halo, tensor_N.shim_dma,
+            // tensor_N.layout_transform) are keyed by func-arg order (arg0=tensor_0,
+            // arg1=tensor_1, ...). The encounter-order `dataId` assigned above does
+            // NOT match that order (e.g. input B is visited first -> dataId=0 while
+            // it is func arg1 -> tensor_1). Resolve the canonical func-arg index from
+            // the root view and use it for all per-tensor attribute lookups; fall back
+            // to dataId if the root view does not trace to a func argument.
+            int32_t tensorIdx = resolveFuncArgIndexForRootView(rootAdaptedView);
+            if (tensorIdx < 0)
+                tensorIdx = dataId;
+            // Spatial-halo mode (tensor_N.halo present): the A-tensor is sliced into
+            // overlapping contiguous row-blocks. Each shim BD stays FLAT (no multi-dim
+            // strides); overlap is realized purely through per-tile DDR base offsets
+            // computed in ExtractDataConversion. Skip all multi-dim addressing here.
+            bool isHaloTensor = false;
             if (moduleOp) {
-                auto effectiveKAttr = moduleOp->getAttrOfType<IntegerAttr>("routing.effective_k");
-                auto fullKAttr = moduleOp->getAttrOfType<IntegerAttr>("routing.full_k");
-                auto tileMAttr = moduleOp->getAttrOfType<IntegerAttr>("routing.tile_m");
+                std::string haloKey = "tensor_" + std::to_string(tensorIdx) + ".halo";
+                isHaloTensor = moduleOp->getAttrOfType<DictionaryAttr>(haloKey) != nullptr;
+            }
+            if (moduleOp && !isHaloTensor) {
+                // Check layout_transform: if "core_shuffle", skip DmaTransform strides
+                // (data goes flat to core tiles; the kernel handles reordering).
+                std::string layoutTransformKey = "tensor_" + std::to_string(tensorIdx) + ".layout_transform";
+                auto layoutTransformAttr = moduleOp->getAttrOfType<StringAttr>(layoutTransformKey);
+                bool isCoreShuffle = layoutTransformAttr && layoutTransformAttr.getValue() == "core_shuffle";
+                // Check for user-specified DmaTransform (tensor_N.shim_dma module attribute)
+                // If present and not core_shuffle, use it directly instead of computing K-tiling strides.
+                std::string shimDmaKey = "tensor_" + std::to_string(tensorIdx) + ".shim_dma";
 
-                if (effectiveKAttr && fullKAttr) {
-                    int64_t effectiveK = effectiveKAttr.getInt();
-                    int64_t fullK = fullKAttr.getInt();
-                    int64_t tileM = tileMAttr ? tileMAttr.getInt() : 0;
-
-                    if (effectiveK > 0 && effectiveK < fullK) {
-                        // Get element bit width from the view tensor type
+                if (isCoreShuffle) {
+                    llvm::errs() << "[ShimMultiDim] layout_transform=core_shuffle for tensor_" << tensorIdx
+                                 << ": skipping DmaTransform strides (flat DMA to core)\n";
+                    // Attach core_shuffle hint for the kernel path: if shimDmaAttr has
+                    // strides/wraps, store them as tensor_N.core_shuffle so kernel code
+                    // generation can use the transform description for reordering.
+                    auto coreDmaAttr = moduleOp->getAttrOfType<DictionaryAttr>(shimDmaKey);
+                    if (coreDmaAttr) {
+                        moduleOp->setAttr("tensor_" + std::to_string(tensorIdx) + ".core_shuffle", coreDmaAttr);
+                    }
+                }
+                auto shimDmaAttr = moduleOp->getAttrOfType<DictionaryAttr>(shimDmaKey);
+                if (shimDmaAttr && !isCoreShuffle) {
+                    auto userStrides = shimDmaAttr.getAs<ArrayAttr>("strides");
+                    auto userWraps = shimDmaAttr.getAs<ArrayAttr>("wraps");
+                    if (userStrides && userWraps) {
+                        // Convert strides from element units to bytes (32-bit word aligned).
+                        // The DmaTransform strides are in element counts; the AIEML DMA
+                        // hardware operates in 32-bit word granularity. Each stride must be
+                        // a multiple of 4 bytes. For sub-word elements (e.g., i8 = 1 byte),
+                        // we scale by wordBytes (4) since the DMA moves whole words.
+                        constexpr int32_t wordBytes = 4;
                         auto viewType = dyn_cast<RankedTensorType>(viewSplit.getType());
-                        if (viewType && viewType.getRank() == 2) {
-                            unsigned bitWidth = viewType.getElementTypeBitWidth();
-                            int64_t elemsPerWord = 32 / bitWidth; // 4 for i8, 2 for i16
-                            constexpr int64_t wordBytes = 4;
+                        unsigned bitWidth = viewType ? viewType.getElementTypeBitWidth() : 8;
+                        int32_t bytesPerElem = bitWidth / 8;
+                        if (bytesPerElem < 1)
+                            bytesPerElem = 1;
+                        SmallVector<int32_t> byteStrides;
+                        SmallVector<int32_t> adjWraps;
+                        for (auto attr : userStrides) {
+                            int32_t elemStride = cast<IntegerAttr>(attr).getInt();
+                            int32_t byteStride = elemStride * bytesPerElem;
+                            // Round up to 32-bit word alignment (AIEML DMA requirement)
+                            if (byteStride > 0 && byteStride < wordBytes)
+                                byteStride = wordBytes;
+                            else if (byteStride % wordBytes != 0)
+                                byteStride = ((byteStride + wordBytes - 1) / wordBytes) * wordBytes;
+                            byteStrides.push_back(byteStride);
+                        }
+                        for (auto attr : userWraps) {
+                            adjWraps.push_back(cast<IntegerAttr>(attr).getInt());
+                        }
+                        inputShimDimStrides = rewriter.getI32ArrayAttr(byteStrides);
+                        inputShimDimWraps = rewriter.getI32ArrayAttr(adjWraps);
 
-                            // Partition slice shape: {partRows, effectiveK}
-                            int64_t partRows = viewType.getDimSize(0);
-                            int64_t effK_w = effectiveK / elemsPerWord; // effectiveK in words
-                            int64_t fullK_w = fullK / elemsPerWord;     // fullK in words
+                        llvm::errs() << "[ShimMultiDim] Using user-specified DmaTransform for " << shimDmaKey
+                                     << " (bytesPerElem=" << bytesPerElem << "): strides=[";
+                        for (unsigned si = 0; si < byteStrides.size(); ++si) {
+                            if (si > 0)
+                                llvm::errs() << ",";
+                            llvm::errs() << byteStrides[si];
+                        }
+                        llvm::errs() << "] wraps=[";
+                        for (unsigned si = 0; si < userWraps.size(); ++si) {
+                            if (si > 0)
+                                llvm::errs() << ",";
+                            llvm::errs() << cast<IntegerAttr>(userWraps[si]).getInt();
+                        }
+                        llvm::errs() << "]\n";
+                    }
+                }
 
-                            if (tileM > 0 && tileM < partRows) {
-                                // 3D addressing: D0=K-chunk, D1=sub-tile rows, D2=kRounds
-                                // Determine the sub-tile dimension based on flow type:
-                                //   Input B (dataId==0): D1 = tile_n (col sub-tiling)
-                                //   Input A (dataId==1): D1 = tile_m (row sub-tiling)
-                                auto tileNAttr = moduleOp->getAttrOfType<IntegerAttr>("routing.tile_n");
-                                int64_t subTileDim = tileM; // default: tile_m for input A
-                                if (dataId == 0 && tileNAttr) {
-                                    subTileDim = tileNAttr.getInt(); // input B (dataId=0): use tile_n
+                // K-tiling multi-dim addressing (only if no user DmaTransform was set)
+                if (!inputShimDimStrides) {
+                    auto effectiveKAttr = moduleOp->getAttrOfType<IntegerAttr>("routing.effective_k");
+                    auto fullKAttr = moduleOp->getAttrOfType<IntegerAttr>("routing.full_k");
+                    auto tileMAttr = moduleOp->getAttrOfType<IntegerAttr>("routing.tile_m");
+
+                    if (effectiveKAttr && fullKAttr) {
+                        int64_t effectiveK = effectiveKAttr.getInt();
+                        int64_t fullK = fullKAttr.getInt();
+                        int64_t tileM = tileMAttr ? tileMAttr.getInt() : 0;
+
+                        if (effectiveK > 0 && effectiveK < fullK) {
+                            // Get element bit width from the view tensor type
+                            auto viewType = dyn_cast<RankedTensorType>(viewSplit.getType());
+                            if (viewType && viewType.getRank() == 2) {
+                                unsigned bitWidth = viewType.getElementTypeBitWidth();
+                                int64_t elemsPerWord = 32 / bitWidth; // 4 for i8, 2 for i16
+                                constexpr int64_t wordBytes = 4;
+
+                                // Partition slice shape: {partRows, effectiveK}
+                                int64_t partRows = viewType.getDimSize(0);
+                                int64_t effK_w = effectiveK / elemsPerWord; // effectiveK in words
+                                int64_t fullK_w = fullK / elemsPerWord;     // fullK in words
+
+                                if (tileM > 0 && tileM < partRows) {
+                                    // 3D addressing: D0=K-chunk, D1=sub-tile rows, D2=kRounds
+                                    // Determine the sub-tile dimension based on flow type:
+                                    //   Input B (dataId==0): D1 = tile_n (col sub-tiling)
+                                    //   Input A (dataId==1): D1 = tile_m (row sub-tiling)
+                                    auto tileNAttr = moduleOp->getAttrOfType<IntegerAttr>("routing.tile_n");
+                                    int64_t subTileDim = tileM; // default: tile_m for input A
+                                    if (dataId == 0 && tileNAttr) {
+                                        subTileDim = tileNAttr.getInt(); // input B (dataId=0): use tile_n
+                                    }
+
+                                    int64_t kRounds = fullK / effectiveK;
+                                    SmallVector<int32_t> strides = {
+                                        static_cast<int32_t>(1 * wordBytes),       // D0: 4 bytes
+                                        static_cast<int32_t>(fullK_w * wordBytes), // D1: fullK bytes
+                                        static_cast<int32_t>(effectiveK)           // D2: effectiveK bytes
+                                    };
+                                    SmallVector<int32_t> wraps = {
+                                        static_cast<int32_t>(effK_w),     // D0: effectiveK/4
+                                        static_cast<int32_t>(subTileDim), // D1: tile_m or tile_n
+                                        static_cast<int32_t>(kRounds)     // D2: kRounds
+                                    };
+                                    inputShimDimStrides = rewriter.getI32ArrayAttr(strides);
+                                    inputShimDimWraps = rewriter.getI32ArrayAttr(wraps);
+
+                                    llvm::errs()
+                                        << "[ShimMultiDim] Push input (3D K-tiling, sub-tile<partRows): "
+                                        << "effectiveK=" << effectiveK << " fullK=" << fullK << " partRows=" << partRows
+                                        << " tileM=" << tileM << " subTileDim=" << subTileDim << " dataId=" << dataId
+                                        << " kRounds=" << kRounds << " elemsPerWord=" << elemsPerWord << " strides=["
+                                        << strides[0] << "," << strides[1] << "," << strides[2] << "]"
+                                        << " wraps=[" << wraps[0] << "," << wraps[1] << "," << wraps[2] << "]\n";
+                                } else {
+                                    // 2D addressing (existing): D0=K-chunk, D1=partRows
+                                    // tile_m == partRows (or unset): no M sub-tiling needed.
+                                    // D0+D1 covers one K-chunk across all rows, BD iteration
+                                    // handles kRounds.
+                                    SmallVector<int32_t> strides = {static_cast<int32_t>(1 * wordBytes),
+                                                                    static_cast<int32_t>(fullK_w * wordBytes)};
+                                    SmallVector<int32_t> wraps = {static_cast<int32_t>(effK_w),
+                                                                  static_cast<int32_t>(partRows)};
+
+                                    inputShimDimStrides = rewriter.getI32ArrayAttr(strides);
+                                    inputShimDimWraps = rewriter.getI32ArrayAttr(wraps);
+
+                                    llvm::errs() << "[ShimMultiDim] Push input (2D K-tiling): "
+                                                 << "effectiveK=" << effectiveK << " fullK=" << fullK
+                                                 << " partRows=" << partRows << " elemsPerWord=" << elemsPerWord
+                                                 << " strides=[" << strides[0] << "," << strides[1] << "]"
+                                                 << " wraps=[" << wraps[0] << "," << wraps[1] << "]\n";
                                 }
-
-                                int64_t kRounds = fullK / effectiveK;
-                                SmallVector<int32_t> strides = {
-                                    static_cast<int32_t>(1 * wordBytes),       // D0: 4 bytes
-                                    static_cast<int32_t>(fullK_w * wordBytes), // D1: fullK bytes
-                                    static_cast<int32_t>(effectiveK)           // D2: effectiveK bytes
-                                };
-                                SmallVector<int32_t> wraps = {
-                                    static_cast<int32_t>(effK_w),     // D0: effectiveK/4
-                                    static_cast<int32_t>(subTileDim), // D1: tile_m or tile_n
-                                    static_cast<int32_t>(kRounds)     // D2: kRounds
-                                };
-                                inputShimDimStrides = rewriter.getI32ArrayAttr(strides);
-                                inputShimDimWraps = rewriter.getI32ArrayAttr(wraps);
-
-                                llvm::errs()
-                                    << "[ShimMultiDim] Push input (3D K-tiling, sub-tile<partRows): "
-                                    << "effectiveK=" << effectiveK << " fullK=" << fullK << " partRows=" << partRows
-                                    << " tileM=" << tileM << " subTileDim=" << subTileDim << " dataId=" << dataId
-                                    << " kRounds=" << kRounds << " elemsPerWord=" << elemsPerWord << " strides=["
-                                    << strides[0] << "," << strides[1] << "," << strides[2] << "]"
-                                    << " wraps=[" << wraps[0] << "," << wraps[1] << "," << wraps[2] << "]\n";
-                            } else {
-                                // 2D addressing (existing): D0=K-chunk, D1=partRows
-                                // tile_m == partRows (or unset): no M sub-tiling needed.
-                                // D0+D1 covers one K-chunk across all rows, BD iteration
-                                // handles kRounds.
-                                SmallVector<int32_t> strides = {static_cast<int32_t>(1 * wordBytes),
-                                                                static_cast<int32_t>(fullK_w * wordBytes)};
-                                SmallVector<int32_t> wraps = {static_cast<int32_t>(effK_w),
-                                                              static_cast<int32_t>(partRows)};
-
-                                inputShimDimStrides = rewriter.getI32ArrayAttr(strides);
-                                inputShimDimWraps = rewriter.getI32ArrayAttr(wraps);
-
-                                llvm::errs() << "[ShimMultiDim] Push input (2D K-tiling): "
-                                             << "effectiveK=" << effectiveK << " fullK=" << fullK
-                                             << " partRows=" << partRows << " elemsPerWord=" << elemsPerWord
-                                             << " strides=[" << strides[0] << "," << strides[1] << "]"
-                                             << " wraps=[" << wraps[0] << "," << wraps[1] << "]\n";
                             }
+                        }
+                    }
+                } // end if (!inputShimDimStrides) — K-tiling fallback
+            }
+
+            // 2D width-split halo BD: when the conv WIDTH is chunked into on-core
+            // rounds (w_rounds > 1), the per-round slab is a NARROW block
+            // [halo_slice rows, chunk_width cols] cut from the PADDED DDR buffer with
+            // a wide row pitch. The flat 1D BD (which assumes a contiguous slab) would
+            // read chunk_width*halo_slice contiguous bytes and walk off into the next
+            // padded rows. Emit a 2D shim BD that gathers chunk_width contiguous
+            // elements per row, stepping row_pitch between rows, for halo_slice rows.
+            // Mirrors the K-tiling 2D convention (D0=contiguous run, D1=row pitch),
+            // strides in BYTES, wraps in WORDS for D0 / row-count for D1.
+            if (moduleOp && isHaloTensor && !inputShimDimStrides) {
+                std::string haloKey = "tensor_" + std::to_string(tensorIdx) + ".halo";
+                auto haloAttr = moduleOp->getAttrOfType<DictionaryAttr>(haloKey);
+                auto wRoundsAttr = haloAttr ? haloAttr.getAs<IntegerAttr>("w_rounds") : nullptr;
+                // Prefer a full 3D D0/D1/D2 BD (the K-accum branch below) whenever the
+                // K (input-channel) contraction is split into k_rounds>1 width-bands.
+                // Both this width-split branch and the K-accum branch are gated on
+                // !inputShimDimStrides (first match wins); when w_rounds>1 AND k_rounds>1
+                // this 2D branch would otherwise fire first and block the 3D K-accum BD,
+                // pushing the round count into iteration+channel-repeat instead of D2.
+                // Yield to the 3D K-accum branch by skipping here when k_rounds>1.
+                auto kRoundsGuard = haloAttr ? haloAttr.getAs<IntegerAttr>("k_rounds") : nullptr;
+                bool kAccumWins = kRoundsGuard && kRoundsGuard.getInt() > 1;
+                if (wRoundsAttr && wRoundsAttr.getInt() > 1 && !kAccumWins) {
+                    auto rowPitchAttr = haloAttr.getAs<IntegerAttr>("row_pitch");
+                    auto sliceAttr = haloAttr.getAs<IntegerAttr>("slice");
+                    auto bufSizeAttr = moduleOp->getAttrOfType<IntegerAttr>("routing.spatial_halo_buf_size");
+                    auto viewType = dyn_cast<RankedTensorType>(viewSplit.getType());
+                    if (rowPitchAttr && sliceAttr && bufSizeAttr && viewType) {
+                        unsigned bitWidth = viewType.getElementTypeBitWidth();
+                        int64_t elemsPerWord = 32 / bitWidth; // 4 for i8, 2 for i16
+                        constexpr int64_t wordBytes = 4;
+                        int64_t haloSlice = sliceAttr.getInt();        // rows per slab (19)
+                        int64_t rowPitchElems = rowPitchAttr.getInt(); // padded row pitch (920)
+                        // chunk_width = narrow slab cols*C: bufSize = halo_slice * chunk_width.
+                        int64_t chunkWidthElems = haloSlice > 0 ? bufSizeAttr.getInt() / haloSlice : 0;
+                        if (chunkWidthElems > 0 && elemsPerWord > 0) {
+                            int64_t chunkW_w = chunkWidthElems / elemsPerWord; // 244/4 = 61
+                            int64_t rowPitch_w = rowPitchElems / elemsPerWord; // 920/4 = 230
+                            SmallVector<int32_t> strides = {
+                                static_cast<int32_t>(1 * wordBytes),         // D0: 4 bytes (contiguous)
+                                static_cast<int32_t>(rowPitch_w * wordBytes) // D1: row pitch bytes (920)
+                            };
+                            SmallVector<int32_t> wraps = {
+                                static_cast<int32_t>(chunkW_w), // D0: chunk_width/4 words (61)
+                                static_cast<int32_t>(haloSlice) // D1: halo_slice rows (19)
+                            };
+                            inputShimDimStrides = rewriter.getI32ArrayAttr(strides);
+                            inputShimDimWraps = rewriter.getI32ArrayAttr(wraps);
+                            llvm::errs() << "[ShimMultiDim] Push input (2D halo width-split): chunkWidthElems="
+                                         << chunkWidthElems << " haloSlice=" << haloSlice
+                                         << " rowPitchElems=" << rowPitchElems << " strides=[" << strides[0] << ","
+                                         << strides[1] << "] wraps=[" << wraps[0] << "," << wraps[1] << "]\n";
+                        }
+                    }
+                }
+            }
+
+            // 3D K-accum halo BD: when the conv K (input-channel) contraction is split
+            // into k_rounds width-bands of k_slice cols, ONE multi-dim shim BD can cover
+            // the whole [l2_slice rows, k_slice cols, k_rounds bands] slab (the BD
+            // iteration dim, plumbed in passblueprinttoschedule, then walks the l2_rounds
+            // L2 bands). The slab is cut from the PADDED DDR buffer with a wide row pitch:
+            //   D0 = contiguous k_slice run (cols),   stride 1 word
+            //   D1 = l2_slice rows,                   stride row_pitch
+            //   D2 = k_rounds width-bands,            stride k_step
+            // strides in BYTES, wraps in WORDS for D0 / row-count for D1 / band-count D2.
+            // Mirrors the matmul 3D K-tiling convention. Gate strictly on k_rounds>1 so
+            // the w_rounds / pure-L2 / matmul paths stay byte-identical.
+            if (moduleOp && isHaloTensor && !inputShimDimStrides) {
+                std::string haloKeyK = "tensor_" + std::to_string(tensorIdx) + ".halo";
+                auto haloAttrK = moduleOp->getAttrOfType<DictionaryAttr>(haloKeyK);
+                auto kRoundsAttr = haloAttrK ? haloAttrK.getAs<IntegerAttr>("k_rounds") : nullptr;
+                if (kRoundsAttr && kRoundsAttr.getInt() > 1) {
+                    auto kSliceAttr = haloAttrK.getAs<IntegerAttr>("k_slice");
+                    auto kStepAttr = haloAttrK.getAs<IntegerAttr>("k_step");
+                    auto l2SliceAttr = haloAttrK.getAs<IntegerAttr>("l2_slice");
+                    auto rowPitchAttrK = haloAttrK.getAs<IntegerAttr>("row_pitch");
+                    auto viewTypeK = dyn_cast<RankedTensorType>(viewSplit.getType());
+                    if (kSliceAttr && kStepAttr && l2SliceAttr && rowPitchAttrK && viewTypeK) {
+                        unsigned bitWidthK = viewTypeK.getElementTypeBitWidth();
+                        int64_t elemsPerWordK = 32 / bitWidthK; // 4 for i8, 2 for i16
+                        constexpr int64_t wordBytesK = 4;
+                        int64_t kSliceElems = kSliceAttr.getInt();   // 244
+                        int64_t kStepElems = kStepAttr.getInt();     // 224
+                        int64_t l2SliceRows = l2SliceAttr.getInt();  // 19
+                        int64_t rowPitchEl = rowPitchAttrK.getInt(); // 920
+                        int64_t kRounds = kRoundsAttr.getInt();      // 4
+                        if (elemsPerWordK > 0) {
+                            int64_t kSlice_w = kSliceElems / elemsPerWordK;  // 244/4 = 61
+                            int64_t rowPitch_w = rowPitchEl / elemsPerWordK; // 920/4 = 230
+                            int64_t kStep_w = kStepElems / elemsPerWordK;    // 224/4 = 56
+                            SmallVector<int32_t> strides = {
+                                static_cast<int32_t>(1 * wordBytesK),          // D0: 4 bytes (contiguous)
+                                static_cast<int32_t>(rowPitch_w * wordBytesK), // D1: row pitch bytes (920)
+                                static_cast<int32_t>(kStep_w * wordBytesK)     // D2: k_step bytes (224)
+                            };
+                            SmallVector<int32_t> wraps = {
+                                static_cast<int32_t>(kSlice_w),    // D0: k_slice/4 words (61)
+                                static_cast<int32_t>(l2SliceRows), // D1: l2_slice rows (19)
+                                static_cast<int32_t>(kRounds)      // D2: k_rounds bands (4)
+                            };
+                            inputShimDimStrides = rewriter.getI32ArrayAttr(strides);
+                            inputShimDimWraps = rewriter.getI32ArrayAttr(wraps);
+                            llvm::errs() << "[ShimMultiDim] Push input (3D halo K-accum): k_slice=" << kSliceElems
+                                         << " k_step=" << kStepElems << " l2_slice=" << l2SliceRows
+                                         << " row_pitch=" << rowPitchEl << " k_rounds=" << kRounds << " strides=["
+                                         << strides[0] << "," << strides[1] << "," << strides[2] << "] wraps=["
+                                         << wraps[0] << "," << wraps[1] << "," << wraps[2] << "]\n";
                         }
                     }
                 }
@@ -910,7 +1191,7 @@ struct PushOpConversion : public OpConversionPattern<dmaphop::push> {
             nullptr, // slice_symbols - source is root, no slice
             rewriter.getStringAttr(srcTileType),
             rewriter.getI32IntegerAttr(dataId), // data_id for shim BD grouping/merging
-            inputShimDimStrides,                // shim_dim_strides (2D when effectiveK < fullK)
+            inputShimDimStrides,                // shim_dim_strides (user DmaTransform or K-tiling)
             inputShimDimWraps,                  // shim_dim_wraps
             nullptr                             // pp_depth
         );

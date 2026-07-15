@@ -1,6 +1,6 @@
 ###############################################################################
 # Copyright (C) 2025 Advanced Micro Devices, Inc. All Rights Reserved.
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 ###############################################################################
 
 cmake_minimum_required(VERSION 3.5)
@@ -131,6 +131,9 @@ list(APPEND SOURCE_LIB_FILES ./tilinglinalg/pass/passroutingtodmap/routingtodmap
 list(APPEND SOURCE_LIB_FILES ./tilinglinalg/pass/passdmaptodmaphop/dmaptodmaphop.cpp)
 list(APPEND SOURCE_LIB_FILES ./tilinglinalg/pass/passdmaphoptoroutinghw/passdmaphoptoroutinghw.cpp)
 list(APPEND SOURCE_LIB_FILES ./tilinglinalg/pass/passblueprinttoschedule/passblueprinttoschedule.cpp)
+list(APPEND SOURCE_LIB_FILES ./tilinglinalg/pass/passblueprinttoschedule/helper/flowtransfer_common.cpp)
+list(APPEND SOURCE_LIB_FILES ./tilinglinalg/pass/passblueprinttoschedule/helper/flowtransfer_host.cpp)
+list(APPEND SOURCE_LIB_FILES ./tilinglinalg/pass/passblueprinttoschedule/helper/flowtransfer_kernel.cpp)
 list(APPEND SOURCE_LIB_FILES ./tilinglinalg/pass/passblueprinttoschedulekernel/passblueprinttoschedulekernel.cpp)
 list(APPEND SOURCE_LIB_FILES ./tilinglinalg/pass/passdmaphoptodfscheblueprint/passdmaphoptodfscheblueprint.cpp)
 list(APPEND SOURCE_LIB_FILES ./tilinglinalg/pass/passdmaphopprovenancemap/passdmaphopprovenancemap.cpp)

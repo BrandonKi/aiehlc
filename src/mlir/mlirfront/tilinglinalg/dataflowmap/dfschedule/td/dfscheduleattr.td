@@ -1,6 +1,6 @@
 /******************************************************************************
 * Copyright (C) 2026 Advanced Micro Devices, Inc. All Rights Reserved.
-* SPDX-License-Identifier: MIT
+* SPDX-License-Identifier: Apache-2.0
 ******************************************************************************/
 //===- dfscheduleDialect.td ---------------------------------------*- tablegen -*-===//
 include "mlir/IR/OpBase.td"
@@ -37,6 +37,24 @@ def dfschedule_TileAttr : dfscheduleattr<"Tile"> {
     "int64_t":$col
   );
   let assemblyFormat = "`<` `row` `=` $row `,` `col` `=` $col `>`";
+}
+
+
+def dfschedule_AccumAttr : dfscheduleattr<"Accum"> {
+  let summary = "DMA accumulation descriptor: per-round tile [rows, cols] and "
+                "per-dim round counts that reconcile a subview shape with the "
+                "per-round dma_bd len.";
+  let mnemonic = "accum";          // lowercase => #dfschedule.accum<...>
+  let cppNamespace = "dfschedule";
+  let parameters = (ins
+    "int64_t":$round_rows,
+    "int64_t":$round_cols,
+    "int64_t":$d1_rounds,
+    "int64_t":$d2_rounds
+  );
+  let assemblyFormat =
+    "`<` `round` `=` `[` $round_rows `,` $round_cols `]` `,` "
+    "`d1` `=` $d1_rounds `,` `d2` `=` $d2_rounds `>`";
 }
 
 

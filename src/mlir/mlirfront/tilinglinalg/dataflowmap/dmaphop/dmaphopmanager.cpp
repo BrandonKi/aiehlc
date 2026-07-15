@@ -1,7 +1,7 @@
 /******************************************************************************
-* Copyright (C) 2025 Advanced Micro Devices, Inc. All Rights Reserved.
-* SPDX-License-Identifier: MIT
-******************************************************************************/
+ * Copyright (C) 2025 Advanced Micro Devices, Inc. All Rights Reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ ******************************************************************************/
 #include "dmaphopmanager.h"
 #include "mlir/IR/OpImplementation.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -12,13 +12,13 @@
 #define GET_ATTRDEF_CLASSES
 #define GET_OP_CLASSES
 #define GET_OP_DEFS
-//#define GET_OP_LIST
+// #define GET_OP_LIST
 #include "dmaphopdialect.cc.inc"
 #include "dmaphopattr.cc.inc"
 #include "dmaphoptype.cc.inc"
 
 #include "dmaphopop.cc.inc"
-//#undef GET_OP_LIST
+// #undef GET_OP_LIST
 #undef GET_OP_DEFS
 
 #undef GET_OP_CLASSES

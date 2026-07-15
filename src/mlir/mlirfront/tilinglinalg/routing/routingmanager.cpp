@@ -1,7 +1,7 @@
 /******************************************************************************
-* Copyright (C) 2025 Advanced Micro Devices, Inc. All Rights Reserved.
-* SPDX-License-Identifier: MIT
-******************************************************************************/
+ * Copyright (C) 2025 Advanced Micro Devices, Inc. All Rights Reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ ******************************************************************************/
 #include "routingmanager.h"
 #include "tilinglinalg_pipeline.h"
 #include <iostream>
@@ -11,14 +11,14 @@
 #define GET_ATTRDEF_CLASSES
 #define GET_OP_CLASSES
 #define GET_OP_DEFS
-//#define GET_OP_LIST
+// #define GET_OP_LIST
 #include "routinginterface.cc.inc"
 #include "routingdialect.cc.inc"
 #include "routingattr.cc.inc"
 #include "routingtype.cc.inc"
 
 #include "routingop.cc.inc"
-//#undef GET_OP_LIST
+// #undef GET_OP_LIST
 #undef GET_OP_DEFS
 
 #undef GET_OP_CLASSES
@@ -187,19 +187,93 @@ ParseResult RoutingCreate::parse(OpAsmParser &parser, OperationState &result) {
   return success();
 }
 
+// LevelAttr custom printer: prints
+//   <base = N, total = N, slice = N, step = N, rounds = N[, slice_tiling = #routing.level<...>]>
+// The nested slice_tiling level is printed with its full `#routing.level<...>`
+// mnemonic (via operator<<), unlike the auto struct(params) form which strips it.
+void routing::LevelAttr::print(mlir::AsmPrinter &printer) const {
+    printer << "<base = " << getBase() << ", total = " << getTotal() << ", slice = " << getSlice()
+            << ", step = " << getStep() << ", rounds = " << getRounds();
+    if (auto sliceTiling = getSliceTiling())
+        printer << ", slice_tiling = " << sliceTiling;
+    printer << ">";
+}
+
+// LevelAttr custom parser: mirror of print. slice_tiling is optional (leaf level
+// omits it). Nested level is read back via parseAttribute (full mnemonic form).
+mlir::Attribute routing::LevelAttr::parse(mlir::AsmParser &parser, mlir::Type) {
+    int64_t base, total, slice, step, rounds;
+    if (parser.parseLess() || parser.parseKeyword("base") || parser.parseEqual() || parser.parseInteger(base) ||
+        parser.parseComma() || parser.parseKeyword("total") || parser.parseEqual() || parser.parseInteger(total) ||
+        parser.parseComma() || parser.parseKeyword("slice") || parser.parseEqual() || parser.parseInteger(slice) ||
+        parser.parseComma() || parser.parseKeyword("step") || parser.parseEqual() || parser.parseInteger(step) ||
+        parser.parseComma() || parser.parseKeyword("rounds") || parser.parseEqual() || parser.parseInteger(rounds))
+        return {};
+    routing::LevelAttr sliceTiling;
+    if (succeeded(parser.parseOptionalComma())) {
+        if (parser.parseKeyword("slice_tiling") || parser.parseEqual() || parser.parseAttribute(sliceTiling))
+            return {};
+    }
+    if (parser.parseGreater())
+        return {};
+    return routing::LevelAttr::get(parser.getContext(), base, total, slice, step, rounds, sliceTiling);
+}
+
+// DimAttr custom printer: prints <outer = #routing.level<...>> with the full
+// nested-level mnemonic (auto struct(params) would strip the prefix).
+void routing::DimAttr::print(mlir::AsmPrinter &printer) const { printer << "<outer = " << getOuter() << ">"; }
+
+// DimAttr custom parser: reads <outer = #routing.level<...>>.
+mlir::Attribute routing::DimAttr::parse(mlir::AsmParser &parser, mlir::Type) {
+    routing::LevelAttr outer;
+    if (parser.parseLess() || parser.parseKeyword("outer") || parser.parseEqual() || parser.parseAttribute(outer) ||
+        parser.parseGreater())
+        return {};
+    return routing::DimAttr::get(parser.getContext(), outer);
+}
+
+// TilingAttr custom printer: prints <d0 = #routing.dim<...>, d1 = ...>.
+// The leading mnemonic (#routing.tiling) is emitted by the dialect printer.
+void routing::TilingAttr::print(mlir::AsmPrinter &printer) const {
+    printer << "<";
+    auto dims = getDims();
+    for (size_t i = 0; i < dims.size(); ++i) {
+        if (i)
+            printer << ", ";
+        printer << "d" << i << " = " << dims[i];
+    }
+    printer << ">";
+}
+
+// TilingAttr custom parser: reads <dN = #routing.dim<...>, ...> into the dims
+// array (the dN index label is positional and re-derived on print).
+mlir::Attribute routing::TilingAttr::parse(mlir::AsmParser &parser, mlir::Type) {
+    if (parser.parseLess())
+        return {};
+    llvm::SmallVector<routing::DimAttr> dims;
+    if (succeeded(parser.parseOptionalGreater()))
+        return routing::TilingAttr::get(parser.getContext(), dims);
+    do {
+        StringRef label;
+        if (parser.parseKeyword(&label) || parser.parseEqual())
+            return {};
+        routing::DimAttr dim;
+        if (parser.parseAttribute(dim))
+            return {};
+        dims.push_back(dim);
+    } while (succeeded(parser.parseOptionalComma()));
+    if (parser.parseGreater())
+        return {};
+    return routing::TilingAttr::get(parser.getContext(), dims);
+}
+
 // partitiontensorOp printer
 void routing::partitiontensor::print(OpAsmPrinter &printer) {
-    printer << " tensor = " << getTensor() << " : " << getTensor().getType();
-    printer << " {";
-    printer << "\n          splitnum = " << getSplitnum() << ",";
-    printer << "\n          splitdim = " << getSplitdim() << ",";
-    printer << "\n          hw_axis_owner = " << getHwAxisOwnerAttr() << ",";
-    printer << "\n          replicate_on = " << getReplicateOnAttr() << ",";
-    printer << "\n          single_tile_owner = " << getSingleTileOwnerAttr();
-    printer << "\n     }";
-    printer.printOptionalAttrDict(getOperation()->getAttrs(), 
-        /*elidedAttrs=*/{"splitnum", "splitdim", "hw_axis_owner", "replicate_on", "single_tile_owner"});
-    printer << " -> " << getOutput().getType();
+    printer << " " << getTensor() << " : " << getTensor().getType();
+    printer << " {\n  partition = " << getPartitionAttr();
+    if (getTiling())
+        printer << ",\n  tiling = " << getTilingAttr();
+    printer << "\n} -> " << getOutput().getType();
 }
 
 // partitiontensorOp parser
@@ -207,51 +281,29 @@ ParseResult routing::partitiontensor::parse(OpAsmParser &parser, OperationState 
     OpAsmParser::UnresolvedOperand tensorOperand;
     Type tensorType;
 
-    if (parser.parseKeyword("tensor") || parser.parseEqual())
-        return failure();
-
     if (parser.parseOperand(tensorOperand) || parser.parseColonType(tensorType))
         return failure();
 
-    // Parse the attributes as a dictionary-style block: { key = val, ... }
     if (parser.parseLBrace())
         return failure();
 
-    while (true) {
-        if (succeeded(parser.parseOptionalRBrace()))
-            break;
+    if (parser.parseKeyword("partition") || parser.parseEqual())
+        return failure();
+    routing::PartitionAttr partitionAttr;
+    if (parser.parseAttribute(partitionAttr))
+        return failure();
+    result.addAttribute("partition", partitionAttr);
 
-        StringRef attrName;
-        if (parser.parseKeyword(&attrName) || parser.parseEqual())
+    if (succeeded(parser.parseOptionalComma())) {
+        if (parser.parseKeyword("tiling") || parser.parseEqual())
             return failure();
-
-        if (attrName == "splitnum") {
-            int64_t val;
-            if (parser.parseInteger(val)) return failure();
-            result.addAttribute("splitnum",
-                parser.getBuilder().getI32IntegerAttr(val));
-        } else if (attrName == "splitdim") {
-            int64_t val;
-            if (parser.parseInteger(val)) return failure();
-            result.addAttribute("splitdim",
-                parser.getBuilder().getI32IntegerAttr(val));
-        } else if (attrName == "hw_axis_owner") {
-            StringAttr attr;
-            if (parser.parseAttribute(attr, "hw_axis_owner", result.attributes)) return failure();
-        } else if (attrName == "replicate_on") {
-            StringAttr attr;
-            if (parser.parseAttribute(attr, "replicate_on", result.attributes)) return failure();
-        } else if (attrName == "single_tile_owner") {
-            StringAttr attr;
-            if (parser.parseAttribute(attr, "single_tile_owner", result.attributes)) return failure();
-        } else {
-             return parser.emitError(parser.getCurrentLocation(), "unknown attribute: ") << attrName;
-        }
-
-        parser.parseOptionalComma();
+        routing::TilingAttr tilingAttr;
+        if (parser.parseAttribute(tilingAttr))
+            return failure();
+        result.addAttribute("tiling", tilingAttr);
     }
 
-    if (parser.parseOptionalAttrDict(result.attributes))
+    if (parser.parseRBrace())
         return failure();
 
     if (parser.parseArrow())
@@ -427,18 +479,21 @@ void routingmanager::createroutingfuncGEMM(OpBuilder &builder, MLIRContext *ctx,
         auto tensorTypeC = tensorC.getType().cast<RankedTensorType>();
 
         // Partition tensor A (input): split by row, each tile group gets its rows
-        auto partTensorA = builder.create<partitiontensor>(location, tensorTypeA, tensorA, hwsplitnum, splitdimn,
-                                                           splitAxis, "col", "");
+        auto partTensorA = builder.create<partitiontensor>(
+            location, tensorTypeA, tensorA,
+            routing::PartitionAttr::get(ctx, hwsplitnum, splitdimn, splitAxis, "col", ""), routing::TilingAttr{});
 
         // Partition tensor B (input): replicated to all tile groups (broadcast)
         // splitnum=1 means no split — full tensor goes to each group
         // hw_axis_owner="" means not owned by any axis, replicate_on=splitAxis means broadcast along split axis
-        auto partTensorB =
-            builder.create<partitiontensor>(location, tensorTypeB, tensorB, 1, splitdimn, "", splitAxis, "");
+        auto partTensorB = builder.create<partitiontensor>(
+            location, tensorTypeB, tensorB, routing::PartitionAttr::get(ctx, 1, splitdimn, "", splitAxis, ""),
+            routing::TilingAttr{});
 
         // Partition tensor C (output): split by row, each tile group produces its rows
-        auto partTensorC = builder.create<partitiontensor>(location, tensorTypeC, tensorC, hwsplitnum, splitdimn,
-                                                           splitAxis, "col", "");
+        auto partTensorC = builder.create<partitiontensor>(
+            location, tensorTypeC, tensorC,
+            routing::PartitionAttr::get(ctx, hwsplitnum, splitdimn, splitAxis, "col", ""), routing::TilingAttr{});
 
         // Calculate split tensor shapes
         SmallVector<int64_t> splitShapeA(tensorTypeA.getShape());
@@ -554,10 +609,10 @@ mlir::func::FuncOp routingmanager::createroutingfunc(MLIRContext* ctx, int total
             /*
             //create mesh
             auto mesh = builder.create<createhwmesh>(builder.getUnknownLoc(),  rnum_i32, cnum_i32);
-            
+
             auto patitionmesh = builder.create<partitionmesh>(builder.getUnknownLoc(),  mesh, cnum_i32, "row");
             //------------
-            //fixme should use real subview 
+            //fixme should use real subview
             Value subview = builder.create<arith::ConstantIntOp>(builder.getUnknownLoc(), 1, 32);
             SmallVector<Attribute> shape;
             for (int64_t v : {10, 20})
@@ -568,20 +623,21 @@ mlir::func::FuncOp routingmanager::createroutingfunc(MLIRContext* ctx, int total
             auto tensor = builder.create<createscheduletensor>(builder.getUnknownLoc(),  subview, vals, dimnum);
             //
             auto hw_row_number = rnum_i32;
-            IntegerAttr splitdim = builder.getI64IntegerAttr(0);//dim 0 is 
+            IntegerAttr splitdim = builder.getI64IntegerAttr(0);//dim 0 is
 
             mlir::StringAttr hw_axis_owner=builder.getStringAttr("row");
-		    mlir::StringAttr replicate_on=builder.getStringAttr("col");
-		    mlir::StringAttr single_tile_owner=builder.getStringAttr("");
-            auto rowtensor = builder.create<partitiontensor>(builder.getUnknownLoc(),  
-                    tensor, hw_row_number, splitdim,hw_axis_owner,replicate_on, single_tile_owner);
+            mlir::StringAttr replicate_on=builder.getStringAttr("col");
+            mlir::StringAttr single_tile_owner=builder.getStringAttr("");
+            auto rowtensor = builder.create<partitiontensor>(builder.getUnknownLoc(),
+                    tensor, routing::PartitionAttr::get(ctx, hw_row_number, 0, "row", "col", ""),
+            routing::TilingAttr{});
             //extract data
             auto edata = builder.create<extract_data>(builder.getUnknownLoc(), rowtensor, cnum_i32);
             auto emeshtile = builder.create<extract_tiles>(builder.getUnknownLoc(), patitionmesh, cnum_i32);
             //extract tile
             */
             //
-            
+
             auto tilearray = builder.create<createtilearrayOp>(builder.getUnknownLoc(), rnum_i32, cnum_i32);
             auto io = builder.create<createdataio>(builder.getUnknownLoc(), "mem", "input");
             
@@ -625,8 +681,11 @@ void routingmanager::createroutingfuncByDim(OpBuilder& builder, MLIRContext* ctx
                     }
                     // Get tensor type from input tensor for partitiontensor result
                     auto tensorType = tensor.getType().cast<RankedTensorType>();
-                    auto rowtensor = builder.create<partitiontensor>(builder.getUnknownLoc(), tensorType, tensor, hwsplitnum, 0, tensorhwaxisowner,"col","");
-                    
+                    auto rowtensor = builder.create<partitiontensor>(
+                        builder.getUnknownLoc(), tensorType, tensor,
+                        routing::PartitionAttr::get(ctx, hwsplitnum, 0, tensorhwaxisowner, "col", ""),
+                        routing::TilingAttr{});
+
                     // Calculate split tensor type
                     SmallVector<int64_t> splitShape(tensorType.getShape());
                     if (splitdimn== 0) {
@@ -712,7 +771,7 @@ TensorSplitDesc SplitModel::fromSpatialTag(const std::string &tag, bool isInput)
 // ---------------------------------------------------------------------------
 
 TensorSplitDesc SplitModel::fromPolicyFields(int pattern, int distribution, int mergeOrder, int pingPong, bool isInput,
-                                             int maxBufferBytes) {
+                                             int maxBufferBytes, int layoutTransform) {
     // Map enum values to strings
     static const char *patternStr[] = {"broadcast", "scatter", "multicast", "gather"};
     static const char *flowStr[] = {"default", "ltor", "rtol"};
@@ -733,7 +792,14 @@ TensorSplitDesc SplitModel::fromPolicyFields(int pattern, int distribution, int 
         replOn = "";
     }
 
-    return {0, hwAxis, replOn, pat, flw, pingPong, maxBufferBytes};
+    // Map layoutTransform enum to string
+    std::string ltStr;
+    if (layoutTransform == 1)
+        ltStr = "dma_shuffle";
+    else if (layoutTransform == 2)
+        ltStr = "core_shuffle";
+
+    return {0, hwAxis, replOn, pat, flw, pingPong, maxBufferBytes, ltStr};
 }
 
 // ---------------------------------------------------------------------------
@@ -812,19 +878,87 @@ void routingmanager::createroutingfuncBySplitModel(OpBuilder &builder, MLIRConte
                     splitnum = 1;
                 }
 
-                auto partTensor =
-                    builder.create<partitiontensor>(location, tensorType, tensors[entry.index], splitnum,
-                                                    split.splitDim, split.hwAxisOwner, split.replicateOn, "");
+                auto partTensor = builder.create<partitiontensor>(
+                    location, tensorType, tensors[entry.index],
+                    routing::PartitionAttr::get(ctx, splitnum, split.splitDim, split.hwAxisOwner, split.replicateOn,
+                                                ""),
+                    routing::TilingAttr{});
+
+                // Spatial-halo: when this tensor uses overlapping halo distribution,
+                // each tile-row owns `haloSlice` rows along splitDim (instead of an even
+                // dimSize/splitnum slice) and consecutive tile-rows advance by `haloStep`.
+                // Build a grouped #routing.tiling<...> descriptor (one #routing.dim per
+                // tensor dim) and attach it on the partitiontensor op so
+                // DmaphopTodfscheblueprintPass can compute the overlapping per-tile DDR
+                // offset. (Round-trips via the op's custom printer/parser.)
+                bool isHalo = (split.haloMode == 1 && splitnum > 1 && split.haloSlice > 0);
+                if (isHalo) {
+                    // Two-level (nested) halo: each L1 tile slice (haloSlice rows) is
+                    // further chunked on-core into haloL2Rounds temporal rounds of
+                    // haloL2Slice rows advancing by haloL2Step → the row dim's nested
+                    // (inner) #routing.level. Opt-in: only emitted when haloL2Rounds > 1.
+                    int32_t l2Slice = 0, l2Step = 0, l2Rounds = 1;
+                    if (split.haloL2Rounds > 1 && split.haloL2Slice > 0) {
+                        l2Slice = split.haloL2Slice;
+                        l2Step = split.haloL2Step;
+                        l2Rounds = split.haloL2Rounds;
+                    }
+                    // K-contraction accumulate split (independent of the H/row L2):
+                    // the K dim is chunked into kRounds on-core accumulate rounds of
+                    // kSlice elements advancing by kStep → the other dim's outer
+                    // #routing.level. Opt-in: only populated when kAccumRounds > 1.
+                    int32_t kSlice = 0, kStep = 0, kRounds = 1;
+                    if (split.kAccumRounds > 1 && split.kAccumSlice > 0) {
+                        kSlice = split.kAccumSlice;
+                        kStep = split.kAccumStep;
+                        kRounds = split.kAccumRounds;
+                    }
+
+                    auto *ctx2 = builder.getContext();
+                    auto shape = tensorType.getShape();
+                    int sd = (split.splitDim == 0) ? 0 : 1; // HW-split (row) tensor dim
+                    int otherDim = 1 - sd;                  // K-accum dim
+
+                    // Row (HW-split) dim: outer L1 level + optional nested L2 slice_tiling.
+                    routing::LevelAttr rowSliceTiling;
+                    if (l2Rounds > 1) {
+                        rowSliceTiling = routing::LevelAttr::get(
+                            ctx2, /*base=*/split.haloSlice, /*total=*/(int64_t)l2Slice * l2Rounds,
+                            /*slice=*/l2Slice, /*step=*/l2Step, /*rounds=*/l2Rounds,
+                            /*slice_tiling=*/routing::LevelAttr{});
+                    }
+                    auto rowOuter = routing::LevelAttr::get(
+                        ctx2, /*base=*/shape[sd], /*total=*/(int64_t)split.haloSlice * splitnum,
+                        /*slice=*/split.haloSlice, /*step=*/split.haloStep, /*rounds=*/(int64_t)splitnum,
+                        /*slice_tiling=*/rowSliceTiling);
+                    auto rowDim = routing::DimAttr::get(ctx2, rowOuter);
+
+                    // K-accum dim: single outer level (no slice_tiling). When there is no
+                    // K-accum split (kRounds<=1) this degenerates to a full-dim single slice.
+                    int64_t kSl = (kRounds > 1) ? kSlice : shape[otherDim];
+                    int64_t kSt = (kRounds > 1) ? kStep : shape[otherDim];
+                    int64_t kRn = (kRounds > 1) ? kRounds : 1;
+                    auto colOuter = routing::LevelAttr::get(ctx2, /*base=*/shape[otherDim], /*total=*/kSl * kRn,
+                                                            /*slice=*/kSl, /*step=*/kSt, /*rounds=*/kRn,
+                                                            /*slice_tiling=*/routing::LevelAttr{});
+                    auto colDim = routing::DimAttr::get(ctx2, colOuter);
+
+                    // Order DimAttrs by tensor dimension index (d0, d1, ...).
+                    llvm::SmallVector<routing::DimAttr> dims(2);
+                    dims[sd] = rowDim;
+                    dims[otherDim] = colDim;
+                    partTensor.setTilingAttr(routing::TilingAttr::get(ctx2, dims));
+                }
 
                 // Calculate split tensor shape
                 SmallVector<int64_t> splitShape(tensorType.getShape());
                 if (splitnum > 1) {
-                    if (split.splitDim == 0) {
-                        if (splitShape[0] != ShapedType::kDynamic)
-                            splitShape[0] /= splitnum;
-                    } else {
-                        if (splitShape[1] != ShapedType::kDynamic)
-                            splitShape[1] /= splitnum;
+                    int sd = (split.splitDim == 0) ? 0 : 1;
+                    if (splitShape[sd] != ShapedType::kDynamic) {
+                        if (isHalo)
+                            splitShape[sd] = split.haloSlice; // overlapping slice (e.g. 61)
+                        else
+                            splitShape[sd] /= splitnum; // even split
                     }
                 }
                 auto splitTensorType =

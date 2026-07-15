@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
-"""MIT License
-* Copyright (C) 2026 Advanced Micro Devices, Inc. All Rights Reserved.
-* SPDX-License-Identifier: MIT
+"""Copyright 2025-2026 Advanced Micro Devices, Inc. All Rights Reserved.
+* SPDX-License-Identifier: Apache-2.0
 """
 """
 Palboard ELF Test Script
@@ -70,8 +69,8 @@ if not username or not vek385ip:
             print(f"Warning: Error sourcing envlocal.sh: {e}")
 
 if not username or not vek385ip:
-    print("Error: Please set USERNAME and vek385ip environment variables")
-    print("Example: export USERNAME=aaaaa && export vek385ip=boardname")
+    print("Error: Please set USERNAME and VEK385IP environment variables")
+    print("Example: export USERNAME=aaaaa && export VEK385IP=boardhostname<crimini2>")
     script_dir = os.path.dirname(os.path.abspath(__file__))
     print(f"Or create {os.path.join(script_dir, 'envlocal.sh')} with these exports")
     sys.exit(1)

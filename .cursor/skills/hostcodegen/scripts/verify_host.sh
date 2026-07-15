@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 ###############################################################################
 # Copyright (C) 2026 Advanced Micro Devices, Inc. All Rights Reserved.
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 ###############################################################################
 # Verify host ELF: run on HW via apppaltest.py and check console for success/errors.
 # Bundled in hostcodegen skill; resolves repo root from skill path.

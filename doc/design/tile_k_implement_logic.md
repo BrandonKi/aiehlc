@@ -448,3 +448,57 @@ When `tile_k == K` (or tile_k=0 which defaults to K):
 3. **Accumulator overflow**: With int8 inputs and int16 accumulator, the maximum accumulation across kRounds before overflow is limited. For kRounds=4 with effectiveK=64: worst case per element = 4 * 64 * 127 * 127 = 4,128,064, which overflows int16 (max 32767). For correctness with large kRounds, int32 accumulators or intermediate saturation would be needed. The current scenario (small values from `(i%7)-3` and `(i%5)-2`) does not hit this.
 
 4. **Spatial M/N rounds interaction**: When `tile_m < tileRows` or `tile_n < tileCols` (spatialMRounds > 1 or spatialNRounds > 1), the kernel's outer k_rounds loop nests with the spatial rounds. This interaction is not yet tested.
+
+---
+
+## Conv2d-Spatial K-Accumulate: single multi-dim shim BD (no host `scf.for`)
+
+For the conv2d_spatial halo case the input tensor is split across **both** L2 row bands
+(`l2_rounds`) and K-contraction bands (`k_rounds`). The naive lowering emitted a host
+`scf.for %c0 to %c16` (= `l2_rounds`×`k_rounds`) issuing one shim BD per trip. This is now
+collapsed into **ONE** `dfschedule.config.dma_bd` per IT shim tile that walks all 16 transfers in
+hardware via 3 address dims + the iteration dim + channel repeat.
+
+### Generated descriptor (conv2d_spatial, i8, k_slice=244, l2_slice=19, k_rounds=4, l2_rounds=4)
+
+```
+dma_bd: len = 18544 (= k_slice 244 × l2_slice 19 × k_rounds 4 × 1 B)
+  dim_strides = [4, 920, 224]   dim_wraps = [61, 19, 4]
+  iter_step_size = 12880        iter_wrap = 4
+start_io(..., repeat_count = 4)
+```
+
+- **D0 {stride=4, wrap=61}** — K-band width in words (`k_slice 244 / elemsPerWord 4 = 61`).
+- **D1 {stride=920, wrap=19}** — slab rows (`row_pitch 230 words × 4 B = 920`; `l2_slice = 19`).
+- **D2 {stride=224, wrap=4}** — K rounds (`k_step 56 words × 4 B = 224`; `k_rounds = 4`).
+- **iter_step_size=12880, iter_wrap=4** — L2 rounds (`l2_step 14 rows × row_pitch_words 230 × 4 B`).
+  `iter_step` uses `l2_step` (NOT `l2_slice`) because conv halo bands **overlap**.
+- **repeat_count=4** pairs 1:1 with `iter_wrap=4` (matmul convention) so HW `IterCurr` advances
+  through the 4 L2 rounds. The 16 transfers = D2(4) × iteration(4), NOT iter×repeat.
+
+Stream order = iteration(L2,outer) → D2(K) → D1(row) → D0(col), so slabs emerge as
+`r → (lr=r/4, kr=r%4)` exactly matching the kernel's `for r in 0..16: acquire_input_window` order.
+
+### Consumer needs NO change
+
+The core S2MM chops the byte stream into `buffer_size=4636` (=19×244) windows,
+`num_iterations=16`. `4 iter × 4 D2 bands × 4636 = 16 × 4636` = same total bytes, same order →
+16 lock releases → 16 kernel windows. Verified: kernel.cc `window_init(...,1159,16)` (1159 v4int8 ×
+4 B = 4636) is unchanged.
+
+### Code path
+
+- `passdmaphoptodfscheblueprint.cpp` — `isHaloTensor && !inputShimDimStrides`, gated on
+  `tensor_N.halo` `k_rounds>1`: builds the 3 dims (`strides=[wordBytes, row_pitch_w×wordBytes,
+  k_step_w×wordBytes]`, `wraps=[k_slice_w, l2_slice, k_rounds]`) into `shim_dim_strides/wraps`.
+- `passblueprinttoschedule.cpp` — `kAccumHaloSlab` detector routes through the **straight-line
+  (non-loop) branch** (same as matmul K-tiling): (a) shim len = `l2_slice×k_slice×k_rounds×elemSize`
+  while core len stays `l2_slice×k_slice×elemSize`; (b) `shimIterStepSize=l2_step×row_pitch_w×
+  wordBytes`, `shimIterWrap=l2_rounds`; (c) `needsOuterLoop=false` (skip host loop);
+  (d) channel `repeatCount=l2_rounds`.
+- **Requires** `tensor_N.halo` to carry `row_pitch` (PADDED DDR row width in elements). The unit-test
+  harness sets `halo.rowPitch = raw_wc` for the K-accum example; without it `row_pitch=0` collapses
+  D1 stride to 0 and disables the iteration (silent miscompile).
+
+All non-K-accum paths (`k_rounds<=1`, the `w_rounds` 2D halo loop, pure matmul K-tiling) are gated
+out and byte-unchanged.

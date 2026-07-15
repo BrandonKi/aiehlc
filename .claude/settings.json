@@ -12,5 +12,28 @@
       "mcp__*"
     ],
     "deny": []
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "ExitPlanMode",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "printf '%s' '{\"decision\":\"block\",\"reason\":\"CONFIDENCE GATE: A plan was just approved. Before executing ANY non-readonly tool, invoke the honest skill (Phase A) on the approved plan. Default threshold 90% unless the user passed an override. Drive each row to threshold via concrete actions (file reads, probes, AskUserQuestion) \u2014 never by inflating numbers. See the Forbidden phrasings section of the skill. Only after every row is at or above threshold (or user-accepted) may you proceed with execution.\"}'"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "printf '%s' '{\"hookSpecificOutput\":{\"hookEventName\":\"Stop\",\"additionalContext\":\"CONFIDENCE GATE REMINDER: Before ending this turn, ask yourself: did I execute code changes, file writes, or non-readonly operations? If YES and I have not yet run a Phase B confidence audit on the result, run it now. If the turn was purely conversational (question, read, explanation) or already audited, acknowledge that explicitly and proceed to end. Do not silently skip the audit when work was done.\"}}'"
+          }
+        ]
+      }
+    ]
   }
 }

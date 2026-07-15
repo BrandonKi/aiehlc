@@ -1,23 +1,23 @@
 /******************************************************************************
-* Copyright (C) 2025 Advanced Micro Devices, Inc. All Rights Reserved.
-* SPDX-License-Identifier: MIT
-*
-* AIE Programming Model — Conv2d + BatchNorm + LeakyReLU Fusion
-*
-* ResNet-style fused layer example using the tile programming model.
-* Two sequential fused kernels: conv3x3 + BN + LeakyReLU each.
-*
-* CUDA concepts kept (honest mapping):
-*   __global__             - kernel runs on AIE tiles
-*   kernel<<<mesh>>>()     - launch kernel across tile mesh
-*   aieDeviceSynchronize() - wait for all tiles to finish
-*   malloc/free            - plain C host memory allocation
-*
-* What the compiler handles automatically:
-*   DDR <-> tile DMA transfers, tensor partitioning, stream switch routing,
-*   buffer descriptors, lock synchronization, core load/run/wait
-*
-******************************************************************************/
+ * Copyright (C) 2025 Advanced Micro Devices, Inc. All Rights Reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * AIE Programming Model — Conv2d + BatchNorm + LeakyReLU Fusion
+ *
+ * ResNet-style fused layer example using the tile programming model.
+ * Two sequential fused kernels: conv3x3 + BN + LeakyReLU each.
+ *
+ * CUDA concepts kept (honest mapping):
+ *   __global__             - kernel runs on AIE tiles
+ *   kernel<<<mesh>>>()     - launch kernel across tile mesh
+ *   aieDeviceSynchronize() - wait for all tiles to finish
+ *   malloc/free            - plain C host memory allocation
+ *
+ * What the compiler handles automatically:
+ *   DDR <-> tile DMA transfers, tensor partitioning, stream switch routing,
+ *   buffer descriptors, lock synchronization, core load/run/wait
+ *
+ ******************************************************************************/
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>

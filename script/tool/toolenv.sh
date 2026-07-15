@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 ###############################################################################
 # Copyright (C) 2026 Advanced Micro Devices, Inc. All Rights Reserved.
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 ###############################################################################
 ###############################################################################
 # toolenv.sh - Source this from ~/.bashrc to activate aiehlc shell tools
