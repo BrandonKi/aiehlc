@@ -42,10 +42,15 @@ aierepo_download_check() {
         mkdir -p ${AIE_DRIVER_PARENT_DIR}/include
     fi
 
-    bash -c "pushd  $AIE_DRIVER_PARENT_DIR;git clone --branch main-aie $AIE_REPO; popd"
-    bash -c "cd $AIE_DRIVER_PARENT_DIR/aie-rt/driver/src; CC=\${CC:-gcc} CXX=\${CXX:-g++} make -f Makefile.Linux; make clean"
+    if [ ! -d "$AIE_DRIVER_PARENT_DIR/aie-rt/driver/src" ] ; then
+        bash -c "pushd  $AIE_DRIVER_PARENT_DIR;git clone --branch main-aie $AIE_REPO; popd"
+    else
+        echo "aie-rt already present at $AIE_DRIVER_PARENT_DIR/aie-rt; skipping clone"
+    fi
     ##temporary disable PLM support privledge register, as compile have issue
     find $AIE_DRIVER_PARENT_DIR/aie-rt/driver/src -name "Makefile" -exec sed -i 's/-DXAIE_PROD//g' {} \;
+    bash -c "cd $AIE_DRIVER_PARENT_DIR/aie-rt/driver/src; make -f Makefile.Linux include"
+    bash -c "cd $AIE_DRIVER_PARENT_DIR/aie-rt/driver/src; make -f Makefile.Linux include INCLUDEDIR=../../../include INTERNALDIR=../../../internal"
 }
 
 USE_LLVMAIE=0
