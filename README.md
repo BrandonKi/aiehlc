@@ -127,14 +127,11 @@ source script/setup.sh
 #or
 source ./script/setup.sh --bsp-use-git-repo=https://path/to/aie-rt.git
 
-# Step 1: generate artifacts + aout/sim_config.sh (no auto-run)
+# stub all tiles (seems to crash the simulator often)
 source script/aiehlc.sh --platform sim --aie-version 5 --runtime-source-file tutorial/example.cpp
-
-# Step 2: run the simulator against the generated aout/ dir
-bash script/runsim.sh aout/
-
-# stub only tile col=0 row=3 (config records the stub choice; runsim reads it)
+# or explicitly stub only tiles you used, e.g. col=0 row=3
 source script/aiehlc.sh --platform sim --aie-version 5 --sim-tiles "0:3" --runtime-source-file tutorial/example.cpp
+
 bash script/runsim.sh
 ```
 

@@ -43,7 +43,7 @@ write_sim_config() {
     echo ""
     echo "[sim] Artifacts + sim config written to ${out_dir}"
     echo "[sim] Run the simulator with:"
-    echo "        bash runsim.sh"
+    echo "        bash ${SCRIPT_DIR}/runsim.sh ${out_dir}"
     echo ""
 }
 
