@@ -123,4 +123,5 @@ Compare the crashing tiling PS.so to a working single-kernel PS.so (build `tutor
 ```bash
 source script/aiehlc.sh --platform sim --aie-version 5 --sim-tiles 0:3 \
     --runtime-source-file ./example/tileprogram/ccode/mini_tile.cc
+bash script/runsim.sh aout/
 ```

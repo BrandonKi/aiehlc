@@ -4,8 +4,9 @@
 
 set -e
 
-SIM_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "${SIM_DIR}/../.." && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+SIM_DIR="${SCRIPT_DIR}/sim"
 
 HOST_SRC=""
 KERNEL_OBJS=""
@@ -22,6 +23,24 @@ NOC_ALL=0
 SKIP_BUILD=0
 SKIP_WORK=0
 SIM_OPTS=""
+
+CONFIG_DIR=""
+if [[ $# -gt 0 && "$1" != --* && -d "$1" ]]; then
+    CONFIG_DIR="$(cd "$1" && pwd)"
+    shift
+elif [[ $# -eq 0 && -d "$(pwd)/aout" ]]; then
+    CONFIG_DIR="$(pwd)/aout"
+fi
+if [ -n "${CONFIG_DIR}" ]; then
+    CONFIG_FILE="${CONFIG_DIR}/sim_config.sh"
+    if [ ! -f "${CONFIG_FILE}" ]; then
+        echo "Error: no sim config found at ${CONFIG_FILE}"
+        echo "  Point runsim.sh at an aiehlc aout/ directory produced with '--platform sim'."
+        return 1 2>/dev/null || exit 1
+    fi
+    echo "=== Loading sim config: ${CONFIG_FILE} ==="
+    source "${CONFIG_FILE}"
+fi
 
 while [[ $# -gt 0 ]]; do
     case "$1" in

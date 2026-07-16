@@ -127,10 +127,33 @@ source script/setup.sh
 #or
 source ./script/setup.sh --bsp-use-git-repo=https://path/to/aie-rt.git
 
+# Step 1: generate artifacts + aout/sim_config.sh (no auto-run)
 source script/aiehlc.sh --platform sim --aie-version 5 --runtime-source-file tutorial/example.cpp
 
-# stub only tile col=0 row=3
+# Step 2: run the simulator against the generated aout/ dir
+bash script/runsim.sh aout/
+
+# stub only tile col=0 row=3 (config records the stub choice; runsim reads it)
 source script/aiehlc.sh --platform sim --aie-version 5 --sim-tiles "0:3" --runtime-source-file tutorial/example.cpp
+bash script/runsim.sh
+```
+
+`runsim.sh` can be invoked three ways:
+
+```bash
+# 1. Default: no args -> reads ./aout/sim_config.sh (same CWD you ran aiehlc.sh from)
+bash script/runsim.sh
+
+# 2. Specific aout dir: point it at any aout/ containing a sim_config.sh
+bash script/runsim.sh path/to/aout
+
+# 3. Direct (no config file): pass the inputs yourself (not recommended)
+bash script/runsim.sh \
+    --host-src /path/to/host.cc \
+    --kernel-objs "/path/k1.o /path/k2.o" \
+    --kernel-names "k1 k2" \
+    --aie-gen 5 \
+    --stub-all            # or: --stub-tiles "0:3"
 ```
 
 On success the sim ends with `Sucess: CPU result matches AIE.` / `Sim result: 0`.
