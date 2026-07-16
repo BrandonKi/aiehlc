@@ -127,3 +127,5 @@ run_test2.py
 script/sim/Work*/
 script/sim/build/
 
+/aiehlc_aiesimulator
+

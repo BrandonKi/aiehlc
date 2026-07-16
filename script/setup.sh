@@ -133,6 +133,11 @@ fi
 
 echo "XILINX_VITIS: ${XILINX_VITIS}"
 
+if [ -n "$XILINX_VITIS" ]; then
+    bash "$SCRIPT_DIR/sim/gen_aiesimulator.sh" "$AIEHLC_DIR/aiehlc_aiesimulator" || \
+        echo "WARNING: failed to generate aiehlc_aiesimulator launcher."
+fi
+
 #set up the petalinux path
 if [ -n "$PETALINUX" ]; then
     echo "PETALINUX is set to $PETALINUX"

@@ -117,6 +117,10 @@ echo ""
 
 export AIE_WORK_DIR="${WORK_DIR}"
 
+if [ ! -x "${REPO_ROOT}/aiehlc_aiesimulator" ]; then
+    bash "${SIM_DIR}/gen_aiesimulator.sh" "${REPO_ROOT}/aiehlc_aiesimulator"
+fi
+
 "${REPO_ROOT}/aiehlc_aiesimulator" \
     --pkg-dir "${WORK_DIR}" \
     --display-run-interval=100000 \

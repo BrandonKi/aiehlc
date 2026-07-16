@@ -115,6 +115,26 @@ source ./script/setup.sh --bsp-use-git-repo=https://path/to/aie-rt.git
 source script/aiehlc.sh --platform linux --aie-version 2 --runtime-source-file tutorial/example.cpp
 ```
 
+AIE Simulator Support (no board required)
+
+Select the simulator with `--platform sim`. Key args:
+
+- `--aie-version`: `1` (AIE), `2` (AIE-ML), or `5` (AIE2PS)
+- `--sim-tiles "col:row,..."`: tiles to load a stub kernel ELF onto (comma-separated logical-`col`:physical-`row`, e.g. `0:3`). Omit to stub the whole array (default, but seems to crash the simulator often).
+
+```bash
+source script/setup.sh
+#or
+source ./script/setup.sh --bsp-use-git-repo=https://path/to/aie-rt.git
+
+source script/aiehlc.sh --platform sim --aie-version 5 --runtime-source-file tutorial/example.cpp
+
+# stub only tile col=0 row=3
+source script/aiehlc.sh --platform sim --aie-version 5 --sim-tiles "0:3" --runtime-source-file tutorial/example.cpp
+```
+
+On success the sim ends with `Sucess: CPU result matches AIE.` / `Sim result: 0`.
+
 ## rcom: ROCm/HIP GEMM Front End
 
 `rcom` is a standalone Python front end that reads a canonical ROCm/HIP int8
