@@ -2,7 +2,7 @@
      SPDX-License-Identifier: Apache-2.0 -->
 ---
 name: aiesimloaddebug
-description: Debug AIE simulator (aie2pssimmsm) segfaults that happen at PS.so load — the sim dies right after "AIE_WORK_DIR = ..." and before "AIEHLC PS IP started", with no useful console error. Most often a stale script/sim/build/kernel_elf_init.cc referencing the wrong embedded-kernel symbol (_binary_kernel_<name>_start), which leaves an undefined symbol so dlopen of aiehlc_ps.so fails and the simulator crashes. Use when a --platform sim run of a tiling program crashes during elaboration while single-kernel programs (e.g. tutorial/example.cpp) run fine.
+description: Debug AIE simulator (aie2pssimmsm) segfaults. Two families — (1) load-time crash at PS.so load, before "AIEHLC PS IP started", usually a stale script/sim/build/kernel_elf_init.cc referencing the wrong _binary_kernel_<name>_start symbol so dlopen of aiehlc_ps.so fails; (2) runtime crash after "Loading kernel..." inside XAie_LoadElfMem → BlockWrite32 → MathEngine::try_sideband_fast_write → invalidate_operation_cache, caused by a num_tiles="0" Work_gen5/reports/aiehlc.xpe that makes the ISS disable all tiles ("Iss used row and col 0 0"). Use when a --platform sim run crashes at elaboration or during kernel load.
 ---
 
 # AIE Simulator PS.so Load-Crash Debug
@@ -26,7 +26,31 @@ grep -aE 'AIEHLC PS IP started|AIEHLC PS IP loaded|__Runtime_init' <simlog>
 ```
 
 - **None present** → crash is at PS.so load / SystemC elaboration, *before* the PS thread runs. Continue below.
-- **Present, then crash later** → different problem (runtime/DMA/data), not this skill. Use the DMA/data-mismatch tools instead.
+- **Present, then crash later** → runtime crash. If the backtrace goes through `XAie_LoadElfMem` → `XAie_BlockWrite32` → `MathEngine::try_sideband_fast_write` → `invalidate_operation_cache`, see **Root cause #3** below. Otherwise use the DMA/data-mismatch tools.
+
+## Root cause #3: crash in `XAie_LoadElfMem` — ISS disabled the target tile (`num_tiles="0"` xpe)
+
+**Symptom:** the sim reaches `AIEHLC PS IP started` and prints `Loading kernel 1...`, then segfaults inside the vendor model:
+
+```
+XAie_LoadElfMem → XAie_BlockWrite32 → PSIP_aiehlc::write32
+  → MathEngine::try_sideband_fast_write → me_sc::invalidate_operation_cache  (SIGSEGV)
+```
+
+**Root cause:** the AIE2PS ISS reads `Work_gen5/reports/aiehlc.xpe` and uses its `num_tiles` to size the "used tile" grid. A stub xpe with `num_tiles="0"` makes the ISS decide **no** core tiles are used — the log shows `ISS disables unused tiles` then a single `Iss used row and col 0 0`. The runtime then does `XAie_LoadElfMem` (a PM `BlockWrite32`) into a **disabled** tile whose core model / operation cache was never constructed → segfault. (Independent of Vitis version — reproduces identically on 2026.1 and 2026.2.)
+
+### Confirm
+
+```bash
+grep -nE 'Found xpe|Iss used row and col|disables unused' <simlog>
+cat script/sim/Work_gen5/reports/aiehlc.xpe   # look for num_tiles="0"
+```
+- **Broken:** exactly one `Iss used row and col 0 0` (grid collapsed to origin).
+- **Healthy:** many lines — `Iss used row and col 0 0`, `0 1`, … `0 35`, `1 0`, … (the ISS enumerates the whole array).
+
+### Fix
+
+Do **not** emit a `num_tiles="0"` xpe from `script/sim/gen_work_package.sh`. Removing the xpe block entirely is correct: without the file the ISS enables the full array and the ELF load succeeds. The `Summary File: Warning - Can't find aie compiler summary file!` warning is unrelated and appears with or without the xpe. Verify with `tutorial/example.cpp --platform sim`: expect `CPU=100..119 == AIE=100..119`, `Kernel test passed!`, `Sim result: 0`.
 
 ## Root cause #1 (most common): stale `kernel_elf_init.cc`
 
