@@ -232,7 +232,7 @@ $(BUILD_DIR)/aiehlc_ps.so: $(OUR_OBJS) $(AIE_RT_LIB)
 	@echo "Done: $@"
 	@ls -lh $@
 
-STUB_SRC         := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))stub_kernel.cc
+STUB_SRC         := $(SIM_SRC)/stub_kernel.cc
 STUB_BUILD_DIR   := $(BUILD_DIR)/stub_kernel_build
 STUB_PRX         := $(STUB_BUILD_DIR)/kernel.prx
 STUB_ELF         := $(STUB_BUILD_DIR)/stub_kernel
@@ -250,7 +250,7 @@ endif
 
 $(STUB_PRX): | $(BUILD_DIR)
 	mkdir -p $(STUB_BUILD_DIR)
-	@STUB_BCF=$(dir $(abspath $(lastword $(MAKEFILE_LIST))))stub_kernel.bcf; \
+	@STUB_BCF=$(SIM_SRC)/stub_kernel.bcf; \
 	BCF_LINE=""; \
 	if [ -f "$$STUB_BCF" ]; then \
 	    cp "$$STUB_BCF" $(STUB_BUILD_DIR)/stub_kernel.bcf; \

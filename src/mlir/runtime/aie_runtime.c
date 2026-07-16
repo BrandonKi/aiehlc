@@ -554,6 +554,9 @@ XAie_DevInst *__Runtime_explicit_init(void) {
         return NULL;
     }
 
+#if AIE_GEN == 5 && !defined(__AIESIM__)
+    XAie_SetXprodEnable(dev, XAIE_DISABLE);
+#endif
     AieRC RC = XAie_CfgInitialize(dev, &g_Config);
     if (RC != XAIE_OK) {
         printf("[aie_runtime] explicit_init CfgInitialize failed: %d\n", (int)RC);
@@ -627,6 +630,9 @@ XAie_DevInst *__Runtime_explicit_init_partition(int startCol, int numCols) {
         return NULL;
     }
 
+#if AIE_GEN == 5 && !defined(__AIESIM__)
+    XAie_SetXprodEnable(dev, XAIE_DISABLE);
+#endif
     RC = XAie_CfgInitialize(dev, &g_Config);
     if (RC != XAIE_OK) {
         printf("[aie_runtime] explicit_init_partition CfgInitialize failed: %d\n", (int)RC);
@@ -1450,18 +1456,30 @@ void __Runtime_wait_event(XAie_DevInst *dev, struct_event event) {
     {
         const uint32_t WAIT_TIMEOUT_US = 1000;
         const uint32_t timeout_iters = 120 * 1000;
+        const uint32_t PROGRESS_EVERY = 50;
         uint32_t iter = 0;
         do {
             allDone = 1;
+            uint32_t pending_col = 0, pending_row = 0;
             for (uint32_t i = 0; i < event.num_tiles; i++) {
                 if (!__Runtime_is_aie_core_tile(event.tiles[i]))
                     continue;
                 AieRC RC = XAie_CoreWaitForDone(dev, event.tiles[i], WAIT_TIMEOUT_US);
-                if (RC != XAIE_OK)
+                if (RC != XAIE_OK) {
                     allDone = 0;
+                    pending_col = event.tiles[i].Col;
+                    pending_row = event.tiles[i].Row;
+                }
             }
             iter++;
+            if (!allDone && (iter % PROGRESS_EVERY) == 0)
+                printf("[aie_runtime] wait_event WAITING iter=%u/%u still-busy core tile(%u,%u)\n", iter, timeout_iters,
+                       pending_col, pending_row);
         } while (!allDone && iter < timeout_iters);
+        if (allDone)
+            printf("[aie_runtime] wait_event done after %u iter(s)\n", iter);
+        else
+            printf("[aie_runtime] wait_event TIMEOUT after %u iters - continuing to debug snapshot\n", iter);
     }
 #else
     uint32_t timeout_iters = 100;
