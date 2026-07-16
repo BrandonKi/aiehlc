@@ -80,6 +80,17 @@ mkdir -p "${WORK_DIR}/reports"
 
 echo -n "hw" > "${WORK_DIR}/.target"
 
+cat > "${WORK_DIR}/reports/aiehlc.xpe" <<EOF
+<?xml version="1.0"?>
+<POWERDATA data="AI-Engine Compiler" dataVersion="2026.1" design="aiehlc" date="$(date)">
+ <DEVICE part="${PHY_DEVICE}" grade="extended" package="none" speed="none" process="typical" vid="No"></DEVICE>
+  <AIE status="COMPILER_OUTPUT">
+    <AIE_MODULE name="aiehlc" num_tiles="0" clk_freq="$(awk "BEGIN{printf \"%.0f\", ${AIE_FREQ}/1000000}")">
+    </AIE_MODULE>
+  </AIE>
+</POWERDATA>
+EOF
+
 PS_SO_ABS="$(cd "$(dirname "$PS_SO")" && pwd)/$(basename "$PS_SO")"
 PS_SO_WORK_REL="ps/c_rts/systemC/generated-objects/aiehlc_ps.so"
 if [ -f "${PS_SO_ABS}" ]; then

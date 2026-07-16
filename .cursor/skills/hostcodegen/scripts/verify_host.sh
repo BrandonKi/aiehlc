@@ -72,8 +72,8 @@ echo ">>> Running host on HW (ELF=$ELF_PATH), logging to $LOG_FILE"
 python3 "${TEST_DIR}/apppaltest.py" "$ELF_PATH" 2>&1 | tee "$LOG_FILE" || true
 
 # Verify: fail if console contains AIE error / invalid tile; pass if runtime teardown seen
-FAIL_MARKERS="AIE ERROR|Invalid Tile Type|Cannot find Tile Type"
-PASS_MARKERS="device_teardown done|device_init OK"
+FAIL_MARKERS="AIE ERROR|Invalid Tile Type|Cannot find Tile Type|\[VERIFY\] TEST FAILED"
+PASS_MARKERS="\[VERIFY\] TEST PASSED|device_teardown done|device_init OK"
 
 if grep -qE "$FAIL_MARKERS" "$LOG_FILE" 2>/dev/null; then
     echo ""

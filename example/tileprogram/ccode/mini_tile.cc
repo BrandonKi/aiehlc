@@ -46,7 +46,23 @@ int main() {
     for (int i = 0; i < M * N; i++)
         C[i] = 0;
     copyk<<<mesh>>>(A, C);
+
+    device.synchronizecpu(C, M * N * sizeof(int8_t));
+    int errors = 0;
+    for (int i = 0; i < M * N; i++) {
+        int8_t expected = (int8_t)(i % 7);
+        if (C[i] != expected) {
+            if (errors < 10)
+                printf("[VERIFY] mismatch at %d: got %d expected %d\n", i, (int)C[i], (int)expected);
+            errors++;
+        }
+    }
+    if (errors == 0)
+        printf("[VERIFY] TEST PASSED: %d/%d elements correct\n", M * N, M * N);
+    else
+        printf("[VERIFY] TEST FAILED: %d/%d elements wrong\n", errors, M * N);
+
     device.free(A);
     device.free(C);
-    return 0;
+    return errors == 0 ? 0 : 1;
 }
