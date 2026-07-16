@@ -1,30 +1,31 @@
 /******************************************************************************
-* Copyright (c) 2024 Advanced Micro Devices, Inc. All Rights Reserved.
-* SPDX-License-Identifier: MIT
-******************************************************************************/
+ * Copyright (c) 2024 - 2025 Advanced Micro Devices, Inc. All Rights Reserved.
+ * SPDX-License-Identifier: MIT
+ ******************************************************************************/
 
 /*****************************************************************************/
 /**
-* @file xparameters_ps.h
-*
-* This file contains the address definitions for the hard peripherals
-* available in VersalGen2
-*
-* <pre>
-* MODIFICATION HISTORY:
-*
-* Ver   Who     Date     Changes
-* ----- ------- -------- ---------------------------------------------------
-* 9.2 	KSR     07/17/24 Initial release
-* 9.2   asa     09/11/23 Fix link error for redefinion of ARMR5
-*
-* </pre>
-*
-* @note
-*
-* None.
-*
-******************************************************************************/
+ * @file xparameters_ps.h
+ *
+ * This file contains the address definitions for the hard peripherals
+ * available in Versal 2VE and 2VM devices.
+ *
+ * <pre>
+ * MODIFICATION HISTORY:
+ *
+ * Ver   Who     Date     Changes
+ * ----- ------- -------- ---------------------------------------------------
+ * 9.2 	KSR     07/17/24 Initial release
+ * 9.2   asa     09/11/23 Fix link error for redefinion of ARMR5
+ * 9.5   oh      11/13/25 Add entries for PS PL IRQs
+ *
+ * </pre>
+ *
+ * @note
+ *
+ * None.
+ *
+ ******************************************************************************/
 
 #ifndef _XPARAMETERS_PS_H_
 #define _XPARAMETERS_PS_H_
@@ -39,6 +40,10 @@ extern "C" {
 
 #if !defined(VERSAL_AIEPG2)
 #define VERSAL_AIEPG2
+#endif
+
+#if !defined(VERSAL_2VE_2VM)
+#define VERSAL_2VE_2VM
 #endif
 
 #if !defined (__aarch64__)
@@ -436,6 +441,83 @@ extern "C" {
 #define XPAR_PSX_TTC_9_INTERRUPT_ID        0x4034U
 #define XPAR_PSX_TTC_10_INTERRUPT_ID       0x4035U
 #define XPAR_PSX_TTC_11_INTERRUPT_ID       0x4036U
+
+/* Defines for PS PL Interrupt IDs */
+#define XPS_PL_LPD_IRQ0_INT_ID (104U + 32U)
+#define XPS_PL_LPD_IRQ1_INT_ID (105U + 32U)
+#define XPS_PL_LPD_IRQ2_INT_ID (106U + 32U)
+#define XPS_PL_LPD_IRQ3_INT_ID (107U + 32U)
+#define XPS_PL_LPD_IRQ4_INT_ID (108U + 32U)
+#define XPS_PL_LPD_IRQ5_INT_ID (109U + 32U)
+#define XPS_PL_LPD_IRQ6_INT_ID (110U + 32U)
+#define XPS_PL_LPD_IRQ7_INT_ID (111U + 32U)
+#define XPS_PL_LPD_IRQ8_INT_ID (51U + 32U)
+#define XPS_PL_LPD_IRQ9_INT_ID (52U + 32U)
+#define XPS_PL_LPD_IRQ10_INT_ID (53U + 32U)
+#define XPS_PL_LPD_IRQ11_INT_ID (54U + 32U)
+#define XPS_PL_LPD_IRQ12_INT_ID (82U + 32U)
+#define XPS_PL_LPD_IRQ13_INT_ID (83U + 32U)
+#define XPS_PL_LPD_IRQ14_INT_ID (84U + 32U)
+#define XPS_PL_LPD_IRQ15_INT_ID (85U + 32U)
+#define XPS_PL_LPD_IRQ16_INT_ID (86U + 32U)
+#define XPS_PL_LPD_IRQ17_INT_ID (87U + 32U)
+#define XPS_PL_LPD_IRQ18_INT_ID (88U + 32U)
+#define XPS_PL_LPD_IRQ19_INT_ID (89U + 32U)
+#define XPS_PL_LPD_IRQ20_INT_ID (90U + 32U)
+#define XPS_PL_LPD_IRQ21_INT_ID (91U + 32U)
+#define XPS_PL_LPD_IRQ22_INT_ID (92U + 32U)
+#define XPS_PL_LPD_IRQ23_INT_ID (93U + 32U)
+
+#define XPAR_PS_PL_LPD0_INTERRUPT_ID 0x4068U
+#define XPAR_PS_PL_LPD1_INTERRUPT_ID 0x4069U
+#define XPAR_PS_PL_LPD2_INTERRUPT_ID 0x406AU
+#define XPAR_PS_PL_LPD3_INTERRUPT_ID 0x406BU
+#define XPAR_PS_PL_LPD4_INTERRUPT_ID 0x406CU
+#define XPAR_PS_PL_LPD5_INTERRUPT_ID 0x406DU
+#define XPAR_PS_PL_LPD6_INTERRUPT_ID 0x406EU
+#define XPAR_PS_PL_LPD7_INTERRUPT_ID 0x406FU
+#define XPAR_PS_PL_LPD8_INTERRUPT_ID 0x4033U
+#define XPAR_PS_PL_LPD9_INTERRUPT_ID 0x4034U
+#define XPAR_PS_PL_LPD10_INTERRUPT_ID 0x4035U
+#define XPAR_PS_PL_LPD11_INTERRUPT_ID 0x4036U
+#define XPAR_PS_PL_LPD12_INTERRUPT_ID 0x4052U
+#define XPAR_PS_PL_LPD13_INTERRUPT_ID 0x4053U
+#define XPAR_PS_PL_LPD14_INTERRUPT_ID 0x4054U
+#define XPAR_PS_PL_LPD15_INTERRUPT_ID 0x4055U
+#define XPAR_PS_PL_LPD16_INTERRUPT_ID 0x4056U
+#define XPAR_PS_PL_LPD17_INTERRUPT_ID 0x4057U
+#define XPAR_PS_PL_LPD18_INTERRUPT_ID 0x4058U
+#define XPAR_PS_PL_LPD19_INTERRUPT_ID 0x4059U
+#define XPAR_PS_PL_LPD20_INTERRUPT_ID 0x405AU
+#define XPAR_PS_PL_LPD21_INTERRUPT_ID 0x405BU
+#define XPAR_PS_PL_LPD22_INTERRUPT_ID 0x405CU
+#define XPAR_PS_PL_LPD23_INTERRUPT_ID 0x405DU
+
+#define XPS_PL_FPD_IRQ0_INT_ID (143U + 32U)
+#define XPS_PL_FPD_IRQ1_INT_ID (144U + 32U)
+#define XPS_PL_FPD_IRQ2_INT_ID (145U + 32U)
+#define XPS_PL_FPD_IRQ3_INT_ID (146U + 32U)
+#define XPS_PL_FPD_IRQ4_INT_ID (147U + 32U)
+#define XPS_PL_FPD_IRQ5_INT_ID (148U + 32U)
+#define XPS_PL_FPD_IRQ6_INT_ID (149U + 32U)
+#define XPS_PL_FPD_IRQ7_INT_ID (150U + 32U)
+
+#define XPAR_PS_PL_FPD0_INTERRUPT_ID 0x408FU
+#define XPAR_PS_PL_FPD1_INTERRUPT_ID 0x4090U
+#define XPAR_PS_PL_FPD2_INTERRUPT_ID 0x4091U
+#define XPAR_PS_PL_FPD3_INTERRUPT_ID 0x4092U
+#define XPAR_PS_PL_FPD4_INTERRUPT_ID 0x4093U
+#define XPAR_PS_PL_FPD5_INTERRUPT_ID 0x4094U
+#define XPAR_PS_PL_FPD6_INTERRUPT_ID 0x4095U
+#define XPAR_PS_PL_FPD7_INTERRUPT_ID 0x4096U
+
+/*
+ * There exists two irq pins (pl_mmi_irq0 and pl_mmi_irq1) for mmi_misc_events.
+ * These pins have the same interrupt IDs (163). These pins are ORed together
+ * and given as corr_event interrupt to PS.
+ */
+#define XPS_PL_MMI_IRQ0_INT_ID (163U + 32U)
+#define XPS_PL_MMI_IRQ1_INT_ID (163U + 32U)
 
 #ifdef __cplusplus
 }

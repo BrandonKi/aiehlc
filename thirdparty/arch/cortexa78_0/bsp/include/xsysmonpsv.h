@@ -1,49 +1,50 @@
 /******************************************************************************
-* Copyright (C) 2016 - 2022 Xilinx, Inc.  All rights reserved.
-* Copyright (C) 2022 - 2024 Advanced Micro Devices, Inc. All Rights Reserved.
-* SPDX-License-Identifier: MIT
-******************************************************************************/
+ * Copyright (C) 2016 - 2022 Xilinx, Inc.  All rights reserved.
+ * Copyright (C) 2022 - 2025 Advanced Micro Devices, Inc. All Rights Reserved.
+ * SPDX-License-Identifier: MIT
+ ******************************************************************************/
 
 /*****************************************************************************/
 /**
-* @file xsysmonpsv.h
-* @addtogroup sysmonpsv_api SYSMONPSV APIs
-* @{
-*
-*
-*
-*
-* <br><br>
-*
-*
-* <pre>
-* MODIFICATION HISTORY:
-*
-* Ver   Who    Date     Changes
-* ----- -----  -------- -----------------------------------------------
-* 1.0   aad    02/08/18 First release
-* 1.2   aad    06/14/20 Fixed temperature calculation for negative temp
-* 2.0   aad    07/31/20 Added new APIs to set threshold values, alarm
-*                       config and modes for temperature and voltages.
-*                       Added new interrupt handling structure.
-*       aad    10/12/20 Fixed MISRAC violations
-* 2.1   aad    02/24/21 Added additional documentation to support production
-*                       silicon.
-* 2.2   aad    03/29/21 Added an array that contains the supply names in
-*                       strings.
-* 2.3   aad    04/30/21 Size optimization for PLM code.
-* 2.3   aad    07/26/21 Added doxygen comments.
-* 2.3   aad    09/01/21 Fixed compilation warning.
-* 3.0   cog    03/25/21 Driver Restructure
-* 3.1   cog    04/09/22 Remove GIC standalone related functionality for
-*                       arch64 architecture
-* 4.0   se     10/04/22 Update return value definitions
-* 5.0   se     08/01/24 Added new APIs to enable, set and get averaging for
-*                       voltage supplies and temperature satellites.
-*
-* </pre>
-*
-******************************************************************************/
+ * @file xsysmonpsv.h
+ * @addtogroup sysmonpsv_api SYSMONPSV APIs
+ * @{
+ *
+ *
+ *
+ *
+ * <br><br>
+ *
+ *
+ * <pre>
+ * MODIFICATION HISTORY:
+ *
+ * Ver   Who    Date     Changes
+ * ----- -----  -------- -----------------------------------------------
+ * 1.0   aad    02/08/18 First release
+ * 1.2   aad    06/14/20 Fixed temperature calculation for negative temp
+ * 2.0   aad    07/31/20 Added new APIs to set threshold values, alarm
+ *                       config and modes for temperature and voltages.
+ *                       Added new interrupt handling structure.
+ *       aad    10/12/20 Fixed MISRAC violations
+ * 2.1   aad    02/24/21 Added additional documentation to support production
+ *                       silicon.
+ * 2.2   aad    03/29/21 Added an array that contains the supply names in
+ *                       strings.
+ * 2.3   aad    04/30/21 Size optimization for PLM code.
+ * 2.3   aad    07/26/21 Added doxygen comments.
+ * 2.3   aad    09/01/21 Fixed compilation warning.
+ * 3.0   cog    03/25/21 Driver Restructure
+ * 3.1   cog    04/09/22 Remove GIC standalone related functionality for
+ *                       arch64 architecture
+ * 4.0   se     10/04/22 Update return value definitions
+ * 5.0   se     08/01/24 Added new APIs to enable, set and get averaging for
+ *                       voltage supplies and temperature satellites.
+ * 5.2   se     08/24/25 Microblaze support added
+ *
+ * </pre>
+ *
+ ******************************************************************************/
 
 #ifndef XSYSMONPSV_H_ /**< prevent circular inclusions */
 #define XSYSMONPSV_H_ /**< by using protection macros */
@@ -61,6 +62,9 @@ extern "C" {
 #include "xsysmonpsv_services.h"
 #if defined (ARMR5) || defined (__aarch64__)
 #include "xscugic.h"
+#endif
+#if defined(PLATFORM_MB) && defined(XIL_INTERRUPT) && defined(SDT)
+#include "xinterrupt_wrap.h"
 #endif
 /**************************** Type Definitions *******************************/
 
@@ -342,7 +346,7 @@ int XSysMonPsv_EnableSupplyAverage(XSysMonPsv *InstancePtr,
 void XSysMonPsv_SetSupplyAverageRate(XSysMonPsv *InstancePtr, u8 AverageRate);
 int XSysMonPsv_GetSupplyAverageRate(XSysMonPsv *InstancePtr, u8 *AverageRate);
 
-#if defined (ARMR5) || defined (__aarch64__)
+#if defined(ARMR5) || defined(__aarch64__) || defined(PLATFORM_MB)
 int XSysMonPsv_RegisterDeviceTempOps(XSysMonPsv *InstancePtr,
 				     XSysMonPsv_Handler CallbackFunc,
 				     void *CallbackRef);
@@ -358,7 +362,7 @@ int XSysMonPsv_RegisterSupplyOps(XSysMonPsv *InstancePtr,
 int XSysMonPsv_UnregisterSupplyOps(XSysMonPsv *InstancePtr,
 				   XSysMonPsv_Supply Supply);
 
-int XSysMonPsv_Init(XSysMonPsv *InstancePtr, XScuGic *IntcInst);
+int XSysMonPsv_Init(XSysMonPsv *InstancePtr, void *IntcInst);
 #endif
 
 /* Interrupt functions in xsysmonpsv_intr.c */
@@ -370,7 +374,7 @@ void XSysMonPsv_IntrClear(XSysMonPsv *InstancePtr, u32 Mask);
 void XSysMonPsv_SetNewDataIntSrc(XSysMonPsv *InstancePtr,
 				 XSysMonPsv_Supply Supply, u32 Mask);
 
-#if defined (ARMR5) || defined (__aarch64__)
+#if defined(ARMR5) || defined(__aarch64__) || defined(PLATFORM_MB)
 void XSysMonPsv_SetTempEventHandler(XSysMonPsv *InstancePtr,
 				    XSysMonPsv_Handler CallbackFunc,
 				    void *CallbackRef);

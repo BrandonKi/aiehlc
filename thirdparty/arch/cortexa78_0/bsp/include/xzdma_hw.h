@@ -1,30 +1,28 @@
 /******************************************************************************
-* Copyright (C) 2014 - 2022 Xilinx, Inc.  All rights reserved.
-* Copyright (C) 2022 - 2024 Advanced Micro Devices, Inc.  All rights reserved.
-* SPDX-License-Identifier: MIT
-******************************************************************************/
+ * Copyright (C) 2014 - 2022 Xilinx, Inc.  All rights reserved.
+ * Copyright (C) 2022 - 2026 Advanced Micro Devices, Inc.  All rights reserved.
+ ******************************************************************************/
 
 /*****************************************************************************/
 /**
-*
-* @file xzdma_hw.h
-* @addtogroup zdma Overview
-* @{
-*
-* This header file contains identifiers and register-level driver functions (or
-* macros) that can be used to access the Xilinx ZDMA core.
-*
-* <pre>
-* MODIFICATION HISTORY:
-*
-* Ver   Who     Date     Changes
-* ----- ------  -------- ------------------------------------------------------
-* 1.0   vns     2/27/15  First release
-* 1.8   hk      7/19/19  Remove versal clock and routing workarounds.
-* 1.19	aj	10/04/24 Add reset mask for channel write only register.
-* </pre>
-*
-******************************************************************************/
+ *
+ * @file xzdma_hw.h
+ * @addtogroup zdma Overview
+ * @{
+ *
+ * This header file contains identifiers and register-level driver functions (or
+ * macros) that can be used to access the Xilinx ZDMA core.
+ *
+ * <pre>
+ * MODIFICATION HISTORY:
+ *
+ * Ver   Who     Date     Changes
+ * ----- ------  -------- ------------------------------------------------------
+ * 1.0   vns     2/27/15  First release
+ * 1.8   hk      7/19/19  Remove versal clock and routing workarounds.
+ * </pre>
+ *
+ ******************************************************************************/
 #ifndef XZDMA_HW_H_
 #define XZDMA_HW_H_		/**< Prevent circular inclusions
 				  *  by using protection macros	*/
@@ -85,7 +83,7 @@ extern "C" {
 
 /*@}*/
 
-/** @name IRQ Register offset for Versal Gen 2
+/** @name IRQ Register offset for Versal 2VE and 2VM devices
  * @{
  */
 #define XZDMA_IRQ_REG_OFFSET			(0x308U)
@@ -227,8 +225,7 @@ extern "C" {
 #define XZDMA_DSCR_ATTR_AXCACHE_SHIFT	(4U) /**< Descriptor cache shift */
 #define XZDMA_DSCR_ATTR_RESET_VALUE	(0x00000000U) /**< Dscr Attributes
 							*  reset value */
-#define XZDMA_CH_WR_ONLY_RESET_VALUE	(0x00000000U) /**< CH write only
-							*  reset value */
+
 /*@}*/
 
 /** @name Channel Source/Destination Word0 register bit mask

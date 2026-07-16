@@ -227,7 +227,7 @@ elif [[ "$aie_version" == "5" ]]; then
     AIELIB_APU_NAME="libxaienginea78.a"
     ARCH_APU_LD="${ARCH_DIR}/cortexa78_0/lscript.ld"
     compiler_cpu_flag="-mcpu=cortex-a78"
-    LINK_EXTRA="-lxiltimer,-lxilstandalone"
+    LINK_EXTRA="-lxiltimer,-lxilstandalone,-lxilpm_ng"
 else
     echo "Unsupported AIE version: $aie_version"
     exit 1

@@ -1,36 +1,37 @@
 /******************************************************************************
-* Copyright (C) 2017 - 2020 Xilinx, Inc.  All rights reserved.
-* Copyright (C) 2023 Advanced Micro Devices, Inc. All Rights Reserved.
-* SPDX-License-Identifier: MIT
-******************************************************************************/
+ * Copyright (C) 2017 - 2020 Xilinx, Inc.  All rights reserved.
+ * Copyright (C) 2023 - 2026 Advanced Micro Devices, Inc. All Rights Reserved.
+ * SPDX-License-Identifier: MIT
+ ******************************************************************************/
 
 /*****************************************************************************/
 /**
-*
-* @file xil_smc.h
-*
-* @addtogroup a53_64_smc_api Cortex A53 64bit EL1 Non-secure SMC Call
-*
-* Cortex A53 64bit EL1 Non-secure SMC Call provides a C wrapper for calling
-* SMC from EL1 Non-secure application to request Secure monitor for secure
-* services. SMC calling conventions should be followed.
-*
-* <pre>
-* MODIFICATION HISTORY:
-*
-* Ver   Who      Date     Changes
-* ----- -------- -------- -----------------------------------------------
-* 6.2 	pkp  	 02/16/17 First release
-* 6.4   mus      08/17/17 Added constant define for SMC ID , which is
-*                         intended to read the version/idcode of the
-*                         platform
-* 7.1  mus       07/31/19 Added support for Versal
-* 9.0  ml        03/03/23 Added description to fix doxygen warnings.
-* 9.0  ml        09/13/23 Assigned proper suffix to integer constants to fix
-*                         MISRA-C violation for Rule 7.2
-* </pre>
-*
-******************************************************************************/
+ *
+ * @file xil_smc.h
+ *
+ * @addtogroup a53_64_smc_api Cortex A53 64bit EL1 Non-secure SMC Call
+ *
+ * Cortex A53 64bit EL1 Non-secure SMC Call provides a C wrapper for calling
+ * SMC from EL1 Non-secure application to request Secure monitor for secure
+ * services. SMC calling conventions should be followed.
+ *
+ * <pre>
+ * MODIFICATION HISTORY:
+ *
+ * Ver   Who      Date     Changes
+ * ----- -------- -------- -----------------------------------------------
+ * 6.2 	pkp  	 02/16/17 First release
+ * 6.4   mus      08/17/17 Added constant define for SMC ID , which is
+ *                         intended to read the version/idcode of the
+ *                         platform
+ * 7.1  mus       07/31/19 Added support for Versal
+ * 9.0  ml        03/03/23 Added description to fix doxygen warnings.
+ * 9.0  ml        09/13/23 Assigned proper suffix to integer constants to fix
+ *                         MISRA-C violation for Rule 7.2
+ * 9.5  tbk       02/10/26 Added macro for SMC function Id
+ * </pre>
+ *
+ ******************************************************************************/
 
 #ifndef XIL_SMC_H /**< prevent circular inclusions */
 #define XIL_SMC_H /**< by using protection macros */
@@ -69,6 +70,10 @@ extern "C" {
 #define MMIO_WRITE_SMC_FID	0xC2000013U
 #define MMIO_READ_SMC_FID	0xC2000014U
 #define GET_CHIPID_SMC_FID      0xC2000018U
+
+#define SMC_FID_EXT 0xC2000FFFU /* SMC FID for extended packet format */
+#define SMC_REQUEST_LEN 6U      /* SMC request buffer length */
+#define SMC_RESPONSE_LEN 6U     /* SMC response buffer length */
 
 /* GEM device IDs */
 #define	DEV_GEM_0			0x18224019

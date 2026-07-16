@@ -1,43 +1,44 @@
 /******************************************************************************
-* Copyright (C) 2015 - 2021 Xilinx, Inc.  All rights reserved.
-* Copyright (C) 2023 Advanced Micro Devices, Inc. All Rights Reserved.
-* SPDX-License-Identifier: MIT
-******************************************************************************/
+ * Copyright (C) 2015 - 2021 Xilinx, Inc.  All rights reserved.
+ * Copyright (C) 2023 - 2026 Advanced Micro Devices, Inc. All Rights Reserved.
+ * SPDX-License-Identifier: MIT
+ ******************************************************************************/
 
 /*****************************************************************************/
 /**
-*
-* @file xcanfd_hw.h
-* @addtogroup canfd Overview
-* @{
-*
-* This header file contains the identifiers and basic driver functions (or
-* macros) that can be used to access the device. Other driver functions
-* are defined in xcanfd.h.
-*
-* <pre>
-* MODIFICATION HISTORY:
-*
-* Ver   Who  Date       Changes
-* ----- ---- ---------- -------------------------------------------------------
-* 1.0   nsk  06/04/2015 First release
-* 1.0   nsk  15/05/2015 Modified XCANFD_BTR_TS1_MASK
-*		 	(CR 861772).
-* 1.0	nsk  16/06/2015 Added New definitions for Register
-*			bits since RTL has changed.RTL Changes,Added
-*		        new bits to MSR,SR,ISR,IER,ICR Registers and modified
-*		        TS2 bits in BTR and F_SJW bits in F_BTR Registers.
-* 2.1   ask  07/03/18 Added support for canfd 2.0 spec sequential mode.
-*       ask  07/03/18 Fix for Sequential recv CR# 992606,CR# 1004222.
-* 2.2   sn   06/11/19 Updated Mailbox RX buffer offset for CANFD2.0
-*		      Fixed below  incorrect mask values
-*		      XCANFD_MAILBOX_RB_MASK_BASE_OFFSET,XCANFD_WMR_RXFP_MASK
-*		      and CONTROL_STATUS_3.
-* 2.8   ht   06/19/23 Added support for system device-tree flow.
-*
-* </pre>
-*
-******************************************************************************/
+ *
+ * @file xcanfd_hw.h
+ * @addtogroup canfd Overview
+ * @{
+ *
+ * This header file contains the identifiers and basic driver functions (or
+ * macros) that can be used to access the device. Other driver functions
+ * are defined in xcanfd.h.
+ *
+ * <pre>
+ * MODIFICATION HISTORY:
+ *
+ * Ver   Who  Date       Changes
+ * ----- ---- ---------- -------------------------------------------------------
+ * 1.0   nsk  06/04/2015 First release
+ * 1.0   nsk  15/05/2015 Modified XCANFD_BTR_TS1_MASK
+ *		 	(CR 861772).
+ * 1.0	nsk  16/06/2015 Added New definitions for Register
+ *			bits since RTL has changed.RTL Changes,Added
+ *		        new bits to MSR,SR,ISR,IER,ICR Registers and modified
+ *		        TS2 bits in BTR and F_SJW bits in F_BTR Registers.
+ * 2.1   ask  07/03/18 Added support for canfd 2.0 spec sequential mode.
+ *       ask  07/03/18 Fix for Sequential recv CR# 992606,CR# 1004222.
+ * 2.2   sn   06/11/19 Updated Mailbox RX buffer offset for CANFD2.0
+ *		      Fixed below  incorrect mask values
+ *		      XCANFD_MAILBOX_RB_MASK_BASE_OFFSET,XCANFD_WMR_RXFP_MASK
+ *		      and CONTROL_STATUS_3.
+ * 2.8   ht   06/19/23 Added support for system device-tree flow.
+ * 2.12  vlt  01/27/26 Fixed codespell issues
+ *
+ * </pre>
+ *
+ ******************************************************************************/
 
 #ifndef XCANFD_HW_H		/* prevent circular inclusions */
 #define XCANFD_HW_H		/**< by using protection macros */
@@ -487,7 +488,7 @@ Mask/Acceptance Filter ID)
 #define XCANFD_IDR_ID1_MASK	0xFFE00000U  /**< Standard Messg Ident Mask */
 #define XCANFD_IDR_ID1_SHIFT	21U	    /**< Standard Messg Ident Shift */
 #define XCANFD_IDR_SRR_MASK	0x00100000U  /**< Substitute Remote TX Req */
-#define XCANFD_IDR_SRR_SHIFT	20U	     /**< Substitue Remote TX Shift */
+#define XCANFD_IDR_SRR_SHIFT 20U         /**< Substitute Remote TX Shift */
 #define XCANFD_IDR_IDE_MASK	0x00080000U  /**< Identifier Extension Mask */
 #define XCANFD_IDR_IDE_SHIFT	19U	    /**< Identifier Extension Shift */
 #define XCANFD_IDR_ID2_MASK	0x0007FFFEU  /**< Extended Message Ident Mask */

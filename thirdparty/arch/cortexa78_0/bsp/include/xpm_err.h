@@ -1,8 +1,7 @@
 /******************************************************************************
-* Copyright (c) 2019 - 2022 Xilinx, Inc.  All rights reserved.
-* SPDX-License-Identifier: MIT
-******************************************************************************/
-
+ * Copyright (c) 2024 - 2026 Advanced Micro Devices, Inc.  All rights reserve.
+ * SPDX-License-Identifier: MIT
+ ******************************************************************************/
 
 /*****************************************************************************/
 /**
@@ -60,7 +59,7 @@ extern "C" {
 #define XPM_PM_ABORT_SUSPEND                     (2005L) /**< Abort suspend not allowed */
 #define XPM_PM_TIMEOUT                           (2006L) /**< Timeout occurred */
 #define XPM_PM_NODE_USED                         (2007L) /**< Node is used and non-shareable */
-#define XPM_REG_WRITE_FAILED                     (2008L) /**< Register writting has failed*/
+#define XPM_REG_WRITE_FAILED (2008L)                     /**< Register writing has failed*/
 
 /****************************** Generic API Errors ***********************/
 /******************************  (2010L) - (2020L) ***********************/
@@ -112,6 +111,8 @@ extern "C" {
 #define XPM_INVALID_CLKID                        (2067L) /**< Invalid clock id passed */
 #define XPM_INVALID_CLK_SUBNODETYPE              (2068L) /**< Invalid clock sub-node type */
 #define XPM_INVALID_PARENT_CLKID                 (2069L) /**< Invalid parent clock id */
+#define XPM_ERR_DEVICE_CLKHANDLE_MISSING (2070L)         /**< Device ClkHandles pointer is NULL */
+#define XPM_ERR_DEVICE_CLOCK_MISSING (2071L)             /**< Device Clock pointer is NULL */
 
 /**************************** Power Errors *******************************/
 /**************************** (2081L) - (2095L) **************************/
@@ -137,19 +138,31 @@ extern "C" {
 #define XPM_INVALID_ISO_IDX                      (2100L) /**< Invalid Isolation index passed */
 
 /**************************** SYSMON ERRORS ******************************/
-/************************** (2110L) - (2119L) ****************************/
-#define XPM_ERR_NEW_DATA_FLAG_TIMEOUT            (2110L) /**< Sysmon new data flag timeout */
-#define XPM_ERR_RAIL_VOLTAGE                     (2111L) /**< Power rail not ramped up */
+/************************** (2110L) - (219L) ****************************/
+#define XPM_INVALID_DEV_VOLTAGE_GRADE (2110L) /**< Invalid device voltage grade */
+#define XPM_ERR_NEW_DATA_FLAG_TIMEOUT (2111L) /**< Sysmon new data flag timeout */
+#define XPM_ERR_RAIL_VOLTAGE (2112L)          /**< Power rail not ramped up */
 
-/**************************** AIE OPERATION ERRORS ******************************/
-/************************** (2120L) - (2129L) ****************************/
-#define XPM_ERR_AIE_OPS_COL_RST			(2120L) /**< Error while Column Reset */
-#define XPM_ERR_AIE_OPS_SHIM_RST		(2121L) /**< Error while Shim Reset */
-#define XPM_ERR_AIE_OPS_ENB_COL_CLK_BUFF	(2122L) /**< Error while Enabling of column clock buffer */
-#define XPM_ERR_AIE_OPS_ZEROIZATION		(2123L) /**< Error while Zeroization */
-#define XPM_ERR_AIE_OPS_DIS_COL_CLK_BUFF	(2124L) /**< Error while Disabling of column clock buffer */
-#define XPM_ERR_AIE_OPS_ENB_AXI_MM_ERR_EVENT	(2125L) /**< Error while Enabling of AXI-MM error events */
-#define XPM_ERR_AIE_OPS_SET_L2_CTRL_NPI_INTR	(2126L) /**< Error while Setting of L2 controller NPI INTR */
+/**************************** AIE ERRORS ******************************/
+/************************** (2120L) - (2139L) ****************************/
+#define XPM_ERR_AIE_OPS_COL_RST (2120L)              /**< Error while Column Reset */
+#define XPM_ERR_AIE_OPS_SHIM_RST (2121L)             /**< Error while Shim Reset */
+#define XPM_ERR_AIE_OPS_ENB_COL_CLK_BUFF (2122L)     /**< Error while Enabling of column clock buffer */
+#define XPM_ERR_AIE_OPS_ZEROIZATION (2123L)          /**< Error while Zeroization */
+#define XPM_ERR_AIE_OPS_DIS_COL_CLK_BUFF (2124L)     /**< Error while Disabling of column clock buffer */
+#define XPM_ERR_AIE_OPS_ENB_AXI_MM_ERR_EVENT (2125L) /**< Error while Enabling of AXI-MM error events */
+#define XPM_ERR_AIE_OPS_SET_L2_CTRL_NPI_INTR (2126L) /**< Error while Setting of L2 controller NPI INTR */
+#define XPM_ERR_AIE_OPS_UC_ZEROIZATION (2127L)       /**< Error during UC zeroization */
+#define XPM_ERR_AIE_OPS_NMU_CONFIG (2128L)           /**< Error during nmu config */
+#define XPM_ERR_AIE_OPS_HANDSHAKE (2129L)            /**< Error during handshake OP */
+
+/************************** Boot Device Errors ******************************/
+/************************** (2140L) - (2159L) ****************************/
+#define XPM_PMC_BOOT_DEV_RETAINED (2140L) /**< Boot device retained by PMC per RTCA policy */
+
+/**************************** MEMORY ERRORS ******************************/
+/************************** (2160L) - (2179L) ****************************/
+#define XPM_ERR_MEM_ACCESS_TYPE (2160L) /**< Invalid memory access type */
 
 /************************** Variable Definitions *****************************/
 

@@ -1,16 +1,16 @@
 /******************************************************************************
-* Copyright (C) 2010 - 2022 Xilinx, Inc.  All rights reserved.
-* Copyright (C) 2022 - 2025 Advanced Micro Devices, Inc. All rights reserved.
-* SPDX-License-Identifier: MIT
-******************************************************************************/
+ * Copyright (C) 2010 - 2022 Xilinx, Inc.  All rights reserved.
+ * Copyright (C) 2022 - 2026 Advanced Micro Devices, Inc. All rights reserved.
+ * SPDX-License-Identifier: MIT
+ ******************************************************************************/
 
 /****************************************************************************/
 /**
  *
  * @file xemacps.h
-* @addtogroup emacps Overview
-* @{
-* @details
+ * @addtogroup emacps Overview
+ * @{
+ * @details
  *
  * The Xilinx Embedded Processor Block Ethernet driver.
  *
@@ -233,7 +233,7 @@
  * facilitates communication between the driver and an OS.
  * This driver is intended to be RTOS and processor independent. Any needs for
  * dynamic memory management, threads or thread mutual exclusion, or cache
- * control must be satisfied bythe layer above this driver.
+ * control must be satisfied by the layer above this driver.
  *
  * <pre>
  * MODIFICATION HISTORY:
@@ -471,6 +471,10 @@ extern "C" {
 #define XEMACPS_8BYTE_BURST		0x00000008
 #define XEMACPS_16BYTE_BURST	0x00000010
 
+/* Clock Frequencies for different GEM speeds */
+#define CLOCK_FREQ_1000MBPS 125000000 /* 1000 Mbps = 125,000,000 Hz = 125 MHz */
+#define CLOCK_FREQ_100MBPS 25000000   /* 100 Mbps = 25,000,000 Hz = 25 MHz */
+#define CLOCK_FREQ_10MBPS 2500000     /* 10 Mbps = 2,500,000 Hz = 2.5 MHz */
 
 /**************************** Type Definitions ******************************/
 /** @name Typedefs for callback functions
@@ -519,8 +523,8 @@ typedef struct {
 	u8 IsCacheCoherent; /**< Applicable only to A53 in EL1 mode;
 				* describes whether Cache Coherent or not */
 #ifdef SDT
-	u16 IntrId;
-	UINTPTR IntrParent;
+    u16 IntrId;         /**< Interrupt number */
+    UINTPTR IntrParent; /**< Parent interrupt controller address */
 #endif
 #if defined  (XCLOCKING) || defined (SDT)
 	u32 RefClk;	/**< Input clock */
@@ -529,8 +533,9 @@ typedef struct {
 	char *PhyType;     /**< PhyType indicates which type of PHY interface is
 			     *  used (MII, GMII, RGMII, etc.
 			     */
-        u32 PhyAddr;
-	UINTPTR MdioProducerBaseAddr;
+    u32 PhyAddr;       /**< PHY address for MDIO register access */
+    UINTPTR MdioProducerBaseAddr; /**< GEM Base address of MDIO Master */
+    u32 GmiitoRgmiiConvPhyAddr;   /**<  GMII-to-RGMII converter PHY address */
 #endif
 	u16 S1GDiv0;	/**< 1Gbps Clock Divider 0 */
 	u8 S1GDiv1;	/**< 1Gbps Clock Divider 1 */
@@ -568,7 +573,7 @@ typedef struct XEmacPs_Instance {
 	u32 MaxMtuSize;
 	u32 MaxFrameSize;
 	u32 MaxVlanFrameSize;
-	u32 MaxQueues;
+    u8 MaxQueues;
 
 } XEmacPs;
 
@@ -697,18 +702,18 @@ typedef struct XEmacPs_Instance {
 
 /****************************************************************************/
 /**
-*
-* This macro triggers trasmit circuit to send data currently in TX buffer(s).
-*
-* @param InstancePtr is a pointer to the XEmacPs instance to be worked on.
-*
-* @return
-*
-* @note
-*
-* Signature: void XEmacPs_Transmit(XEmacPs *InstancePtr)
-*
-*****************************************************************************/
+ *
+ * This macro triggers transmit circuit to send data currently in TX buffer(s).
+ *
+ * @param InstancePtr is a pointer to the XEmacPs instance to be worked on.
+ *
+ * @return
+ *
+ * @note
+ *
+ * Signature: void XEmacPs_Transmit(XEmacPs *InstancePtr)
+ *
+ *****************************************************************************/
 #define XEmacPs_Transmit(InstancePtr)                              \
 	XEmacPs_WriteReg((InstancePtr)->Config.BaseAddress,          \
 			 XEMACPS_NWCTRL_OFFSET,                                     \
@@ -814,8 +819,8 @@ typedef struct XEmacPs_Instance {
 #define CLEAR_BIT(x, n)		(x & (~BIT(n)))
 #define GENMASK(h, l)		(((~0U) << (l)) & \
 				(~0U >> (sizeof(int) * 8 - 1 - (h))))
-static INLINE u32 get_num_set_bits(u32 n)	{
-	u8 count = 0;
+static INLINE u8 get_num_set_bits(u32 n) {
+    u8 count = 0;
 	while(n) {
 		n &= (n - 1);
 		count++;

@@ -1,31 +1,29 @@
-/******************************************************************************
-* Copyright (c) 2022 Xilinx, Inc.  All rights reserved.
-* Copyright (c) 2022 - 2023 Advanced Micro Devices, Inc. All Rights Reserved.
-* SPDX-License-Identifier: MIT
-******************************************************************************/
 
+/******************************************************************************
+ * Copyright (c) 2025 Advanced Micro Devices, Inc. All Rights Reserved.
+ * SPDX-License-Identifier: MIT
+ ******************************************************************************/
 
 /*****************************************************************************/
 /**
-*
-* @file xil_hw.h
-*
-* This is the header file which contains definitions for the hardware
-* registers.
-*
-* <pre>
-* MODIFICATION HISTORY:
-*
-* Ver   Who  Date        Changes
-* ----- ---- -------- -------------------------------------------------------
-* 8.0   bm   07/06/2022 Initial release
-*       bsv  07/19/2022 Moved PCSR_LOCK macros to standalone from xilpm
-*
-* </pre>
-*
-* @note
-*
-******************************************************************************/
+ *
+ * @file xil_hw.h
+ *
+ * This is the header file which contains definitions for the hardware
+ * registers.
+ *
+ * <pre>
+ * MODIFICATION HISTORY:
+ *
+ * Ver   Who  Date        Changes
+ * ----- ---- -------- -------------------------------------------------------
+ * 1.0   sk   02/20/2025 Initial release
+ *
+ * </pre>
+ *
+ * @note
+ *
+ ******************************************************************************/
 
 #ifndef XIL_HW_H
 #define XIL_HW_H

@@ -1,41 +1,45 @@
 /******************************************************************************
-* Copyright (C) 2016 - 2022 Xilinx, Inc.  All rights reserved.
-* Copyright (C) 2022 - 2023 Advanced Micro Devices, Inc. All Rights Reserved.
-* SPDX-License-Identifier: MIT
-******************************************************************************/
+ * Copyright (C) 2016 - 2022 Xilinx, Inc.  All rights reserved.
+ * Copyright (C) 2022 - 2026 Advanced Micro Devices, Inc. All Rights Reserved.
+ * SPDX-License-Identifier: MIT
+ ******************************************************************************/
 
 /*****************************************************************************/
 /**
-* @file xsysmonpsv_driver.h
-* @addtogroup sysmonpsv_api SYSMONPSV APIs
-*
-* SysMon driver supports the AMD System Monitor device on Versal.
-*
-* The System Monitor device has the following features:
-*		- Measure and monitor up to 160 voltages across the chip
-*		- Automatic alarms based on user defined limis for the
-*		  on-chip temperature.
-*		- Optional interrupt request generation
-*
-*
-* The user should refer to the hardware device specification for detailed
-* information about the device.
-*
-*
-*
-* <pre>
-* MODIFICATION HISTORY:
-* Ver   Who    Date     Changes
-* ----- -----  -------- -----------------------------------------------
-* 3.0   cog    03/25/21 Driver Restructure
-* 3.1   cog    04/09/22 Remove GIC standalone related functionality for
-*                       arch64 architecture
-* 4.0   se     10/04/22 Update return value definitions
-*		se	   11/10/22 Secure and Non-Secure mode integration
-* 4.1   cog    07/18/23 Add support for SDT flow
-* </pre>
-*
-******************************************************************************/
+ * @file xsysmonpsv_driver.h
+ * @addtogroup sysmonpsv_api SYSMONPSV APIs
+ *
+ * SysMon driver supports the AMD System Monitor device on Versal.
+ *
+ * The System Monitor device has the following features:
+ *		- Measure and monitor up to 160 voltages across the chip
+ *		- Automatic alarms based on user defined limis for the
+ *		  on-chip temperature.
+ *		- Optional interrupt request generation
+ *
+ *
+ * The user should refer to the hardware device specification for detailed
+ * information about the device.
+ *
+ *
+ *
+ * <pre>
+ * MODIFICATION HISTORY:
+ * Ver   Who    Date     Changes
+ * ----- -----  -------- -----------------------------------------------
+ * 3.0   cog    03/25/21 Driver Restructure
+ * 3.1   cog    04/09/22 Remove GIC standalone related functionality for
+ *                       arch64 architecture
+ * 4.0   se     10/04/22 Update return value definitions
+ * 4.0   se     11/10/22 Secure and Non-Secure mode integration
+ * 4.1   cog    07/18/23 Add support for SDT flow
+ * 5.1   se     03/03/25 Compiler warnings fixed
+ * 5.2   se     08/24/25 Microblaze support added
+ * 5.3   se     03/13/26 Fix secure mode and PCSR re-lock in SDT flow
+ *
+ * </pre>
+ *
+ ******************************************************************************/
 
 #ifndef _XSYSMONPSV_DRIVER_H_
 #define _XSYSMONPSV_DRIVER_H_
@@ -72,8 +76,15 @@ typedef void (*XSysMonPsv_Handler)(void *CallbackRef);
  * @{
  */
 typedef struct {
-	UINTPTR BaseAddress; /**< Register base address */
-	u8 Supply_List[XSYSMONPSV_MAX_SUPPLIES]; /**< Maps voltage supplies in
+#ifdef SDT
+    char *Name;
+#endif
+    UINTPTR BaseAddress; /**< Register base address */
+#ifdef SDT
+    u16 IntrId;
+    UINTPTR IntrParent;
+#endif
+    u8 Supply_List[XSYSMONPSV_MAX_SUPPLIES]; /**< Maps voltage supplies in
                                                   use to the Supply registers */
 } XSysMonPsv_Config;
 
@@ -104,8 +115,8 @@ typedef struct {
  */
 typedef struct {
 	XSysMonPsv_Config Config; /**< Device configuration */
-#if defined (ARMR5) || defined (__aarch64__)
-	XSysMonPsv_EventHandler
+#if defined(ARMR5) || defined(__aarch64__) || defined(PLATFORM_MB)
+    XSysMonPsv_EventHandler
 		SupplyEvent[XSYSMONPSV_MAX_SUPPLIES]; /**< EventList will
                                                           have callbacks for
                                                           events supported
@@ -117,7 +128,11 @@ typedef struct {
 	u32 IsReady; /**< Is device ready */
 #if defined (XSYSMONPSV_SECURE_MODE)
 	u32 IpiIntrId; /**< Secure mode IPI Interrupt ID*/
-	u32 IpiDeviceId; /**< Secure mode IPI Device ID*/
+#ifndef SDT
+    u32 IpiDeviceId; /**< Secure mode IPI Device ID*/
+#else
+    UINTPTR IpiBaseAddress; /**< Secure mode IPI Base Address (SDT flow) */
+#endif
 #endif
 } XSysMonPsv;
 

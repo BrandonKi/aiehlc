@@ -44,9 +44,12 @@
 * 9.2    ng  08/20/24 Added SpartanUP device support
 * 9.2    mus 09/23/24 Add definitions related to cluster/core specific offsets
 *                     for RPU_PCIL_X_PWRDWN register. They are applicable for
-*                     cluster C, D and E in VersalGen2 SoC.
+*                     cluster C, D and E in Versal 2VE and 2VM devices.
 * 9.3    mus 01/07/25 Fix address of RPU_PCIL_C0_PWRDWN register.
-*
+* 9.3    tnt 02/10/25 versal_2ve_2vm: replace all RPU_PCI_[XY]_PWRDWN
+                      with XPS_PSX_RPU_CLUSTER_XY_CORE_X_PWRDWN registers
+* 9.4    vmt 28/10/25 Added XIOCoherencySupported() declaration to check cache
+              coherency support.
 * </pre>
 *
 ******************************************************************************/
@@ -132,20 +135,22 @@ extern "C" {
 #endif
 #endif
 
-#if defined (VERSAL_AIEPG2)
-#define XPS_RPU_PCIL_C0_PWRDWN 0xEB4211E0U
-#define XPS_CLUSTER_C_ID	2U
+#if defined(VERSAL_2VE_2VM)
+#define XPS_PSX_RPU_CLUSTER_A0_CORE_0_PWRDWN 0xEB588200U
 /*
- * Offset between RPU_PCIL_X_PWRDWN registers of 2
- * consecutive clusters starting from cluster C
- * Note: For VERSAL_AIEPG2 SoC, offsets are different
- * for Cluster A,B(cluster offset 0x1000, core offset 0x100)
- * and Cluster C,D,E(cluster offset 0x40, core offset 0x20)
+ * Offset between XPS_PSX_RPU_CLUSTER_Xi_CORE_i registers of consecutive
+ * CPU cores in given cluster
  */
+#define XPS_PSX_RPU_PWRDWN_CORE_OFFSET 0x4000U
+/*
+ * Offset between XPS_PSX_RPU_CLUSTER_xI_CORE_I registers of 2 clusters
+ */
+#define XPS_PSX_RPU_PWRDWN_CLUSTER_OFFSET 0x10000U
 
-#define XPS_RPU_PCIL_CLUSTER_C_D_E_OFFSET 0x40U
-#define XPS_RPU_PCIL_CORE_OFFSET_FOR_CLUSTER_C_D_E 0x20U
+#define XPS_PSX_RPU_CORE_X_PWRDWN_EN_MASK 1U
 #endif
+
+#define APU_EL1 1U
 
 /**************************** Type Definitions *******************************/
 /**
@@ -172,6 +177,8 @@ u8 XGetClusterId(void);
 u8 XGetCoreId(void);
 u8 XGetBootStatus(void);
 #endif
+
+u32 XIOCoherencySupported(void);
 
 /************************** Function Prototypes ******************************/
 

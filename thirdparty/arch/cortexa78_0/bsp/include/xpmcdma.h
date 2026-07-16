@@ -1,95 +1,96 @@
 /******************************************************************************
-* Copyright (C) 2020 - 2022 Xilinx, Inc.  All rights reserved.
-* Copyright (C) 2022 - 2024 Advanced Micro Devices, Inc.  All rights reserved.
-* SPDX-License-Identifier: MIT
-******************************************************************************/
+ * Copyright (C) 2020 - 2022 Xilinx, Inc.  All rights reserved.
+ * Copyright (C) 2022 - 2026 Advanced Micro Devices, Inc.  All rights reserved.
+ * SPDX-License-Identifier: MIT
+ ******************************************************************************/
 /*****************************************************************************/
 /**
-*
-*
-* The file is a wrapper that calls APIs declared in xscudma.h This wrapper is
-* added for Versal as there is no CSU DMA in Versal and hence the Versal
-* libraries should have no reference to CSU DMA. This is a security requirement.
-*
-* The PMC_DMA is present inside PMC (Platform Management Controller) module.
-* PMC_DMA allows the PMC to move data efficiently between the memory (128 bit
-* AXI interface) and the PMC stream peripherals (SHA, AES and SBI) via Secure
-* Stream Switch (SSS).
-*
-* The PMC_DMA is a 2 channel simple DMA, allowing separate control of the SRC
-* (read) channel and DST (write) channel. The DMA is effectively able to
-* transfer data:
-*	- From PMC to the SSS-side (SRC DMA only)
-*	- From SSS-side to the PMC (DST DMA only)
-*	- Simultaneous PMC to SSS_side and SSS-side to PMC
-*
-* Initialization & Configuration
-*
-* The device driver enables higher layer software (e.g., an application) to
-* communicate to the PMC_DMA core. The device driver internally calls CSU DMA
-* APIs.
-*
-* XPmcDma_CfgInitialize() API is used to initialize the PMC_DMA core.
-* The user needs to first call the XPmcDma_LookupConfig() API which returns
-* the Configuration structure pointer which is passed as a parameter to the
-* XPmcDma_CfgInitialize() API.
-*
-* Reset
-*
-* This driver will not support handling of CRP PDMA Reset in case of PMC_DMA
-* inorder to support multiple level of handoff's. User needs to call
-* the XPmcDma_Reset() API before performing any driver operation to make
-* sure PMC_DMA is in proper state.
-*
-* Interrupts
-*
-* This driver will not support handling of interrupts user should write handler
-* to handle the interrupts.
-*
-* Virtual Memory
-*
-* This driver supports Virtual Memory. The RTOS is responsible for calculating
-* the correct device base address in Virtual Memory space.
-*
-* Threads
-*
-* This driver is not thread safe. Any needs for threads or thread mutual
-* exclusion must be satisfied by the layer above this driver.
-*
-* Asserts
-*
-* Asserts are used within all Xilinx drivers to enforce constraints on argument
-* values. Asserts can be turned off on a system-wide basis by defining, at
-* compile time, the NDEBUG identifier. By default, asserts are turned on and it
-* is recommended that users leave asserts on during development.
-*
-* Building the driver
-*
-* The XPmcDma driver is composed of several source files. This allows the user
-* to build and link only those parts of the driver that are necessary.
-*
-* This header file contains identifiers and register-level driver functions (or
-* macros), range macros, structure typedefs that can be used to access the
-* Xilinx PMC_DMA core instance.
-*
-* The functionality wise ZU+ CSU_DMA and Versal PMC_DMA are similar, so all ZU+
-* code is reused by wrapping in this file
-* <pre>
-* MODIFICATION HISTORY:
-*
-* Ver   Who     Date     Changes
-* ----- ------  -------- -----------------------------------------------------
-* 1.0   mmd     01/04/20 First release
-* 1.7	am 		09/24/20 Changed return type of XPmcDma_WaitForDoneTimeout
-*						 function from u32 to int
-* 1.9   bm      01/13/21 Update PmcDmaTransfer argument to u64
-* 1.14	ab	03/13/22 Add byte-wise transfer API for Versal-Net
-* 1.14  ng      07/13/23 Added macro to detect if dma type is invalid.
-* 1.16  ng      08/20/24 Added spartanup device support
-*
-* </pre>
-*
-******************************************************************************/
+ *
+ *
+ * The file is a wrapper that calls APIs declared in xscudma.h This wrapper is
+ * added for Versal as there is no CSU DMA in Versal and hence the Versal
+ * libraries should have no reference to CSU DMA. This is a security requirement.
+ *
+ * The PMC_DMA is present inside PMC (Platform Management Controller) module.
+ * PMC_DMA allows the PMC to move data efficiently between the memory (128 bit
+ * AXI interface) and the PMC stream peripherals (SHA, AES and SBI) via Secure
+ * Stream Switch (SSS).
+ *
+ * The PMC_DMA is a 2 channel simple DMA, allowing separate control of the SRC
+ * (read) channel and DST (write) channel. The DMA is effectively able to
+ * transfer data:
+ *	- From PMC to the SSS-side (SRC DMA only)
+ *	- From SSS-side to the PMC (DST DMA only)
+ *	- Simultaneous PMC to SSS_side and SSS-side to PMC
+ *
+ * Initialization & Configuration
+ *
+ * The device driver enables higher layer software (e.g., an application) to
+ * communicate to the PMC_DMA core. The device driver internally calls CSU DMA
+ * APIs.
+ *
+ * XPmcDma_CfgInitialize() API is used to initialize the PMC_DMA core.
+ * The user needs to first call the XPmcDma_LookupConfig() API which returns
+ * the Configuration structure pointer which is passed as a parameter to the
+ * XPmcDma_CfgInitialize() API.
+ *
+ * Reset
+ *
+ * This driver will not support handling of CRP PDMA Reset in case of PMC_DMA
+ * inorder to support multiple level of handoff's. User needs to call
+ * the XPmcDma_Reset() API before performing any driver operation to make
+ * sure PMC_DMA is in proper state.
+ *
+ * Interrupts
+ *
+ * This driver will not support handling of interrupts user should write handler
+ * to handle the interrupts.
+ *
+ * Virtual Memory
+ *
+ * This driver supports Virtual Memory. The RTOS is responsible for calculating
+ * the correct device base address in Virtual Memory space.
+ *
+ * Threads
+ *
+ * This driver is not thread safe. Any needs for threads or thread mutual
+ * exclusion must be satisfied by the layer above this driver.
+ *
+ * Asserts
+ *
+ * Asserts are used within all Xilinx drivers to enforce constraints on argument
+ * values. Asserts can be turned off on a system-wide basis by defining, at
+ * compile time, the NDEBUG identifier. By default, asserts are turned on and it
+ * is recommended that users leave asserts on during development.
+ *
+ * Building the driver
+ *
+ * The XPmcDma driver is composed of several source files. This allows the user
+ * to build and link only those parts of the driver that are necessary.
+ *
+ * This header file contains identifiers and register-level driver functions (or
+ * macros), range macros, structure typedefs that can be used to access the
+ * Xilinx PMC_DMA core instance.
+ *
+ * The functionality wise ZU+ CSU_DMA and Versal PMC_DMA are similar, so all ZU+
+ * code is reused by wrapping in this file
+ * <pre>
+ * MODIFICATION HISTORY:
+ *
+ * Ver   Who     Date     Changes
+ * ----- ------  -------- -----------------------------------------------------
+ * 1.0   mmd     01/04/20 First release
+ * 1.7	am 		09/24/20 Changed return type of XPmcDma_WaitForDoneTimeout
+ *						 function from u32 to int
+ * 1.9   bm      01/13/21 Update PmcDmaTransfer argument to u64
+ * 1.14	ab	03/13/22 Add byte-wise transfer API for Versal-Net
+ * 1.14  ng      07/13/23 Added macro to detect if dma type is invalid.
+ * 1.16  ng      08/20/24 Added spartanup device support
+ * 2.0   sd      11/10/25 Added support for VERSAL_2VP_P devices.
+ *
+ * </pre>
+ *
+ ******************************************************************************/
 
 #ifndef XPMCDMA_H_
 #define XPMCDMA_H_
@@ -930,25 +931,25 @@ static INLINE void XPmcDma_DisableIntr(XPmcDma *InstancePtr, XPmcDma_Channel Cha
 
 /*****************************************************************************/
 /**
-*
-* Returns the interrupt mask to know which interrupts are
-* enabled and which of them were disaled.
-*
-* @param	InstancePtr Pointer to XPmcDma instance to be worked on.
-* @param	Channel Represents the type of channel.
-*
-*		Source channel      - XPMCDMA_SRC_CHANNEL
-*		Destination Channel - XPMCDMA_DST_CHANNEL
-*
-* @return	The current interrupt mask. The mask indicates which interrupts
-*		are enabled/disabled.
-*		0 bit represents .....corresponding interrupt is enabled.
-*		1 bit represents .....Corresponding interrupt is disabled.
-*		To interpret returned mask use
-*		XPMCDMA_IXR_SRC_MASK........For source channel
-*		XPMCDMA_IXR_DST_MASK........For destination channel
-*
-******************************************************************************/
+ *
+ * Returns the interrupt mask to know which interrupts are
+ * enabled and which of them were disabled.
+ *
+ * @param	InstancePtr Pointer to XPmcDma instance to be worked on.
+ * @param	Channel Represents the type of channel.
+ *
+ *		Source channel      - XPMCDMA_SRC_CHANNEL
+ *		Destination Channel - XPMCDMA_DST_CHANNEL
+ *
+ * @return	The current interrupt mask. The mask indicates which interrupts
+ *		are enabled/disabled.
+ *		0 bit represents .....corresponding interrupt is enabled.
+ *		1 bit represents .....Corresponding interrupt is disabled.
+ *		To interpret returned mask use
+ *		XPMCDMA_IXR_SRC_MASK........For source channel
+ *		XPMCDMA_IXR_DST_MASK........For destination channel
+ *
+ ******************************************************************************/
 static INLINE u32 XPmcDma_GetIntrMask(XPmcDma *InstancePtr, XPmcDma_Channel Channel)
 {
 	return XCsuDma_GetIntrMask(InstancePtr, Channel);
@@ -973,7 +974,7 @@ static INLINE s32 XPmcDma_SelfTest(XPmcDma *InstancePtr)
 	return XCsuDma_SelfTest(InstancePtr);
 }
 
-#if defined(VERSAL_NET) || defined(VERSAL_AIEPG2)
+#if (defined(VERSAL_NET) || defined(VERSAL_2VP_P))
 /*****************************************************************************/
 /**
 *

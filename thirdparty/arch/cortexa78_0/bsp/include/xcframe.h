@@ -1,37 +1,40 @@
 /******************************************************************************
-* Copyright (C) 2017 - 2022 Xilinx, Inc.  All rights reserved.
-* Copyright (C) 2022 - 2024 Advanced Micro Devices, Inc. All Rights Reserved.
-* SPDX-License-Identifier: MIT
-******************************************************************************/
-
+ * Copyright (C) 2017 - 2022 Xilinx, Inc.  All rights reserved.
+ * Copyright (C) 2022 - 2026 Advanced Micro Devices, Inc. All Rights Reserved.
+ * SPDX-License-Identifier: MIT
+ ******************************************************************************/
 
 /*****************************************************************************/
 /**
-*
-* @file xcframe.h
-*
-* This is the file which contains header files related to CFRAME block
-*
-* <pre>
-* MODIFICATION HISTORY:
-*
-* Ver   Who  Date        Changes
-* ----- ---- -------- -------------------------------------------------------
-* 1.00  kc   12/21/2017 Initial release
-* 1.01  bsv  06/11/2019 Added XCframe_ClearCframeErr API
-* 1.02  bsv  17/02/2020 XCframe_SafetyWriteReg API added
-* 1.03  bsv  07/15/2021 Fix doxygen warnings
-* 1.04  ng   06/30/23   Added support for system device tree flow
-* 1.5   mss  09/04/2023 Fixed MISRA-C violation 4.6
-*       mss  09/04/2023 Fixed MISRA-C violation 8.13
-*       pre  08/22/2024 Added XCframe_GetLastFrameAddr function and modified
-*                       XCframe_SetReadParam function
-*
-* </pre>
-*
-* @note
-*
-******************************************************************************/
+ *
+ * @file xcframe.h
+ *
+ * This is the file which contains header files related to CFRAME block
+ *
+ * <pre>
+ * MODIFICATION HISTORY:
+ *
+ * Ver   Who  Date        Changes
+ * ----- ---- -------- -------------------------------------------------------
+ * 1.00  kc   12/21/2017 Initial release
+ * 1.01  bsv  06/11/2019 Added XCframe_ClearCframeErr API
+ * 1.02  bsv  17/02/2020 XCframe_SafetyWriteReg API added
+ * 1.03  bsv  07/15/2021 Fix doxygen warnings
+ * 1.04  ng   06/30/23   Added support for system device tree flow
+ * 1.5   mss  09/04/2023 Fixed MISRA-C violation 4.6
+ *       mss  09/04/2023 Fixed MISRA-C violation 8.13
+ *       pre  08/22/2024 Added XCframe_GetLastFrameAddr function and modified
+ *                       XCframe_SetReadParam function
+ * 2.0   ng   03/26/2026 Fixed doxygen warnings
+ *
+ * </pre>
+ *
+ ******************************************************************************/
+
+/**
+ * @addtogroup cframe Overview
+ * @{
+ */
 
 #ifndef XCFRAME_H
 #define XCFRAME_H
@@ -180,3 +183,5 @@ u32 XCframe_GetLastFrameAddr(XCframe *InstancePtr, u32 BlockType, XCframe_FrameN
 #endif
 
 #endif  /* XCFRAME_H */
+
+/** @} */

@@ -1,35 +1,36 @@
 /******************************************************************************
-* Copyright (C) 2014 - 2022 Xilinx, Inc.  All rights reserved.
-* Copyright (C) 2022 - 2024 Advanced Micro Devices, Inc.  All rights reserved.
-* SPDX-License-Identifier: MIT
-******************************************************************************/
+ * Copyright (C) 2014 - 2022 Xilinx, Inc.  All rights reserved.
+ * Copyright (C) 2022 - 2026 Advanced Micro Devices, Inc.  All rights reserved.
+ * SPDX-License-Identifier: MIT
+ ******************************************************************************/
 
 /*****************************************************************************/
 /**
-*
-* @file xcsudma_hw.h
-* @addtogroup csuma_api CSUDMA APIs
-* @{
-*
-* The xcsudma_hw.h header file contains identifiers and register-level driver
-* functions (or macros) that can be used to access the CSU_DMA core.
-*
-* <pre>
-* MODIFICATION HISTORY:
-*
-* Ver   Who     Date     Changes
-* ----- ------  -------- ------------------------------------------------------
-* 1.0   vnsld  22/10/14 First release
-* 1.9	sk     02/11/21 Add description for XPS_CRP_BASEADDRESS and
-* 			XCSUDMA_DONE_TIMEOUT_VAL macros.
-* 1.11	sk     03/03/22 Replace driver version in addtogroup with Overview.
-* 1.11	sk     03/03/22 Update Overview section based on review comments.
-* 1.11	sk     03/03/22 Add cond INTERNAL to avoid internal macros.
-* 1.12	sk     03/03/22 Added support for VERSAL NET.
-* 1.16  ng     08/20/24 Added spartanup device support
-* </pre>
-*
-******************************************************************************/
+ *
+ * @file xcsudma_hw.h
+ * @addtogroup csuma_api CSUDMA APIs
+ * @{
+ *
+ * The xcsudma_hw.h header file contains identifiers and register-level driver
+ * functions (or macros) that can be used to access the CSU_DMA core.
+ *
+ * <pre>
+ * MODIFICATION HISTORY:
+ *
+ * Ver   Who     Date     Changes
+ * ----- ------  -------- ------------------------------------------------------
+ * 1.0   vnsld  22/10/14 First release
+ * 1.9	sk     02/11/21 Add description for XPS_CRP_BASEADDRESS and
+ * 			XCSUDMA_DONE_TIMEOUT_VAL macros.
+ * 1.11	sk     03/03/22 Replace driver version in addtogroup with Overview.
+ * 1.11	sk     03/03/22 Update Overview section based on review comments.
+ * 1.11	sk     03/03/22 Add cond INTERNAL to avoid internal macros.
+ * 1.12	sk     03/03/22 Added support for VERSAL NET.
+ * 1.16  ng     08/20/24 Added spartanup device support
+ * 2.0   sd     11/10/25 Added support for VERSAL_2VP_P devices.
+ * </pre>
+ *
+ ******************************************************************************/
 
 #ifndef XCSUDMA_HW_H_
 #define XCSUDMA_HW_H_	/**< Prevent circular inclusions
@@ -120,7 +121,7 @@ extern "C" {
 /** @name Address register bit masks
  * @{
  */
-#if defined(VERSAL_NET) || defined(VERSAL_AIEPG2)
+#if (defined(VERSAL_NET) || defined(VERSAL_2VP_P))
 #define XCSUDMA_ADDR_MASK	0xFFFFFFFFU	/**< Address mask */
 #else
 #define XCSUDMA_ADDR_MASK	0xFFFFFFFCU	/**< Address mask */
@@ -134,7 +135,7 @@ extern "C" {
  * @{
  */
 #define XCSUDMA_SIZE_MASK	0x1FFFFFFCU	/**< Mask for size */
-#if defined(VERSAL_NET) || defined(VERSAL_AIEPG2)
+#if (defined(VERSAL_NET) || defined(VERSAL_2VP_P))
 #define XCSUDMA_LAST_WORD_MASK	0x20000000U	/**< Last word check bit mask*/
 #define XCSUDMA_SIZE_SHIFT	0U		/**< Shift for size */
 #else
@@ -267,10 +268,12 @@ extern "C" {
 #define XCSUDMA_CTRL2_ACACHE_SHIFT	24U		/**< Shift for
 							  *  AXI R/W CACHE */
 #define XCSUDMA_CTRL2_ROUTE_SHIFT	23U		/**< Shift for route */
-#define XCSUDMA_CTRL2_TIMEOUT_EN_SHIFT	22U		/**< Shift for Timeout
-							  *  enable feild */
-#define XCSUDMA_CTRL2_TIMEOUT_PRE_SHIFT	4U		/**< Shift for Timeout
-							  *  pre feild */
+#define XCSUDMA_CTRL2_TIMEOUT_EN_SHIFT                                                                                 \
+    22U /**< Shift for Timeout                                                                                         \
+         *  enable field */
+#define XCSUDMA_CTRL2_TIMEOUT_PRE_SHIFT                                                                                \
+    4U /**< Shift for Timeout                                                                                          \
+        *  pre field */
 /*@}*/
 
 /** @name MSB Address register bit masks and shifts

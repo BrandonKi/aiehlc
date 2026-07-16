@@ -1,57 +1,58 @@
 /******************************************************************************
-* Copyright (c) 2014 - 2022 Xilinx, Inc.  All rights reserved.
-* Copyright (C) 2022 - 2024 Advanced Micro Devices, Inc.  All rights reserved.
-* SPDX-License-Identifier: MIT
-******************************************************************************/
+ * Copyright (c) 2014 - 2022 Xilinx, Inc.  All rights reserved.
+ * Copyright (C) 2022 - 2026 Advanced Micro Devices, Inc.  All rights reserved.
+ * SPDX-License-Identifier: MIT
+ ******************************************************************************/
 
 /*****************************************************************************/
 /**
-* @file xcsudma.h
-* @addtogroup csuma_api CSUDMA APIs
-* @{
-* @details
-*
-* <pre>
-* MODIFICATION HISTORY:
-*
-* Ver   Who     Date     Changes
-* ----- ------  -------- -----------------------------------------------------
-* 1.0   vnsld   22/10/14 First release
-* 1.1   adk     10/05/16 Fixed CR#951040 race condition in the recv path when
-*                        source and destination points to the same buffer.
-*       ms      03/17/17 Added readme.txt file in examples folder for doxygen
-*                        generation.
-*       ms      04/10/17 Modified filename tag in xcsudma_selftest_example.c to
-*                        include the file in doxygen examples.
-* 1.2   adk     11/22/17 Added peripheral test app support for CSUDMA driver.
-* 1.4   adk     04/12/17 Added support for PMC DMA.
-*       adk     09/03/18 Added new API XCsuDma_64BitTransfer() useful for 64-bit
-*                        dma transfers through PMU processor(CR#996201).
-*       adk     25/06/18 Move CRP and PMC Global address defines to
-*			 xparameters_ps.h file(CR#1002035).
-*	adk	08/08/18 Added new API XCsuDma_WaitForDoneTimeout() useful for
-*			 polling dma transfer done.
-*	adk     28/08/18 Fixed misra-c required standard violations..
-*       Rama	02/26/19 Fixed IAR issue by changing
-*						 "XCsuDma_WaitForDoneTimeout" to function
-*       arc     03/26/19 Fixed MISRA-C violations.
-* 1.7	hk	08/03/20 Reorganize transfer function to accommodate all
-*			 processors and cache functionality.
-* 1.7	sk	08/26/20 Fix MISRA-C violations.
-* 1.8   nsk     12/14/20 Updated the tcl to not to use the instance names.
-* 1.9	sk	02/11/21 Add description for the dmatype macros.
-* 1.9	sk	02/11/21 Remove the prototype of undefined functions.
-* 1.11	sk	03/03/22 Move addtogroup to starting of the file and replace
-* 			 driver version with Overview.
-* 1.11	sk	03/03/22 Update overview section based on review comments.
-* 1.11	adk	03/15/22 Fixed syntax errors in csudma_tapp.tcl file, when stdout
-* 			 is configured as none.
-* 1.14	ab	01/16/23 Added Xil_PlmStubHandler() to XCsuDma_WaitForDone.
-* 1.14	ab	01/18/23 Added byte-aligned transfer API for VERSAL_NET devices.
-* 1.14  adk     04/14/23 Added support for system device-tree flow.
-* </pre>
-*
-******************************************************************************/
+ * @file xcsudma.h
+ * @addtogroup csuma_api CSUDMA APIs
+ * @{
+ * @details
+ *
+ * <pre>
+ * MODIFICATION HISTORY:
+ *
+ * Ver   Who     Date     Changes
+ * ----- ------  -------- -----------------------------------------------------
+ * 1.0   vnsld   22/10/14 First release
+ * 1.1   adk     10/05/16 Fixed CR#951040 race condition in the recv path when
+ *                        source and destination points to the same buffer.
+ *       ms      03/17/17 Added readme.txt file in examples folder for doxygen
+ *                        generation.
+ *       ms      04/10/17 Modified filename tag in xcsudma_selftest_example.c to
+ *                        include the file in doxygen examples.
+ * 1.2   adk     11/22/17 Added peripheral test app support for CSUDMA driver.
+ * 1.4   adk     04/12/17 Added support for PMC DMA.
+ *       adk     09/03/18 Added new API XCsuDma_64BitTransfer() useful for 64-bit
+ *                        dma transfers through PMU processor(CR#996201).
+ *       adk     25/06/18 Move CRP and PMC Global address defines to
+ *			 xparameters_ps.h file(CR#1002035).
+ *	adk	08/08/18 Added new API XCsuDma_WaitForDoneTimeout() useful for
+ *			 polling dma transfer done.
+ *	adk     28/08/18 Fixed misra-c required standard violations..
+ *       Rama	02/26/19 Fixed IAR issue by changing
+ *						 "XCsuDma_WaitForDoneTimeout" to function
+ *       arc     03/26/19 Fixed MISRA-C violations.
+ * 1.7	hk	08/03/20 Reorganize transfer function to accommodate all
+ *			 processors and cache functionality.
+ * 1.7	sk	08/26/20 Fix MISRA-C violations.
+ * 1.8   nsk     12/14/20 Updated the tcl to not to use the instance names.
+ * 1.9	sk	02/11/21 Add description for the dmatype macros.
+ * 1.9	sk	02/11/21 Remove the prototype of undefined functions.
+ * 1.11	sk	03/03/22 Move addtogroup to starting of the file and replace
+ * 			 driver version with Overview.
+ * 1.11	sk	03/03/22 Update overview section based on review comments.
+ * 1.11	adk	03/15/22 Fixed syntax errors in csudma_tapp.tcl file, when stdout
+ * 			 is configured as none.
+ * 1.14	ab	01/16/23 Added Xil_PlmStubHandler() to XCsuDma_WaitForDone.
+ * 1.14	ab	01/18/23 Added byte-aligned transfer API for VERSAL_NET devices.
+ * 1.14  adk     04/14/23 Added support for system device-tree flow.
+ * 2.0   sd      11/10/25 Added support for VERSAL_2VP_P devices.
+ * </pre>
+ *
+ ******************************************************************************/
 
 #ifndef XCSUDMA_H_
 #define XCSUDMA_H_	/**< Prevent circular inclusions
@@ -98,7 +99,7 @@ typedef enum {
 /** @name Ranges of Size
  * @{
  */
-#if defined(VERSAL_NET) || defined(VERSAL_AIEPG2)
+#if (defined(VERSAL_NET) || defined(VERSAL_2VP_P))
 #define XCSUDMA_SIZE_MAX 0x1FFFFFFFU	/**< Maximum allowed no of bytes */
 #else
 #define XCSUDMA_SIZE_MAX 0x07FFFFFFU	/**< Maximum allowed no of words */
@@ -317,10 +318,10 @@ typedef struct {
 				 * 1 -- PMC DMA 0
 				 * 2 -- PMC DMA 1 */
 #ifdef SDT
-	u32 IntrId;		/** Bits[11:0] Interrupt-id Bits[15:12]
-				 * trigger type and level flags */
-	UINTPTR IntrParent; 	/** Bit[0] Interrupt parent type Bit[64/32:1]
-				 * Parent base address */
+    u32 IntrId;         /**< Bits[11:0] Interrupt-id Bits[15:12]
+                         * trigger type and level flags */
+    UINTPTR IntrParent; /**< Bit[0] Interrupt parent type Bit[64/32:1]
+                         * Parent base address */
 #endif
 } XCsuDma_Config;
 
@@ -385,7 +386,7 @@ void XCsuDma_Transfer(XCsuDma *InstancePtr, XCsuDma_Channel Channel,
 					u64 Addr, u32 Size, u8 EnDataLast);
 void XCsuDma_64BitTransfer(XCsuDma *InstancePtr, XCsuDma_Channel Channel,
 			   u32 AddrLow, u32 AddrHigh, u32 Size, u8 EnDataLast);
-#if defined(VERSAL_NET) || defined(VERSAL_AIEPG2)
+#if (defined(VERSAL_NET) || defined(VERSAL_2VP_P))
 void XCsuDma_ByteAlignedTransfer(XCsuDma *InstancePtr, XCsuDma_Channel Channel,
 					u64 Addr, u32 Size, u8 EnDataLast);
 #endif

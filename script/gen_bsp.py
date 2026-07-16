@@ -40,6 +40,21 @@ elif processor == "psv_cortexa72_0" or processor == "psv_cortexr5_0":
     platform = client.create_platform_component(name = platform_name, hw_design = os.path.join(app_path,xsa), os = "standalone", cpu = processor, generate_dtb = False, compiler = "gcc")
 
 platform = client.get_component(name=platform_name)
+
 status = platform.build()
 
 vitis.dispose()
+
+armclang_src = os.path.join(app_path, "script", "bsp_patch", "xpseudo_asm_armclang.h")
+if os.path.isfile(armclang_src):
+    patched = 0
+    for root, _dirs, files in os.walk(os.path.join(app_path, workspace)):
+        if "xpseudo_asm_gcc.h" in files:
+            dst = os.path.join(root, "xpseudo_asm_armclang.h")
+            shutil.copyfile(armclang_src, dst)
+            patched += 1
+            print(f"[bsp_patch] restored {dst}")
+    print(f"[bsp_patch] xpseudo_asm_armclang.h restored in {patched} location(s)")
+else:
+    print(f"[bsp_patch] WARNING: vendored header not found at {armclang_src}; "
+          f"clang front-end may fail on hardware timer includes")

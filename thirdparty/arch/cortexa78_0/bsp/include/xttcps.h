@@ -40,7 +40,7 @@
 * A driver instance is initialized through
 * XTtcPs_CfgInitialize(InstancePtr, CfgPtr, EffectiveAddr). Where CfgPtr
 * is a pointer to the XTtcPs_Config structure, it can be looked up statically
-* through XTtcPs_LookupConfig(DeviceID), or passed in by the caller. The
+* through XTtcPs_LookupConfig(BaseAddress), or passed in by the caller. The
 * EffectiveAddr can be the static base address of the device or virtual
 * mapped address if address translation is supported.
 *
@@ -111,7 +111,8 @@
 *
 * <b>Compiler options</b>
 *
-* 	-DARMR5 -Wall -O0 -g3 -c -fmessage-length=0 -MT"$@" -mcpu=cortex-r5 -mfloat-abi=hard  -mfpu=vfpv3-d16 -I<include_path>
+* 	-DARMR5 -Wall -O0 -g3 -c -fmessage-length=0 -MT"$@" -mcpu=cortex-r5 -mfloat-abi=hard  -mfpu=vfpv3-d16
+-I<include_path>
 * 	-Wall -O0 -g3 -c -fmessage-length=0 -MT"$@" -mcpu=cortex-a72 -I<include_path>
 * 	-Wall -O0 -g3 -c -fmessage-length=0 -MT"$@" -I<include_path>
 *
@@ -151,6 +152,9 @@
 * 		      timeout loop.
 * 3.18  adk  04/14/23 Added support for system device-tree flow.
 * 3.21  ml   01/27/25 Added support for multiple counters in SDT flow.
+* 3.21  ml   04/03/25 Added a global structure to store all handlers in a table.
+* 3.23  bdk  12/08/25 Updated comments to support SDT flow for Doxygen
+*                     documentation.
 * </pre>
 *
 ******************************************************************************/
@@ -199,6 +203,9 @@ typedef void (*XTtcPs_StatusHandler) (const void *CallBackRef, u32 StatusEvent);
 #define XTTCPS_OPTION_MATCH_MODE	0x00000010U	/**< Match mode */
 #define XTTCPS_OPTION_WAVE_DISABLE	0x00000020U 	/**< No waveform output */
 #define XTTCPS_OPTION_WAVE_POLARITY	0x00000040U	/**< Waveform polarity */
+#define COUNTER_BASE_ADDRESS_MASK                                                                                      \
+    0xFFFFFFF0U /**< Mask to detect main                                                                               \
+TTC node */
 /*@}*/
 /**************************** Type Definitions *******************************/
 
@@ -234,6 +241,11 @@ typedef struct {
 	XTtcPs_StatusHandler StatusHandler;
 	void *StatusRef;	/**< Callback reference for status handler */
 } XTtcPs;
+
+typedef struct {
+    XTtcPs_StatusHandler StatusHandler; /**< Interrupt Handler */
+    void *StatusRef;
+} XTtcPs_StatusHandlerTableEntry;
 
 /**
  * This typedef contains interval count and Match register value

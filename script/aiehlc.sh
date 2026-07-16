@@ -90,13 +90,20 @@ build_hw_lib() {
                 cp -rf "$header_dir"/*.h "$AIE_DRIVER_PARENT_DIR/include/"
                 cp -rf "$AIE_DRIVER_PARENT_DIR/aie-rt/driver/internal/"* "$AIE_DRIVER_PARENT_DIR/include/"
 
-
                 dbg_echo "[INFO] Cleaning previous build..."
                 make clean -C "$AIE_DRIVER_PARENT_DIR/aie-rt/driver/src/"
 
                 dbg_echo "[INFO] Copying extra libs and ld script..."
                 cp "$lib_dir"/*.a "$AIE_DRIVER_PARENT_DIR/lib/"
-                cp "$ld_dir" "$AIE_DRIVER_PARENT_DIR/lib/"  
+                cp "$ld_dir" "$AIE_DRIVER_PARENT_DIR/lib/"
+
+                if [ -f "$AIE_DRIVER_PARENT_DIR/lib/libxil.a" ]; then
+                    aie_bsp_objs=$("$archiver" t "$AIE_DRIVER_PARENT_DIR/lib/libxil.a" 2>/dev/null | grep -E '^xaie.*\.obj$' || true)
+                    if [ -n "$aie_bsp_objs" ]; then
+                        dbg_echo "[INFO] Stripping BSP aienginev2 objects from libxil.a (local aie-rt is authoritative)"
+                        "$archiver" d "$AIE_DRIVER_PARENT_DIR/lib/libxil.a" $aie_bsp_objs
+                    fi
+                fi
 
                 dbg_echo "[INFO] Building library with $compiler"
                 make -C "$AIE_DRIVER_PARENT_DIR/aie-rt/driver/src" -s libs \
@@ -281,9 +288,9 @@ elif [[ $aie_version == "5" ]]; then
     SECONDARY_ARCH_APU_AINC=$SECONDARY_ARCH_APU_A78_INC
     AIELIB_APU_NAME=$AIELIB_APU_A78_NAME
     ARCH_APU_LD=$ARCH_APU_A78_LD
-    hw_lib_flag="-DARMA78_EL3"
+    hw_lib_flag="-DARMA78_EL3 -DSDT"
     compiler_cpu_flag="-mcpu=cortex-a78"
-    EXTRA_LIBS="-lxiltimer,-lxilstandalone,"
+    EXTRA_LIBS="-lxiltimer,-lxilstandalone,-lxilpm_ng,"
     AIE_ARCH_MACRO=20
 else
     echo "Unsupported AIE version: $aie_version"
@@ -314,7 +321,7 @@ if [ -d "${AIE_DRIVER_PARENT_DIR}/aie-rt/driver/" ] && [[ "$platform" != "sim" ]
     if [[ $aie_version == "1" || $aie_version == "2" ]]; then
         EXTRA_LIBS=""
     elif [[ $aie_version == "5" ]]; then
-        EXTRA_LIBS="-lxiltimer,-lxilstandalone,"
+        EXTRA_LIBS="-lxiltimer,-lxilstandalone,-lxilpm_ng,"
     else
         echo "aie_version $aie_version is unknown"
     fi

@@ -1,36 +1,41 @@
 /******************************************************************************/
 /**
-* Copyright (C) 2024 Advanced Micro Devices, Inc.  All rights reserved.
-* SPDX-License-Identifier: MIT
-******************************************************************************/
+ * Copyright (C) 2024 - 2026 Advanced Micro Devices, Inc.  All rights reserved.
+ * SPDX-License-Identifier: MIT
+ ******************************************************************************/
 
 /****************************************************************************/
 /**
-* @file xil_sutil.h
-* @addtogroup common_utilities Common Utility APIs
-* @{
-* @details
-*
-* xil_sutil.h file contains xil utility functions declarations
-* Except few functions, most of these functions are wrappers to standard functions.
-* The standard string functions do not validate the input and that results into
-* buffer overflows. To avoid it, the wrapper function validates the input and
-* then passed to standard function. There are few constant time functions
-* ( xxx_CT() ) which are used to compare the data in constant time.
-* The constant time functions should be used while comparing secure data
-* like password, keys which prevent disclosing of the data using
-* timing analysis.
-*
-* <pre>
-* MODIFICATION HISTORY:
-*
-* Ver   Who      Date     Changes
-* ----- -------- -------- -----------------------------------------------
-* 9.2   kpt      04/21/19 First release.
-*
-* </pre>
-*
-*****************************************************************************/
+ * @file xil_sutil.h
+ * @addtogroup common_utilities Common Utility APIs
+ * @{
+ * @details
+ *
+ * xil_sutil.h file contains xil utility functions declarations
+ * Except few functions, most of these functions are wrappers to standard functions.
+ * The standard string functions do not validate the input and that results into
+ * buffer overflows. To avoid it, the wrapper function validates the input and
+ * then passed to standard function. There are few constant time functions
+ * ( xxx_CT() ) which are used to compare the data in constant time.
+ * The constant time functions should be used while comparing secure data
+ * like password, keys which prevent disclosing of the data using
+ * timing analysis.
+ *
+ * <pre>
+ * MODIFICATION HISTORY:
+ *
+ * Ver   Who      Date     Changes
+ * ----- -------- -------- -----------------------------------------------
+ * 9.2   kpt      04/21/19 First release.
+ * 9.3   ml       02/19/25 Fix Type Mismatch in Xil_UtilRMW32
+ * 9.4   ml       07/24/25 Fixed GCC warnings
+ *       har      10/10/25 Updated datatype of Len in Xil_ConvertStringToHex
+ * 9.5   abh      10/11/25 Fixed MISRA-C violations
+ *       rmv      04/08/26 Added XIL_SCEILDIV macro
+ *
+ * </pre>
+ *
+ *****************************************************************************/
 
 #ifndef XIL_SUTIL_H_
 #define XIL_SUTIL_H_
@@ -59,7 +64,7 @@ extern "C" {
  * @return	32-bit version number
  *
  ******************************************************************************/
-#define XIL_BUILD_VERSION(Major, Minor)		((((u32)Major) << 16U) | (Minor))
+#define XIL_BUILD_VERSION(Major, Minor) ((((u32)Major) << 16U) | ((u32)Minor))
 
 #ifdef __GNUC__
 /******************************************************************************/
@@ -78,13 +83,13 @@ extern "C" {
  * @return	None
  *
  ******************************************************************************/
-#define XSECURE_TEMPORAL_IMPL(Var, VarTmp, Function, ...) \
-	{ \
-		Var = XST_FAILURE; \
-		VarTmp = XST_FAILURE; \
-		Var = Function(__VA_ARGS__); \
-		VarTmp = Var; \
-	}
+#define XSECURE_TEMPORAL_IMPL(Var, VarTmp, Function, ...)                                                              \
+    {                                                                                                                  \
+        (Var) = XST_FAILURE;                                                                                           \
+        (VarTmp) = XST_FAILURE;                                                                                        \
+        (Var) = (Function(__VA_ARGS__));                                                                               \
+        (VarTmp) = (Var);                                                                                              \
+    }
 
 /******************************************************************************/
 /**
@@ -104,19 +109,17 @@ extern "C" {
  * @return	None
  *
  ******************************************************************************/
-#define XSECURE_TEMPORAL_CHECK(Label, Status, Function, ...)   \
-	{ \
-		volatile int StatusTmp; \
-		XSECURE_TEMPORAL_IMPL(Status, StatusTmp, Function, __VA_ARGS__); \
-		if ((Status != XST_SUCCESS) || \
-		    (StatusTmp != XST_SUCCESS)) { \
-			if (((Status) != (StatusTmp)) || \
-			    (Status == XST_SUCCESS)) { \
-				Status = XST_GLITCH_ERROR; \
-			}\
-			goto Label; \
-		} \
-	}
+#define XSECURE_TEMPORAL_CHECK(Label, Status, Function, ...)                                                           \
+    {                                                                                                                  \
+        volatile int StatusTmpVal;                                                                                     \
+        XSECURE_TEMPORAL_IMPL(Status, StatusTmpVal, Function, __VA_ARGS__);                                            \
+        if (((Status) != XST_SUCCESS) || ((StatusTmpVal) != XST_SUCCESS)) {                                            \
+            if (((Status) != (StatusTmpVal)) || ((Status) == XST_SUCCESS)) {                                           \
+                (Status) = XST_GLITCH_ERROR;                                                                           \
+            }                                                                                                          \
+            goto Label;                                                                                                \
+        }                                                                                                              \
+    }
 
 /******************************************************************************/
 /**
@@ -135,11 +138,11 @@ extern "C" {
  * @return	None
  *
  ******************************************************************************/
-#define XSECURE_REDUNDANT_CALL(Status, StatusTmp, Function, ...)   \
-	{ \
-		Status = Function(__VA_ARGS__); \
-		StatusTmp = Function(__VA_ARGS__); \
-	}
+#define XSECURE_REDUNDANT_CALL(Status, StatusTmp, Function, ...)                                                       \
+    {                                                                                                                  \
+        (Status) = (Function(__VA_ARGS__));                                                                            \
+        (StatusTmp) = (Function(__VA_ARGS__));                                                                         \
+    }
 
 /******************************************************************************/
 /**
@@ -171,21 +174,37 @@ extern "C" {
  * @return	None
  *
  ******************************************************************************/
-#define XSECURE_STATUS_CHK_GLITCH_DETECT(Status)   \
-	{ \
-		if (Status == XST_SUCCESS) { \
-			Status = (int)XST_GLITCH_ERROR; \
-		} \
-	}
+#define XSECURE_STATUS_CHK_GLITCH_DETECT(Status)                                                                       \
+    {                                                                                                                  \
+        if ((Status) == XST_SUCCESS) {                                                                                 \
+            (Status) = (int)XST_GLITCH_ERROR;                                                                          \
+        }                                                                                                              \
+    }
 
 #endif
 /*************************** Function Prototypes ******************************/
+
+/******************************************************************************/
+/**
+ *
+ * Returns ceil value of (Numerator / Denominator) using the specified
+ * integer Type used for the computation. Denominator must not be zero.
+ *
+ * @param	Type is the data type (e.g. u32, u64) used for the computation
+ * @param	Numerator is the dividend
+ * @param	Denominator is the divisor and must not be zero
+ *
+ * @return	Ceil value of (Numerator / Denominator)
+ *
+ ******************************************************************************/
+#define XIL_SCEILDIV(Type, Numerator, Denominator)                                                                     \
+    (((Type)(Numerator) + (Type)(Denominator) - (Type)1) / (Type)(Denominator))
 
 /**< Converts input character to nibble */
 u32 Xil_ConvertCharToNibble(u8 InChar, u8 *Num);
 
 /**< Convert input hex string to array of 32-bits integers */
-u32 Xil_ConvertStringToHex(const char *Str, u32 *buf, u8 Len);
+u32 Xil_ConvertStringToHex(const char *Str, u32 *buf, u32 Len);
 
 #ifdef VERSAL_PLM
 /**< Register PLM handler */
@@ -203,7 +222,7 @@ u32 Xil_WaitForEvents(UINTPTR EventsRegAddr, u32 EventsMask, u32 WaitEvents,
 		      u32 Timeout, u32 *Events);
 
 /**< Read, Modify and Write to an address*/
-void Xil_UtilRMW32(u32 Addr, u32 Mask, u32 Value);
+void Xil_UtilRMW32(UINTPTR Addr, u32 Mask, u32 Value);
 
 /**< Copies Len bytes from source memory to destination memory */
 s32 Xil_SecureMemCpy(void *DestPtr, u32 DestPtrLen, const void *SrcPtr, u32 Len);
@@ -263,6 +282,15 @@ s32 Xil_SReverseData(void *Buf, u32 Size);
 
 /**< Copies data from 64 bit address Src to 64 bit address Dst */
 void Xil_MemCpy64(u64 DstAddr, u64 SrcAddr, u32 Cnt);
+
+/**< Copies data from 64 bit source address to 32 bit destination address */
+void Xil_MemCpyFrom64To32Addr(u32 DstAddr, u64 SrcAddr, u32 Count);
+
+/**< Copies data from 32 bit source address to 64 bit destination address */
+void Xil_MemCpyFrom32To64Addr(u64 DstAddr, u32 SrcAddr, u32 Count);
+
+/**< Increments buffer data by specified value */
+void Xil_IncrementBuffer(u8 *Buffer, u32 BufferSize, u8 IncVal);
 
 #ifdef __cplusplus
 }
