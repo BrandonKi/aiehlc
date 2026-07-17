@@ -2201,19 +2201,20 @@ public:
                         derivedTilingParams.tileM = tileM_eff;
                         derivedTilingParams.tileN = tileN_eff;
                         derivedTilingParams.effectiveK = tileK_eff;
-                        // Prefer the explicit tile_dim.groups when the user pinned it;
-                        // otherwise fall back to the (total / size) formula. Both must
-                        // agree for a valid Partition (checked by validateDim above).
-                        derivedTilingParams.spatialMRounds =
-                            explicitGroupsM > 0 ? explicitGroupsM
-                                                : ((tileM_eff > 0 && tileM_eff < derivedTilingParams.tileRows)
-                                                       ? derivedTilingParams.tileRows / tileM_eff
-                                                       : 1);
-                        derivedTilingParams.spatialNRounds =
-                            explicitGroupsN > 0 ? explicitGroupsN
-                                                : ((tileN_eff > 0 && tileN_eff < derivedTilingParams.tileCols)
-                                                       ? derivedTilingParams.tileCols / tileN_eff
-                                                       : 1);
+                        // Always compute spatialMRounds/spatialNRounds from the per-tile
+                        // row/col count divided by the tile size. Do NOT use explicitGroupsM
+                        // from d1.groups: that value is derived from d1.fullsize (the global
+                        // tensor dimension, e.g. M=256), giving global groups (256/16=16),
+                        // whereas spatialMRounds must be the per-tile group count
+                        // (tileRows/tileM = 64/16 = 4). Using the global count causes the
+                        // kernel to demand 4x more A/B windows than the shim supplies,
+                        // deadlocking after the first pass.
+                        derivedTilingParams.spatialMRounds = (tileM_eff > 0 && tileM_eff < derivedTilingParams.tileRows)
+                                                                 ? derivedTilingParams.tileRows / tileM_eff
+                                                                 : 1;
+                        derivedTilingParams.spatialNRounds = (tileN_eff > 0 && tileN_eff < derivedTilingParams.tileCols)
+                                                                 ? derivedTilingParams.tileCols / tileN_eff
+                                                                 : 1;
                         derivedTilingParams.kRounds =
                             explicitGroupsK > 0
                                 ? explicitGroupsK

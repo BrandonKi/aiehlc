@@ -2,27 +2,28 @@
  * Copyright (C) 2026 Advanced Micro Devices, Inc. All Rights Reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
- * AIE OOB Comparison Benchmark — int32 GEMM, 8 matrices.
+ * AIE OOB Comparison Benchmark — uint32 GEMM, 8 matrices.
  *
- * Matches the OOB example_oob_4x4 workload parameters:
- *   - Data type:    int32  (OOB uses uint32; same 32-bit width, signed variant)
+ * Matches the OOB example_oob_4x4 workload parameters exactly:
+ *   - Data type:    uint32 (same as OOB)
  *   - Matrix size:  256x256x256 per matrix  (OOB PANEL_SIZE=256, NUM_PANELS=1)
  *   - Tile array:   4x4 = 16 compute tiles  (OOB NUM_HW_ROWS=4, NUM_HW_COLS=4)
  *   - Matrices:     8 back-to-back GEMMs    (OOB NUM_MATRICES=8)
  *   - GFLOPS:       8 * 2 * 256^3 / wall_s / 1e9 (exact OOB formula)
  *
- * exp59 — aie::mmul<4,4,4,int32,int32> kernel with K-major B (Option B).
+ * exp60 — Direct port of OOB mmul_gemm.h to aiehlc DMA window model.
  *
- * Kernel: aie::mmul<4,4,4,int32,int32> with K-major B DDR layout.
- *   - B pre-transposed host-side: B_t[k*N+n] = B[n*K+k] (col-major → K-major)
- *   - GemmSpace KmajBB: d1={KCHUNK,K} (K-tiles), d2={TILE_N,N} (N-tiles), Layout::Row
- *   - Kernel: C.mul(av,bv) / C.mac(av,bv) / C.to_vector<int32>()
- *   - Eliminates all inner i/j scalar loops — mmul computes all 16 C elements per call
- *   - No in-kernel B transpose needed (layout matches mmul operand format directly)
- *
- * Previous baseline (exp_oob_compare):
- *   - mac+reduce_add, col-major B, 16 scalar reduce ops per KCHUNK slice
- *   - Logged in autoperf/results/retime/exp_oob_compare.log (git: dada830)
+ * Kernel: aie::mmul<4,4,4,uint32,uint32> with in-kernel B staging (OOB pattern).
+ *   - B delivered col-major via ColBB GemmSpace (same as aiehlc baseline)
+ *   - In-kernel B staging: col-major → K-major bbuf[k*TILE_N+n] (OOB one_input.cc)
+ *   - A cached locally per K-round (OOB caches full A stripe; here per KCHUNK window)
+ *   - No host-side B pre-transpose (fixes exp59 DMA hang from KmajBB)
+ *   - mmul<4,4,4> shape: MM_M=4, MM_K=4, MM_N=4
+ *     A tile: 4×4 uint32 (16 elem) = concat(r0,r1,r2,r3) each load_v<4>
+ *     B tile: 4×4 uint32 (16 elem) = bbuf K-major contiguous load_v<16>
+ *     C tile: 4×4 acc64 → to_vector<uint64_t>
+ *   - Outer loops: MM_M_SUB=TILE_M/4 (per-tile M groups), MM_N_SUB=TILE_N/4 (N groups)
+ *     MM_K_STEPS=KCHUNK/4 (K-steps per window)
  *
  * Primary metric: wall GFLOPS (same as OOB) + PMCCNTR cycles per matrix.
  * [PERF] summary block matches simplematmul2_prof.cc format for easy grep.
@@ -33,14 +34,24 @@
 #define HW_ROWS 4
 #define HW_COLS 4
 #define NUM_MATRICES 8
-// Per-DMA-round sub-tile granularity (int32 = 4 bytes per element).
+// Per-DMA-round sub-tile granularity (uint32 = 4 bytes per element).
+// Same as baseline exp58 to avoid shim DMA channel overflow (ch>1 invalid).
 // Per-tile sub-problem: (M/HW_ROWS)=64 rows, (N/HW_COLS)=64 cols, K=256.
-// A window: TILE_M=4 rows × KCHUNK=4 K-elements = 16 int32 = 64 bytes (row-major)
-// B_t window: KCHUNK=4 K-elements × TILE_N=4 N-elements = 16 int32 = 64 bytes (K-major)
-// C window: TILE_M=4 rows × TILE_N=4 cols        = 16 int32 = 64 bytes
-#define TILE_M 4
-#define TILE_N 4
-#define KCHUNK 4
+// A window: TILE_M=16 rows × KCHUNK=64 K-elements = 1024 uint32 = 4096 bytes (row-major)
+// B window: TILE_N=16 N-elements × KCHUNK=64 K-elements = 1024 uint32 = 4096 bytes (col-major)
+// C window: TILE_M=16 rows × TILE_N=16 cols = 256 uint32 = 1024 bytes
+// Inner mmul tile: MM_M=4, MM_K=4, MM_N=4 (aie::mmul<4,4,4,uint32,uint32>)
+// Inner loops: MM_M_SUB=TILE_M/4=4, MM_N_SUB=TILE_N/4=4, MM_K_STEPS=KCHUNK/4=16
+#define TILE_M 16
+#define TILE_N 16
+#define KCHUNK 64
+// mmul<4,4,4> inner tile dims — these are the mmul operand sizes
+#define MM_M 4
+#define MM_N 4
+#define MM_K 4
+#define MM_M_SUB (TILE_M / MM_M)   // 4: M sub-tiles per DMA window
+#define MM_N_SUB (TILE_N / MM_N)   // 4: N sub-tiles per DMA window
+#define MM_K_STEPS (KCHUNK / MM_K) // 16: K steps per DMA window
 #include "simplematmul.h"
 #pragma aie_debug_level(0 | AIE_DEBUG_FLAG_DISABLE_PARTITIONTEARDOWN | AIE_DEBUG_FLAG_MM2SBDFINISH_COUNTER |           \
                         AIE_DEBUG_FLAG_CORE_PERF_COUNTER)
@@ -55,24 +66,22 @@ extern void __Runtime_kload_split_cycles(unsigned long long *elf_cyc, unsigned i
                                          unsigned int *rst_n);
 extern void __Runtime_wait_io_iters(unsigned long long *iters);
 
-// Spatial policies:
-//   win_a: A[M,K] -> d1=TILE_M rows, d2=KCHUNK K-elements, int32, row-major
-//   win_b: B_t[K,N] -> d1=KCHUNK K-slices, d2=TILE_N N-elements, int32, K-major (row-major layout)
-//   win_c: C[M,N] -> d1=TILE_M rows, d2=TILE_N cols, int32
+// Spatial policies — identical to aiehlc baseline (ColBB col-major B):
+//   win_a: A[M,K] -> d1=TILE_M rows, d2=KCHUNK K-elements, uint32, row-major
+//   win_b: B[N,K] -> d1=TILE_N N-elements, d2=KCHUNK K-elements, uint32, col-major
+//   win_c: C[M,N] -> d1=TILE_M rows, d2=TILE_N cols, uint32
 constexpr aie::GemmSpace RowBA = {
     .policy = {.map = {.act = aie::Pattern::Broadcast, .layout = aie::Layout::Row},
                .mat = {.pad = aie::PadMaterialize::DDR, .im2col = aie::Im2col::None},
                .sched = {.pp_depth = 2, .l1_budget = aie::Bytes{4096}}},
     .d1 = {.tile_size = TILE_M, .stride = TILE_M, .fullsize = M, .pad_hi = 0, .pad_lo = 0},
     .d2 = {.tile_size = KCHUNK, .stride = KCHUNK, .fullsize = K, .pad_hi = 0, .pad_lo = 0}};
-// K-major B: B_t[k][n] stored in DDR as B_t[k*N+n].
-// d1 iterates over K (KCHUNK slices), d2 iterates over N (TILE_N tiles).
-// Layout::Row: data contiguous along d2 (N dimension) — matches K-major row storage.
-constexpr aie::GemmSpace KmajBB = {.policy = {.map = {.wgt = aie::Pattern::Broadcast, .layout = aie::Layout::Row},
-                                              .mat = {.pad = aie::PadMaterialize::DDR, .im2col = aie::Im2col::None},
-                                              .sched = {.pp_depth = 2, .l1_budget = aie::Bytes{4096}}},
-                                   .d1 = {.tile_size = KCHUNK, .stride = KCHUNK, .fullsize = K},
-                                   .d2 = {.tile_size = TILE_N, .stride = TILE_N, .fullsize = N}};
+// Col-major B (same as aiehlc baseline ColBB): d1=TILE_N N-tiles, d2=KCHUNK K-chunks
+constexpr aie::GemmSpace ColBB = {.policy = {.map = {.wgt = aie::Pattern::Broadcast, .layout = aie::Layout::Col},
+                                             .mat = {.pad = aie::PadMaterialize::DDR, .im2col = aie::Im2col::None},
+                                             .sched = {.pp_depth = 2, .l1_budget = aie::Bytes{4096}}},
+                                  .d1 = {.tile_size = TILE_N, .stride = TILE_N, .fullsize = N},
+                                  .d2 = {.tile_size = KCHUNK, .stride = KCHUNK, .fullsize = K}};
 constexpr aie::GemmSpace LtoR_Merge = {
     .policy = {.map = {.layout = aie::Layout::Row, .merge_order = aie::Flow::LeftToRight},
                .mat = {.pad = aie::PadMaterialize::DDR, .im2col = aie::Im2col::None},
@@ -80,76 +89,149 @@ constexpr aie::GemmSpace LtoR_Merge = {
     .d1 = {.tile_size = TILE_M, .stride = TILE_M, .fullsize = M},
     .d2 = {.tile_size = TILE_N, .stride = TILE_N, .fullsize = N}};
 
-// ─── KERNEL: per-tile int32 GEMM — aie::mmul<4,4,4,int32,int32> ─────────────
+// ─── KERNEL: per-tile uint32 GEMM — OOB mmul_gemm.h port (exp60) ─────────────
 //
-// B arrives K-major: B_t[k*N+n] → window = B_ptr[0..KCHUNK*TILE_N-1] row-major.
-// A arrives row-major: A[i][k] → window = A_ptr[0..TILE_M*KCHUNK-1] row-major.
+// DMA window granularity matches baseline exp58 (TILE_M=16, TILE_N=16, KCHUNK=64)
+// to avoid shim channel overflow. Inner computation uses aie::mmul<4,4,4,uint32,uint32>
+// tiled in MM_M_SUB×MM_N_SUB×MM_K_STEPS sub-loops — mirrors OOB mm_compute_nblock().
 //
-// One mmul<4,4,4> call computes the full TILE_M×TILE_N (4×4) output tile
-// from a TILE_M×KCHUNK A slice and a KCHUNK×TILE_N B_t slice, accumulating
-// across k_rounds K-chunks.
+// B arrives col-major: B_ptr[n*KCHUNK + k] (window = 16 N-cols × 64 K-elements).
+// In-kernel staging (OOB one_input.cc pattern):
+//   for each col n: load_v<MM_K> → scatter into bbuf[k*TILE_N + n] (K-major)
+//   Then inner mmul reads bbuf[ks*MM_K*MM_N .. ks*MM_K*MM_N+16] for each K-step ks.
 //
-// av: TILE_M*KCHUNK = 16 int32 (A tile, row-major)
-// bv: KCHUNK*TILE_N = 16 int32 (B_t tile, K-major = row-major in K)
-// cv: TILE_M*TILE_N = 16 int32 (C tile, row-major)
+// Per DMA window: MM_M_SUB=4 M-groups × MM_N_SUB=4 N-groups × MM_K_STEPS=16 K-steps.
+// Each mmul<4,4,4>: av = 4×4 A sub-tile, bv = 4×4 B sub-tile (K-major), cv = 4×4 acc64.
 //
-__global__ void matmul(aie::port<input_window_int32 *, RowBA> win_a, aie::port<input_window_int32 *, KmajBB> win_b,
+__global__ void matmul(aie::port<input_window_int32 *, RowBA> win_a, aie::port<input_window_int32 *, ColBB> win_b,
                        aie::port<output_window_int32 *, LtoR_Merge> win_c) {
-    const int k_rounds = aie::get_k_rounds(); // K / KCHUNK = 64
-    const int m_rounds = aie::get_spatial_multiple_rounds(win_a);
-    const int n_rounds = aie::get_spatial_multiple_rounds(win_b);
+    const int k_rounds = aie::get_k_rounds();                     // K / KCHUNK = 4
+    const int m_rounds = aie::get_spatial_multiple_rounds(win_a); // M groups per tile
+    const int n_rounds = aie::get_spatial_multiple_rounds(win_b); // N groups per tile
 
-    using MMUL = aie::mmul<TILE_M, KCHUNK, TILE_N, int32, int32>;
+    // Static to avoid stack overflow (TILE_M*KCHUNK*4=4096 bytes each exceeds AIE core stack)
+    // A cache: full 16×64 row-major tile — reuse across N inner sub-tiles
+    // alignas(32): aie::load_v<MM_K> (128-bit vector loads) require 16-byte alignment.
+    alignas(32) static uint32_t all_A[TILE_M * KCHUNK]; // 4096 bytes
+
+    // bbuf: MM_N-blocked K-major staging for B window (exact OOB layout so each
+    // MM_K×MM_N B tile is ONE contiguous load_v<MM_K*MM_N>, no gather).
+    // Layout: bbuf[((ns*MM_K_STEPS + ks)*MM_K + kl)*MM_N + nl]
+    // alignas(64): 512-bit (MM_K*MM_N=16 uint32) aligned loads need 64-byte alignment.
+    alignas(64) static uint32_t bbuf[KCHUNK * TILE_N]; // 4096 bytes (= MM_N_SUB*MM_K_STEPS*MM_K*MM_N)
+
+    // C accumulator: uint64 to avoid overflow across k_rounds
+    static uint64_t acc_buf[TILE_M * TILE_N]; // 2048 bytes
+
+    const int num_a_rounds = aie::get_num_rounds(win_a); // A sub-windows per K-round
+    const int num_b_rounds = aie::get_num_rounds(win_b); // B sub-windows per K-round
+    const int num_c_rounds = aie::get_num_rounds(win_c); // C sub-windows per output tile
+    const int buf_sz_a = aie::get_buffer_size(win_a);    // uint32 elements per A sub-window
+    const int buf_sz_b = aie::get_buffer_size(win_b);
+    const int buf_sz_c = aie::get_buffer_size(win_c);
+    klog("krnds", k_rounds);
+    klog("mrnds", m_rounds);
+    klog("nrnds", n_rounds);
+    klog("narnds", num_a_rounds);
+    klog("nbrnds", num_b_rounds);
+    klog("ncrnds", num_c_rounds);
+    klog("bsza ", buf_sz_a);
+    klog("bszb ", buf_sz_b);
+    klog("bszc ", buf_sz_c);
 
     for (int mr = 0; mr < m_rounds * n_rounds; mr++) {
-        MMUL C;
+        // Zero 64-bit accumulator for this output tile
+        for (int idx = 0; idx < TILE_M * TILE_N; idx++)
+            acc_buf[idx] = 0;
 
         for (int kr = 0; kr < k_rounds; kr++) {
-            // Load TILE_M×KCHUNK A slice (row-major, 16 int32)
-            int32_t *A_ptr = (int32_t *)acquire_input_window(win_a);
-            aie::vector<int32, TILE_M * KCHUNK> av = aie::load_v<TILE_M * KCHUNK>(A_ptr);
-            release_input_window(win_a);
+            // Cache A tile: num_a_rounds sub-windows → all_A (TILE_M×KCHUNK uint32, row-major)
+            for (int ra = 0; ra < num_a_rounds; ra++) {
+                uint32_t *A_ptr = (uint32_t *)acquire_input_window(win_a);
+                for (int i = 0; i < buf_sz_a; i++)
+                    all_A[ra * buf_sz_a + i] = A_ptr[i];
+                release_input_window(win_a);
+            }
 
-            // Load KCHUNK×TILE_N B_t slice (K-major = row-major, 16 int32)
-            int32_t *B_ptr = (int32_t *)acquire_input_window(win_b);
-            aie::vector<int32, KCHUNK * TILE_N> bv = aie::load_v<KCHUNK * TILE_N>(B_ptr);
-            release_input_window(win_b);
+            // Stage B col-major → MM_N-blocked K-major bbuf (one window = TILE_N×KCHUNK uint32)
+            // B_ptr[n*KCHUNK + ki] → bbuf[((ns*MM_K_STEPS + ks)*MM_K + kl)*MM_N + nl]
+            //   where ns=n/MM_N, nl=n%MM_N, ks=ki/MM_K, kl=ki%MM_K.
+            // Each (ns,ks) 4×4 B tile is then a single contiguous load in the mmul.
+            for (int rb = 0; rb < num_b_rounds; rb++) {
+                uint32_t *B_ptr = (uint32_t *)acquire_input_window(win_b);
+                for (int n = 0; n < TILE_N; n++) {
+                    int ns = n / MM_N, nl = n % MM_N;
+                    for (int ki = 0; ki < KCHUNK; ki++) {
+                        int ks = ki / MM_K, kl = ki % MM_K;
+                        bbuf[((ns * MM_K_STEPS + ks) * MM_K + kl) * MM_N + nl] = B_ptr[n * KCHUNK + ki];
+                    }
+                }
+                release_input_window(win_b);
+            }
 
-            // Accumulate: first round uses mul (resets accumulator), rest use mac
-            if (kr == 0)
-                C.mul(av, bv);
-            else
-                C.mac(av, bv);
+            // Matrix-engine accumulation: aie::mmul<4,4,4,uint32,uint32> tiled over the
+            // TILE_M×TILE_N output and the KCHUNK contraction. Mirrors OOB mm_compute_nblock()
+            // EXACTLY: A rows via load_v<MM_K> (row-major), B tile via ONE contiguous
+            // load_v<MM_K*MM_N> from the MM_N-blocked bbuf (no gather).
+            using MMUL = aie::mmul<MM_M, MM_K, MM_N, uint32_t, uint32_t>;
+            for (int ms = 0; ms < MM_M_SUB; ms++) {
+                for (int ns = 0; ns < MM_N_SUB; ns++) {
+                    MMUL C;
+                    for (int ks = 0; ks < MM_K_STEPS; ks++)
+                        chess_prepare_for_pipelining {
+                            // A: MM_M rows × MM_K cols, row-major (contiguous per row)
+                            aie::vector<uint32_t, MM_K> ar0 =
+                                aie::load_v<MM_K>(all_A + (ms * MM_M + 0) * KCHUNK + ks * MM_K);
+                            aie::vector<uint32_t, MM_K> ar1 =
+                                aie::load_v<MM_K>(all_A + (ms * MM_M + 1) * KCHUNK + ks * MM_K);
+                            aie::vector<uint32_t, MM_K> ar2 =
+                                aie::load_v<MM_K>(all_A + (ms * MM_M + 2) * KCHUNK + ks * MM_K);
+                            aie::vector<uint32_t, MM_K> ar3 =
+                                aie::load_v<MM_K>(all_A + (ms * MM_M + 3) * KCHUNK + ks * MM_K);
+                            aie::vector<uint32_t, MM_M * MM_K> av = aie::concat(ar0, ar1, ar2, ar3);
+                            // B: MM_K×MM_N tile, single contiguous load from MM_N-blocked bbuf
+                            aie::vector<uint32_t, MM_K * MM_N> bv =
+                                aie::load_v<MM_K * MM_N>(bbuf + (ns * MM_K_STEPS + ks) * (MM_K * MM_N));
+                            if (ks == 0)
+                                C.mul(av, bv);
+                            else
+                                C.mac(av, bv);
+                        }
+                    aie::vector<uint32_t, MM_M * MM_N> cv = C.template to_vector<uint32_t>();
+                    for (int mrow = 0; mrow < MM_M; mrow++)
+                        for (int nn = 0; nn < MM_N; nn++)
+                            acc_buf[(ms * MM_M + mrow) * TILE_N + (ns * MM_N + nn)] +=
+                                (uint64_t)cv.get(mrow * MM_N + nn);
+                }
+            }
         }
 
-        // Write TILE_M×TILE_N (4×4) result — values safe for int32 (max |C[i][j]|=1536)
-        int32_t *out = (int32_t *)acquire_output_window(win_c);
-        aie::store_v(out, C.to_vector<int32>());
-        release_output_window(win_c);
+        // Write C output: num_c_rounds sub-windows (typically 1 for TILE_M×TILE_N=256 uint32)
+        for (int rc = 0; rc < num_c_rounds; rc++) {
+            uint32_t *out = (uint32_t *)acquire_output_window(win_c);
+            for (int idx = 0; idx < TILE_M * TILE_N; idx++)
+                out[idx] = (uint32_t)acc_buf[idx];
+            release_output_window(win_c);
+        }
     }
 }
 
-// Correctness check for int32 output.
-// A is row-major: A[i][k] = A[i*K + k].
-// B_orig is col-major: B[j][k] = B[j*K + k].
-// Golden: C[i][j] = saturate(sum_k A[i][k] * B[j][k])  (same math regardless of B_t layout)
-static int oob_verify(const int32_t *A, const int32_t *B_orig, const int32_t *C) {
+// Correctness check for uint32 output (OOB-matching).
+// A row-major: A[i][k] = A[i*K + k], uint32.
+// B col-major: B[j][k] = B[j*K + k], uint32.
+// Golden: C[i][j] = (uint32_t)(sum_k (uint64_t)A[i][k] * B[j][k])
+// (uint64 accumulate, truncate to uint32 — matches mmul<4,4,4,uint32,uint32> acc64 behavior)
+static int oob_verify(const uint32_t *A, const uint32_t *B, const uint32_t *C) {
     int mismatches = 0;
     for (int i = 0; i < M; i++) {
         for (int j = 0; j < N; j++) {
-            int64_t s = 0;
+            uint64_t s = 0;
             for (int k = 0; k < K; k++)
-                s += (int64_t)A[i * K + k] * (int64_t)B_orig[j * K + k];
-            int32_t expected;
-            if (s > (int64_t)0x7FFFFFFF)
-                expected = (int32_t)0x7FFFFFFF;
-            else if (s < (int64_t)-0x80000000LL)
-                expected = (int32_t)-0x80000000LL;
-            else
-                expected = (int32_t)s;
+                s += (uint64_t)A[i * K + k] * (uint64_t)B[j * K + k];
+            uint32_t expected = (uint32_t)s;
             if (C[i * N + j] != expected) {
                 if (mismatches < 8)
-                    printf("  mismatch C[%d,%d] got %d exp %d\n", i, j, C[i * N + j], expected);
+                    printf("  mismatch C[%d,%d] got %u exp %u\n", i, j, C[i * N + j], expected);
                 mismatches++;
             }
         }
@@ -163,11 +245,12 @@ static int oob_verify(const int32_t *A, const int32_t *B_orig, const int32_t *C)
 
 // HOST
 int main() {
-    printf("\n=== aiehlc OOB Comparison Benchmark exp59 (int32, 8 matrices, mmul<4,4,4>, K-major B) ===\n");
-    printf("  C[%dx%d] = A[%dx%d] * B[%dx%d], int32, %dx%d mesh (%d tiles), %d matrices\n", M, N, M, K, K, N, HW_ROWS,
-           HW_COLS, HW_ROWS * HW_COLS, NUM_MATRICES);
+    printf("\n=== aiehlc OOB Comparison Benchmark exp61 (uint32, 8 matrices, mmul<4,4,4> MATRIX-ENGINE, col-major B "
+           "in-kernel staged) ===\n");
+    printf("  C[%dx%d] = A[%dx%d] * B^T[%dx%d], uint32, %dx%d mesh (%d tiles), %d matrices\n", M, N, M, K, N, K,
+           HW_ROWS, HW_COLS, HW_ROWS * HW_COLS, NUM_MATRICES);
     printf("  OOB reference: example_oob_4x4 (PANEL_SIZE=256, NUM_MATRICES=8, aie::mmul<4,4,4,uint32,uint32>)\n");
-    printf("  Kernel: aie::mmul<4,4,4,int32,int32> (K-major B pre-transposed host-side)\n");
+    printf("  Kernel: aie::mmul<4,4,4,uint32,uint32> (B staged K-major in-kernel, OOB one_input.cc pattern)\n");
 
     __ps_pmccntr_enable();
     unsigned long long pc_init0 = __ps_pmccntr();
@@ -177,55 +260,41 @@ int main() {
     unsigned long long pc_init1 = __ps_pmccntr();
 
     unsigned long long pc_setup0 = __ps_pmccntr();
-    // A: row-major A[i*K+k]
-    int32_t *A = (int32_t *)device.alloc(M * K * sizeof(int32_t));
-    // B_orig: col-major B[j*K+k] — kept for golden reference computation
-    static int32_t B_orig[K * N];
-    // B_t: K-major B_t[k*N+n] — pre-transposed, passed to kernel via device.alloc
-    int32_t *B_t = (int32_t *)device.alloc(K * N * sizeof(int32_t));
-    int32_t *C = (int32_t *)device.alloc(M * N * sizeof(int32_t));
+    // A: row-major A[i*K+k], uint32
+    uint32_t *A = (uint32_t *)device.alloc(M * K * sizeof(uint32_t));
+    // B: col-major B[j*K+k], uint32 — passed directly to kernel (no host pre-transpose)
+    uint32_t *B = (uint32_t *)device.alloc(K * N * sizeof(uint32_t));
+    uint32_t *C = (uint32_t *)device.alloc(M * N * sizeof(uint32_t));
 
-    // Initialize A row-major: A[i][k] = (i*K+k) % 7 - 3
+    // Initialize A row-major: A[i][k] = (i*K+k) % 7
     for (int i = 0; i < M * K; i++)
-        A[i] = (int32_t)((i % 7) - 3);
+        A[i] = (uint32_t)(i % 7);
 
-    // Initialize B col-major: B[j*K + k] = (j*K+k) % 5 - 2
+    // Initialize B col-major: B[j*K + k] = (j*K+k) % 5
     for (int i = 0; i < K * N; i++)
-        B_orig[i] = (int32_t)((i % 5) - 2);
-
-    // Pre-transpose B to K-major: B_t[k*N+n] = B_orig[n*K+k]
-    // This matches the KmajBB GemmSpace layout (d1=KCHUNK over K, d2=TILE_N over N).
-    for (int k = 0; k < K; k++)
-        for (int n = 0; n < N; n++)
-            B_t[k * N + n] = B_orig[n * K + k];
+        B[i] = (uint32_t)(i % 5);
 
     // Poison C with 0x5A5A5A5A and flush to DDR
     extern void __Runtime_sync_for_dev(XAie_DevInst * dev, void *ptr, __SIZE_TYPE__ size);
     for (int i = 0; i < M * N; i++)
-        C[i] = (int32_t)0x5A5A5A5A;
-    __Runtime_sync_for_dev(device._dev, C, M * N * sizeof(int32_t));
+        C[i] = (uint32_t)0x5A5A5A5AU;
+    __Runtime_sync_for_dev(device._dev, C, M * N * sizeof(uint32_t));
     printf("[oob] poisoned C and flushed to DDR\n");
 
-    // Golden reference: C[i][j] = saturate(sum_k A[i][k] * B_orig[j][k])
-    // Use B_orig (col-major) for the reference — math is identical to mmul(A_row, B_t_col)
-    static int32_t golden[M * N];
+    // Golden reference: C[i][j] = (uint32_t)(sum_k (uint64_t)A[i][k] * B[j][k])
+    // B is col-major: B[j][k] = B[j*K+k]
+    static uint32_t golden[M * N];
     for (int i = 0; i < M; i++) {
         for (int j = 0; j < N; j++) {
-            int64_t s = 0;
+            uint64_t s = 0;
             for (int k = 0; k < K; k++)
-                s += (int64_t)A[i * K + k] * (int64_t)B_orig[j * K + k];
-            if (s > (int64_t)0x7FFFFFFF)
-                s = (int64_t)0x7FFFFFFF;
-            else if (s < (int64_t)-0x80000000LL)
-                s = (int64_t)-0x80000000LL;
-            golden[i * N + j] = (int32_t)s;
+                s += (uint64_t)A[i * K + k] * (uint64_t)B[j * K + k];
+            golden[i * N + j] = (uint32_t)s;
         }
     }
     unsigned long long pc_setup1 = __ps_pmccntr();
 
     // ─── Timed window: NUM_MATRICES back-to-back GEMMs ───────────────────────
-    // Mirrors OOB's: for (int m = 0; m < NUM_MATRICES; m++) { run_graph(); }
-    // ELF loading stays inside the window (charged to the metric, matching our convention).
     const uint64_t MAX_POLL = 500000000ULL;
     XTime t0, t1;
     unsigned long long cv0 = __ps_cntvct();
@@ -233,8 +302,7 @@ int main() {
     XTime_GetTime(&t0);
 
     for (int mat = 0; mat < NUM_MATRICES; mat++) {
-        matmul<<<mesh>>>(A, B_t, C, M, N, K);
-        // Each matrix uses the same data (matching OOB's single-panel 8× repeat).
+        matmul<<<mesh>>>(A, B, C, M, N, K);
     }
 
     unsigned long long pc_mid = __ps_pmccntr();
@@ -243,7 +311,7 @@ int main() {
     unsigned long long poll_sync_cyc = 0ULL, poll_cmp_cyc = 0ULL;
     do {
         unsigned long long __ps0 = __ps_pmccntr();
-        device.synchronizecpu(C, M * N * sizeof(int32_t));
+        device.synchronizecpu(C, M * N * sizeof(uint32_t));
         poll_sync_cyc += (__ps_pmccntr() - __ps0);
         unsigned long long __pc0 = __ps_pmccntr();
         complete = 1;
@@ -394,11 +462,11 @@ int main() {
 
     printf("\n--- Correctness ---\n");
     unsigned long long pc_verify0 = __ps_pmccntr();
-    int result = oob_verify(A, B_orig, C);
+    int result = oob_verify(A, B, C);
     unsigned long long pc_verify1 = __ps_pmccntr();
 
     device.free(A);
-    device.free(B_t);
+    device.free(B);
     device.free(C);
 
     printf("  [pmccntr] verify: %llu cyc\n", (unsigned long long)(pc_verify1 - pc_verify0));
@@ -422,7 +490,7 @@ int main() {
         double ssp = tb2 ? 100.0 * (double)sstall / tb2 : 0.0;
         unsigned long long ph_tot = ph[0] + ph[1] + ph[2] + ph[3] + wio_cyc2;
         unsigned long long unacct2 = pc_launch2 > ph_tot ? pc_launch2 - ph_tot : 0ULL;
-        printf("\n[PERF] exp=oob_mmul dtype=int32 matrices=%d kernel=mmul<4,4,4,int32,int32> B=K-major\n",
+        printf("\n[PERF] exp=oob_mmul61 dtype=uint32 matrices=%d kernel=mmul<4,4,4,uint32,uint32> B=col-major-staged\n",
                NUM_MATRICES);
         printf("[PERF] launch_cyc=%llu\n", pc_launch2);
         printf("[PERF] launch_cyc_per_mat=%llu\n", pc_launch2 / NUM_MATRICES);

@@ -24,7 +24,11 @@ extern void ess_ReadGM(uint64_t addr, void *data, uint64_t size);
 #  include "sleep.h"
 #  include "xil_cache.h"
 #endif
+#if __has_include("xaiengine/xaie_helper.h")
 #include "xaiengine/xaie_helper.h"
+#elif __has_include(<aie_codegen_inc/xaie_helper.h>)
+#include <aie_codegen_inc/xaie_helper.h>
+#endif
 #include <stdio.h>
 
 // HW generation for device config (reference: aieml_perf.cc lines 14-20)
@@ -689,12 +693,12 @@ XAie_DevInst *__Runtime_explicit_init(void) {
 #ifdef __AIESIM__
     XAie_SetIOBackend(dev, XAIE_IO_BACKEND_SIM);
 #else
-    XAie_SetIOBackend(dev, XAIE_IO_BACKEND_BAREMETAL);
+    XAie_SetIOBackend(dev, XAIE_IO_BACKEND_SOCKET);
 #endif
 
 #if AIE_GEN >= 2
 #ifndef __AIESIM__
-    if (dev->Backend->Type == XAIE_IO_BACKEND_BAREMETAL) {
+    if (dev->Backend->Type == XAIE_IO_BACKEND_SOCKET) {
 #if AIE_GEN == 5
         RC = XAie_UpdateNpiAddr(dev, 0xf6d50000);
 #else
@@ -765,12 +769,12 @@ XAie_DevInst *__Runtime_explicit_init_partition(int startCol, int numCols) {
 #ifdef __AIESIM__
     XAie_SetIOBackend(dev, XAIE_IO_BACKEND_SIM);
 #else
-    XAie_SetIOBackend(dev, XAIE_IO_BACKEND_BAREMETAL);
+    XAie_SetIOBackend(dev, XAIE_IO_BACKEND_SOCKET);
 #endif
 
 #if AIE_GEN >= 2
 #ifndef __AIESIM__
-    if (dev->Backend->Type == XAIE_IO_BACKEND_BAREMETAL) {
+    if (dev->Backend->Type == XAIE_IO_BACKEND_SOCKET) {
 #if AIE_GEN == 5
         RC = XAie_UpdateNpiAddr(dev, 0xf6d50000);
 #else
@@ -1831,7 +1835,22 @@ void __Runtime_wait_io(XAie_DevInst *dev, struct_ioevent io_event) {
      * output S2MM DMA drains in microseconds, but the old usleep(1000) made every
      * not-yet-done wait block a FULL millisecond before re-checking. A tight poll returns
      * the instant the channel drains. A large iteration cap bounds a genuine stall.
-     * (exp02 tried 1ms->100us but was masked by the then-dominant wait_event spin.) */
+     * (exp02 tried 1ms->100us but was masked by the then-dominant wait_event spin.)
+     *
+     * NOTE on correctness: DmaGetPendingBdCount returns 0 only when BOTH the start queue
+     * is empty AND the channel is not running/stalled — the driver adds 1 for any active BD
+     * (xaie_dma_aieml.c _XAieMl_DmaGetPendingBdCount lines 1231-1239). So returning when
+     * pending==0 means the last BD has finished executing, not merely started.
+     *
+     * Alternative: XAie_DmaWaitForDone checks the same status register and bits but uses
+     * a 200 µs usleep between reads (xaie_baremetal.c XAie_BaremetalIO_MaskPoll). This is
+     * what the OOB solution uses via gmio_api::wait(). Both are functionally equivalent;
+     * DmaWaitForDone would sleep needlessly here since the drain is sub-millisecond.
+     * To switch, replace the loop below with:
+     *
+     *   while (XAie_DmaWaitForDone(dev, tile, channel, dir, 0U) != XAIE_OK) {}
+     *
+     * TimeOutUs=0 maps to XAIE_DMA_WAITFORDONE_DEF_WAIT_TIME_US in the driver. */
     const uint32_t max_iters = 50000000U; /* ~seconds of busy-poll worst case */
     u8 numPendingBDs = 1;
     uint32_t iter = 0;
@@ -1896,7 +1915,7 @@ void __Runtime_move_data_to_tile(XAie_RoutingInstance *routing, XAie_LocType shi
     XAie_MemSyncForDev(mem);
 
     // Move data using routing API
-    XAie_MoveDataExternal2Aie(routing, shim_tile, mem, size, tile_offset, dest_tile);
+    XAie_MoveData(routing, shim_tile, (void *)mem, size, (void *)(uintptr_t)tile_offset, dest_tile);
 }
 
 /**
@@ -1909,7 +1928,7 @@ void __Runtime_move_data_from_tile(XAie_RoutingInstance *routing, XAie_LocType s
     XAie_MemSyncForCPU(mem);
 
     // Move data using routing API
-    XAie_MoveDataAie2External(routing, src_tile, tile_offset, size, mem, shim_tile);
+    XAie_MoveData(routing, src_tile, (void *)(uintptr_t)tile_offset, size, (void *)mem, shim_tile);
 }
 
 /* ===========================================================================

@@ -175,14 +175,17 @@ LogicalResult FlowTransferConversion::computeShimBdParams(FlowLoweringCtx &c) co
                     if (tileN > 0 && tileN < tileCols) {
                         int64_t effectiveK = effectiveKAttr ? effectiveKAttr.getInt() : 0;
                         int64_t kRounds = kRoundsAttr.getInt();
-                        c.perTileShimLen = tileN * effectiveK * kRounds;
+                        // len is BYTES: element count * element size. Missing the
+                        // *elementSizeBytesShim factor only mattered for int8 (1 B/elem);
+                        // for i16/i32 the shim under-read Nx and starved the cores.
+                        c.perTileShimLen = tileN * effectiveK * kRounds * elementSizeBytesShim;
                     } else {
                         c.perTileShimLen = shimBdLen / kRoundsAttr.getInt();
                     }
                 } else if (tileM > 0 && tileM < tileRows) {
                     int64_t effectiveK = effectiveKAttr ? effectiveKAttr.getInt() : 0;
                     int64_t kRounds = kRoundsAttr.getInt();
-                    c.perTileShimLen = tileM * effectiveK * kRounds;
+                    c.perTileShimLen = tileM * effectiveK * kRounds * elementSizeBytesShim;
                 } else {
                     c.perTileShimLen = shimBdLen / kRoundsAttr.getInt();
                 }

@@ -7,6 +7,19 @@
 #define AIE_RUNTIME_H
 
 #include "xaiengine.h"
+// Pull in XAie_RoutingInstance when using Vitis aie-codegen umbrella (xaiengine.h -> aie_codegen.h)
+// which omits xaie_routing.h. BSP-sourced xaiengine.h includes it directly.
+// extern "C" guard: xaie_routing.h has no extern "C" but its implementations are
+// compiled as C (C linkage) in libxaienginea78.a, so we must declare them as C here.
+#ifndef XAIE_ROUTING_H
+#ifdef __cplusplus
+extern "C" {
+#endif
+#include <aie_codegen_inc/xaie_routing.h>
+#ifdef __cplusplus
+}
+#endif
+#endif
 #include <stdio.h>
 #include <string.h>
 // #include <stdint.h>
