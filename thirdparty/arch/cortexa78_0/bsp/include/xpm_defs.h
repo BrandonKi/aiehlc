@@ -1,8 +1,7 @@
 /******************************************************************************
-* Copyright (c) 2018 - 2022 Xilinx, Inc.  All rights reserved.
-* Copyright (c) 2022 - 2023, Advanced Micro Devices, Inc. All Rights Reserved.
-* SPDX-License-Identifier: MIT
-******************************************************************************/
+ * Copyright (c) 2024 - 2026 Advanced Micro Devices, Inc. All Rights Reserved.
+ * SPDX-License-Identifier: MIT
+ ******************************************************************************/
 
 /**
  * @file xpm_defs.h
@@ -10,15 +9,15 @@
  * @addtogroup xpm_versal_apis XilPM Versal APIs
  * @{
  *****************************************************************************/
+
 #ifndef XPM_DEFS_H_
 #define XPM_DEFS_H_
-
-#include "xil_types.h"
-#include "pm_api_version.h"
-
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+#include "pm_api_version.h"
+#include "xil_types.h"
 
 /**
  * @name PM Version Number
@@ -30,7 +29,7 @@ extern "C" {
 /**
  * PM Version Number
  */
-#define PM_VERSION_MAJOR    1UL
+#define PM_VERSION_MAJOR 2UL
 #define PM_VERSION_MINOR    0UL
 #define PM_VERSION      ((PM_VERSION_MAJOR << 16) | PM_VERSION_MINOR)
 /** @} */
@@ -174,90 +173,95 @@ typedef struct XPm_DeviceStatus {
 #define PROC_STATE_SUSPENDING		(8U)
 /** @} */
 
-/** @cond INTERNAL */
 /**
  * Query IDs
  */
 enum pm_query_id {
-	XPM_QID_INVALID,				/**< Invalid Query ID */
-	XPM_QID_CLOCK_GET_NAME,				/**< Get clock name */
-	XPM_QID_CLOCK_GET_TOPOLOGY,			/**< Get clock topology */
-	XPM_QID_CLOCK_GET_FIXEDFACTOR_PARAMS,		/**< Get clock fixedfactor parameter */
-	XPM_QID_CLOCK_GET_MUXSOURCES,			/**< Get clock mux sources */
-	XPM_QID_CLOCK_GET_ATTRIBUTES,			/**< Get clock attributes */
-	XPM_QID_PINCTRL_GET_NUM_PINS,			/**< Get total pins */
-	XPM_QID_PINCTRL_GET_NUM_FUNCTIONS,		/**< Get total pin functions */
-	XPM_QID_PINCTRL_GET_NUM_FUNCTION_GROUPS,	/**< Get total pin function groups */
-	XPM_QID_PINCTRL_GET_FUNCTION_NAME,		/**< Get pin function name */
-	XPM_QID_PINCTRL_GET_FUNCTION_GROUPS,		/**< Get pin function groups */
-	XPM_QID_PINCTRL_GET_PIN_GROUPS,			/**< Get pin groups */
-	XPM_QID_CLOCK_GET_NUM_CLOCKS,			/**< Get number of clocks */
-	XPM_QID_CLOCK_GET_MAX_DIVISOR,			/**< Get max clock divisor */
-	XPM_QID_PLD_GET_PARENT,				/**< Get PLD parent */
-	XPM_QID_PINCTRL_GET_ATTRIBUTES,			/**< Get pin attributes */
+    XPM_QID_INVALID,                         /**< Invalid Query ID */
+    XPM_QID_CLOCK_GET_NAME,                  /**< Get clock name */
+    XPM_QID_CLOCK_GET_TOPOLOGY,              /**< Get clock topology */
+    XPM_QID_CLOCK_GET_FIXEDFACTOR_PARAMS,    /**< Get clock fixedfactor parameter */
+    XPM_QID_CLOCK_GET_MUXSOURCES,            /**< Get clock mux sources */
+    XPM_QID_CLOCK_GET_ATTRIBUTES,            /**< Get clock attributes */
+    XPM_QID_PINCTRL_GET_NUM_PINS,            /**< Get total pins */
+    XPM_QID_PINCTRL_GET_NUM_FUNCTIONS,       /**< Get total pin functions */
+    XPM_QID_PINCTRL_GET_NUM_FUNCTION_GROUPS, /**< Get total pin function groups */
+    XPM_QID_PINCTRL_GET_FUNCTION_NAME,       /**< Get pin function name */
+    XPM_QID_PINCTRL_GET_FUNCTION_GROUPS,     /**< Get pin function groups */
+    XPM_QID_PINCTRL_GET_PIN_GROUPS,          /**< Get pin groups */
+    XPM_QID_CLOCK_GET_NUM_CLOCKS,            /**< Get number of clocks */
+    XPM_QID_CLOCK_GET_MAX_DIVISOR,           /**< Get max clock divisor */
+    XPM_QID_PLD_GET_PARENT,                  /**< Get PLD parent */
+    XPM_QID_PINCTRL_GET_ATTRIBUTES,          /**< Get pin attributes */
+    XPM_QID_GET_NODE_NAME,                   /**< Get node name */
+    XPM_QID_GET_NODE_COUNT,                  /**< Get node count */
 };
-/** @endcond */
 
+/*
+ * This is an automatically generated enum from script.
+ * Please do not modify this!
+ */
 /**
  * Pin Function IDs
  */
 enum PmPinFunIds {
-	PIN_FUNC_SPI0,					/**< Pin function ID of SPI0 */
-	PIN_FUNC_SPI0_SS,				/**< Pin function ID of SPI0_SS */
-	PIN_FUNC_SPI1,					/**< Pin function ID of SPI1 */
-	PIN_FUNC_SPI1_SS,				/**< Pin function ID of SPI1_SS */
-	PIN_FUNC_CAN0,					/**< Pin function ID of CAN0 */
-	PIN_FUNC_CAN1,					/**< Pin function ID of CAN1 */
-	PIN_FUNC_I2C0,					/**< Pin function ID of I2C0 */
-	PIN_FUNC_I2C1,					/**< Pin function ID of I2C1 */
-	PIN_FUNC_I2C_PMC,				/**< Pin function ID of I2C_PMC */
-	PIN_FUNC_TTC0_CLK,				/**< Pin function ID of TTC0_CLK */
-	PIN_FUNC_TTC0_WAV,				/**< Pin function ID of TTC0_WAV */
-	PIN_FUNC_TTC1_CLK,				/**< Pin function ID of TTC1_CLK */
-	PIN_FUNC_TTC1_WAV,				/**< Pin function ID of TTC1_WAV */
-	PIN_FUNC_TTC2_CLK,				/**< Pin function ID of TTC2_CLK */
-	PIN_FUNC_TTC2_WAV,				/**< Pin function ID of TTC2_WAV */
-	PIN_FUNC_TTC3_CLK,				/**< Pin function ID of TTC3_CLK */
-	PIN_FUNC_TTC3_WAV,				/**< Pin function ID of TTC3_WAV */
-	PIN_FUNC_WWDT0,					/**< Pin function ID of WWDT0 */
-	PIN_FUNC_WWDT1,					/**< Pin function ID of WWDT1 */
-	PIN_FUNC_SYSMON_I2C0,				/**< Pin function ID of SYSMON_I2C0 */
-	PIN_FUNC_SYSMON_I2C0_ALERT,			/**< Pin function ID of SYSMON_I2C0_AL */
-	PIN_FUNC_UART0,					/**< Pin function ID of UART0 */
-	PIN_FUNC_UART0_CTRL,				/**< Pin function ID of UART0_CTRL */
-	PIN_FUNC_UART1,					/**< Pin function ID of UART1 */
-	PIN_FUNC_UART1_CTRL,				/**< Pin function ID of UART1_CTRL */
-	PIN_FUNC_GPIO0,					/**< Pin function ID of GPIO0 */
-	PIN_FUNC_GPIO1,					/**< Pin function ID of GPIO1 */
-	PIN_FUNC_GPIO2,					/**< Pin function ID of GPIO2 */
-	PIN_FUNC_EMIO0,					/**< Pin function ID of EMIO0 */
-	PIN_FUNC_GEM0,					/**< Pin function ID of GEM0 */
-	PIN_FUNC_GEM1,					/**< Pin function ID of GEM1 */
-	PIN_FUNC_TRACE0,				/**< Pin function ID of TRACE0 */
-	PIN_FUNC_TRACE0_CLK,				/**< Pin function ID of TRACE0_CLK */
-	PIN_FUNC_MDIO0,					/**< Pin function ID of MDIO0 */
-	PIN_FUNC_MDIO1,					/**< Pin function ID of MDIO1 */
-	PIN_FUNC_GEM_TSU0,				/**< Pin function ID of GEM_TSU0 */
-	PIN_FUNC_PCIE0,					/**< Pin function ID of PCIE0 */
-	PIN_FUNC_SMAP0,					/**< Pin function ID of SMAP0 */
-	PIN_FUNC_USB0,					/**< Pin function ID of USB0 */
-	PIN_FUNC_SD0,					/**< Pin function ID of SD0 */
-	PIN_FUNC_SD0_PC,				/**< Pin function ID of SD0_PC */
-	PIN_FUNC_SD0_CD,				/**< Pin function ID of SD0_CD */
-	PIN_FUNC_SD0_WP,				/**< Pin function ID of SD0_WP */
-	PIN_FUNC_SD1,					/**< Pin function ID of SD1 */
-	PIN_FUNC_SD1_PC,				/**< Pin function ID of SD1_PC */
-	PIN_FUNC_SD1_CD,				/**< Pin function ID of SD1_CD */
-	PIN_FUNC_SD1_WP,				/**< Pin function ID of SD1_WP */
-	PIN_FUNC_OSPI0,					/**< Pin function ID of OSPI0 */
-	PIN_FUNC_OSPI0_SS,				/**< Pin function ID of OSPI0_SS */
-	PIN_FUNC_QSPI0,					/**< Pin function ID of QSPI0 */
-	PIN_FUNC_QSPI0_FBCLK,				/**< Pin function ID of QSPI0_FBCLK */
-	PIN_FUNC_QSPI0_SS,				/**< Pin function ID of QSPI0_SS */
-	PIN_FUNC_TEST_CLK,				/**< Pin function ID of TEST_CLK */
-	PIN_FUNC_TEST_SCAN,				/**< Pin function ID of TEST_SCAN */
-	PIN_FUNC_TAMPER_TRIGGER,			/**< Pin function ID of TAMPER_TRIGGER */
-	MAX_FUNCTION,					/**< Max Pin function */
+    PIN_FUNC_SD0 = 0,               /**< Pin function ID of SD0 */
+    PIN_FUNC_SD1 = 1,               /**< Pin function ID of SD1 */
+    PIN_FUNC_UFS = 2,               /**< Pin function ID of UFS */
+    PIN_FUNC_CAN0 = 3,              /**< Pin function ID of CAN0 */
+    PIN_FUNC_CAN1 = 4,              /**< Pin function ID of CAN1 */
+    PIN_FUNC_CAN2 = 5,              /**< Pin function ID of CAN2 */
+    PIN_FUNC_CAN3 = 6,              /**< Pin function ID of CAN3 */
+    PIN_FUNC_GEM0 = 7,              /**< Pin function ID of GEM0 */
+    PIN_FUNC_GEM1 = 8,              /**< Pin function ID of GEM1 */
+    PIN_FUNC_I2C0 = 9,              /**< Pin function ID of I2C0 */
+    PIN_FUNC_I2C1 = 10,             /**< Pin function ID of I2C1 */
+    PIN_FUNC_OSPI = 11,             /**< Pin function ID of OSPI */
+    PIN_FUNC_PCIE = 12,             /**< Pin function ID of PCIE */
+    PIN_FUNC_QSPI = 13,             /**< Pin function ID of QSPI */
+    PIN_FUNC_SMAP = 14,             /**< Pin function ID of SMAP */
+    PIN_FUNC_SPI0 = 15,             /**< Pin function ID of SPI0 */
+    PIN_FUNC_SPI1 = 16,             /**< Pin function ID of SPI1 */
+    PIN_FUNC_USB0 = 17,             /**< Pin function ID of USB0 */
+    PIN_FUNC_USB1 = 18,             /**< Pin function ID of USB1 */
+    PIN_FUNC_WWDT = 19,             /**< Pin function ID of WWDT */
+    PIN_FUNC_GPIO0 = 20,            /**< Pin function ID of GPIO0 */
+    PIN_FUNC_GPIO1 = 21,            /**< Pin function ID of GPIO1 */
+    PIN_FUNC_GPIO2 = 22,            /**< Pin function ID of GPIO2 */
+    PIN_FUNC_MDIO0 = 23,            /**< Pin function ID of MDIO0 */
+    PIN_FUNC_MDIO1 = 24,            /**< Pin function ID of MDIO1 */
+    PIN_FUNC_MDIO2 = 25,            /**< Pin function ID of MDIO2 */
+    PIN_FUNC_TRACE = 26,            /**< Pin function ID of TRACE */
+    PIN_FUNC_UART0 = 27,            /**< Pin function ID of UART0 */
+    PIN_FUNC_UART1 = 28,            /**< Pin function ID of UART1 */
+    PIN_FUNC_SD0_CD = 29,           /**< Pin function ID of SD0_CD */
+    PIN_FUNC_SD0_PC = 30,           /**< Pin function ID of SD0_PC */
+    PIN_FUNC_SD0_WP = 31,           /**< Pin function ID of SD0_WP */
+    PIN_FUNC_SD1_PC = 32,           /**< Pin function ID of SD1_PC */
+    PIN_FUNC_GEM_TSU = 33,          /**< Pin function ID of GEM_TSU */
+    PIN_FUNC_OSPI_SS = 34,          /**< Pin function ID of OSPI_SS */
+    PIN_FUNC_QSPI_SS = 35,          /**< Pin function ID of QSPI_SS */
+    PIN_FUNC_SPI0_SS = 36,          /**< Pin function ID of SPI0_SS */
+    PIN_FUNC_SPI1_SS = 37,          /**< Pin function ID of SPI1_SS */
+    PIN_FUNC_TEST_CLK = 38,         /**< Pin function ID of TEST_CLK */
+    PIN_FUNC_TTC0_CLK = 39,         /**< Pin function ID of TTC0_CLK */
+    PIN_FUNC_TTC0_WAV = 40,         /**< Pin function ID of TTC0_WAV */
+    PIN_FUNC_TTC1_CLK = 41,         /**< Pin function ID of TTC1_CLK */
+    PIN_FUNC_TTC1_WAV = 42,         /**< Pin function ID of TTC1_WAV */
+    PIN_FUNC_TTC2_CLK = 43,         /**< Pin function ID of TTC2_CLK */
+    PIN_FUNC_TTC2_WAV = 44,         /**< Pin function ID of TTC2_WAV */
+    PIN_FUNC_TTC3_CLK = 45,         /**< Pin function ID of TTC3_CLK */
+    PIN_FUNC_TTC3_WAV = 46,         /**< Pin function ID of TTC3_WAV */
+    PIN_FUNC_TEST_SCAN = 47,        /**< Pin function ID of TEST_SCAN */
+    PIN_FUNC_TRACE_CLK = 48,        /**< Pin function ID of TRACE_CLK */
+    PIN_FUNC_MMI_DP_HPD = 49,       /**< Pin function ID of MMI_DP_HPD */
+    PIN_FUNC_OSPI_RST_N = 50,       /**< Pin function ID of OSPI_RST_N */
+    PIN_FUNC_QSPI_FBCLK = 51,       /**< Pin function ID of QSPI_FBCLK */
+    PIN_FUNC_SYSMON_I2C = 52,       /**< Pin function ID of SYSMON_I2C */
+    PIN_FUNC_OSPI_ECC_FAIL = 53,    /**< Pin function ID of OSPI_ECC_FAIL */
+    PIN_FUNC_EXT_TAMPER_TRIG = 54,  /**< Pin function ID of EXT_TAMPER_TRIG */
+    PIN_FUNC_SYSMON_I2C_ALERT = 55, /**< Pin function ID of SYSMON_I2C_ALERT */
+    MAX_FUNCTION = 56               /**< Max Pin function */
 };
 
 /**
@@ -324,65 +328,116 @@ enum pm_pinctrl_tri_state {
 	PINCTRL_TRI_STATE_DISABLE,			/**< Tri state disable */
 	PINCTRL_TRI_STATE_ENABLE,			/**< Tri state enable */
 };
+/**
+ * PM init node functions
+ */
+enum XPmInitFunctions {
+    FUNC_INIT_START,          /**< Function ID INIT_START */
+    FUNC_INIT_FINISH,         /**< Function ID INIT_FINISH */
+    FUNC_SCAN_CLEAR,          /**< Function ID SCAN_CLEAR */
+    FUNC_BISR,                /**< Function ID BISR */
+    FUNC_LBIST,               /**< Function ID LBIST */
+    FUNC_MEM_INIT,            /**< Function ID MEM_INIT */
+    FUNC_MBIST_CLEAR,         /**< Function ID MBIST_CLEAR */
+    FUNC_HOUSECLEAN_PL,       /**< Function ID HOUSECLEAN_PL */
+    FUNC_HOUSECLEAN_COMPLETE, /**< Function ID HOUSECLEAN_COMPLETE */
+    FUNC_MIO_FLUSH,           /**< Function ID MIO FLUSH */
+    FUNC_MEM_CTRLR_MAP,       /**< Function ID MEM_CTRLR_MAP */
+    FUNC_AMS_TRIM,
+    /* Should be last item */
+    FUNC_MAX_COUNT_PMINIT, /**< Function ID MAX */
+};
 
-/** @cond INTERNAL */
+/** PGGSx/GGSx IOCTL access are deprecated but the enum value
+ *  exists here for uniformity across platforms
+ */
 /**
  * IOCTL IDs
  */
 typedef enum {
-	IOCTL_GET_RPU_OPER_MODE,			/**< Get RPU mode */
-	IOCTL_SET_RPU_OPER_MODE,			/**< Set RPU mode */
-	IOCTL_RPU_BOOT_ADDR_CONFIG,			/**< RPU boot address config */
-	IOCTL_TCM_COMB_CONFIG,				/**< TCM config */
-	IOCTL_SET_TAPDELAY_BYPASS,			/**< TAP delay bypass */
-	IOCTL_SET_SGMII_MODE,				/**< SGMII mode */
-	IOCTL_SD_DLL_RESET,				/**< SD DLL reset */
-	IOCTL_SET_SD_TAPDELAY,				/**< SD TAP delay */
-	/* Ioctl for clock driver */
-	IOCTL_SET_PLL_FRAC_MODE,			/**< Set PLL frac mode */
-	IOCTL_GET_PLL_FRAC_MODE,			/**< Get PLL frac mode */
-	IOCTL_SET_PLL_FRAC_DATA,			/**< Set PLL frac data */
-	IOCTL_GET_PLL_FRAC_DATA,			/**< Get PLL frac data */
-	IOCTL_WRITE_GGS,				/**< Write GGS */
-	IOCTL_READ_GGS,					/**< Read GGS */
-	IOCTL_WRITE_PGGS,				/**< Write PGGS */
-	IOCTL_READ_PGGS,				/**< Read PGGS */
-	/* IOCTL for ULPI reset */
-	IOCTL_ULPI_RESET,				/**< ULPI reset */
-	/* Set healthy bit value */
-	IOCTL_SET_BOOT_HEALTH_STATUS,			/**< Set boot status */
-	IOCTL_AFI,					/**< AFI */
-	/* Probe counter read/write */
-	IOCTL_PROBE_COUNTER_READ,			/**< Probe counter read */
-	IOCTL_PROBE_COUNTER_WRITE,			/**< Probe counter write */
-	/* Ospi mux select */
-	IOCTL_OSPI_MUX_SELECT,				/**< OSPI mux select */
-	/* USB PMU state req */
-	IOCTL_USB_SET_STATE,				/**< USB set state */
-	IOCTL_GET_LAST_RESET_REASON,			/**< Get last reset reason */
-	/* AIE ISR Clear */
-	IOCTL_AIE_ISR_CLEAR,				/**< AIE ISR clear */
-	/* Register SGI to ATF */
-	IOCTL_REGISTER_SGI,				/**< Register SGI to ATF */
-	/* Runtime feature configuration */
-	IOCTL_SET_FEATURE_CONFIG,			/**< Set runtime feature config */
-	IOCTL_GET_FEATURE_CONFIG,			/**< Get runtime feature config */
-	/* Generic IOCTL Read/Write */
-	IOCTL_READ_REG,					/**< Read a 32-bit register */
-	IOCTL_MASK_WRITE_REG,				/**< RMW a 32-bit register */
-	/* Dynamic MIO config */
-	IOCTL_SET_SD_CONFIG,				/**< Set SD config register value */
-	IOCTL_SET_GEM_CONFIG,				/**< Set GEM config register value */
-	IOCTL_SET_USB_CONFIG,				/**< Set USB config register value */
-	/* AIE1/AIEML Run Time Operations */
-	IOCTL_AIE_OPS,                                  /**< AIE1/AIEML Run Time Operations */
-	IOCTL_GET_QOS,					/**< Get Device QoS value */
-	IOCTL_GET_APU_OPER_MODE,			/**< Get APU operation mode */
-	IOCTL_SET_APU_OPER_MODE,			/**< Set APU operation mode */
-	IOCTL_PREPARE_DDR_SHUTDOWN,			/**< Prepare DDR for shut down */
-	IOCTL_GET_SSIT_TEMP,				/**< Read secondary SLR temperature */
+    IOCTL_GET_RPU_OPER_MODE = 0,    /**< Get RPU mode */
+    IOCTL_SET_RPU_OPER_MODE = 1,    /**< Set RPU mode */
+    IOCTL_RPU_BOOT_ADDR_CONFIG = 2, /**< RPU boot address config */
+    IOCTL_TCM_COMB_CONFIG = 3,      /**< TCM config */
+    IOCTL_SET_TAPDELAY_BYPASS = 4,  /**< TAP delay bypass */
+    IOCTL_SD_DLL_RESET = 6,         /**< SD DLL reset */
+    IOCTL_SET_SD_TAPDELAY = 7,      /**< SD TAP delay */
+    /* Ioctl for clock driver */
+    IOCTL_SET_PLL_FRAC_MODE = 8,  /**< Set PLL frac mode */
+    IOCTL_GET_PLL_FRAC_MODE = 9,  /**< Get PLL frac mode */
+    IOCTL_SET_PLL_FRAC_DATA = 10, /**< Set PLL frac data */
+    IOCTL_GET_PLL_FRAC_DATA = 11, /**< Get PLL frac data */
+    IOCTL_WRITE_GGS = 12,         /**< Write GGS */
+    IOCTL_READ_GGS = 13,          /**< Read GGS */
+    IOCTL_WRITE_PGGS = 14,        /**< Write PGGS */
+    IOCTL_READ_PGGS = 15,         /**< Read PGGS */
+    /* IOCTL for ULPI reset */
+    IOCTL_ULPI_RESET = 16, /**< ULPI reset */
+    /* Set healthy bit value */
+    IOCTL_SET_BOOT_HEALTH_STATUS = 17, /**< Set boot status */
+    IOCTL_AFI = 18,                    /**< AFI */
+    /* Ospi mux select */
+    IOCTL_OSPI_MUX_SELECT = 21, /**< OSPI mux select */
+    /* USB PMU state req */
+    IOCTL_USB_SET_STATE = 22,         /**< USB set state */
+    IOCTL_GET_LAST_RESET_REASON = 23, /**< Get last reset reason */
+    /* AIE ISR Clear */
+    IOCTL_AIE_ISR_CLEAR = 24, /**< AIE ISR clear */
+    /* Register SGI to ATF */
+    IOCTL_REGISTER_SGI = 25, /**< Register SGI to ATF */
+    /* Runtime feature configuration */
+    IOCTL_SET_FEATURE_CONFIG = 26, /**< Set runtime feature config */
+    IOCTL_GET_FEATURE_CONFIG = 27, /**< Get runtime feature config */
+    /* Generic IOCTL Read/Write */
+    IOCTL_READ_REG = 28,       /**< Read a 32-bit register */
+    IOCTL_MASK_WRITE_REG = 29, /**< RMW a 32-bit register */
+    /* Dynamic MIO config */
+    IOCTL_SET_SD_CONFIG = 30,  /**< Set SD config register value */
+    IOCTL_SET_GEM_CONFIG = 31, /**< Set GEM config register value */
+    IOCTL_SET_USB_CONFIG = 32, /**< Set USB config register value */
+    /* AIE1/AIEML Run Time Operations */
+    IOCTL_AIE_OPS = 33,              /**< AIE1/AIEML Run Time Operations */
+    IOCTL_GET_QOS = 34,              /**< Get Device QoS value */
+    IOCTL_GET_APU_OPER_MODE = 35,    /**< Get APU operation mode */
+    IOCTL_SET_APU_OPER_MODE = 36,    /**< Set APU operation mode */
+    IOCTL_PREPARE_DDR_SHUTDOWN = 37, /**< Prepare DDR for shut down */
+    /* 38 was IOCTL_GET_SSIT_TEMP -- removed: SSIT not supported on Versal 2VE/2VM */
+    IOCTL_AIE2PS_OPS = 39,      /**< AIE2PS Operations */
+    IOCTL_SET_AIE_CLK_DIV = 40, /**< Set AIE clock divider */
 } pm_ioctl_id;
 /** @endcond */
+
+/**
+ * AIE Run time Operations
+ */
+enum XPmAieOperations {
+    AIE_OPS_MIN = 0U,                    /**< Minimum OPS ID */
+    AIE_OPS_COL_RST = 1U,                /**< Column reset */
+    AIE_OPS_SHIM_RST = 2U,               /**< Shim reset */
+    AIE_OPS_UC_ZEROIZATION = 3U,         /**< UC zeroization */
+    AIE_OPS_ENB_COL_CLK_BUFF = 4U,       /**< Enable column clock buffer */
+    AIE_OPS_HANDSHAKE = 5U,              /**< Handshake operation */
+    AIE_OPS_CLR_HW_ERR_STS = 6U,         /**< Clear HW error status */
+    AIE_OPS_START_NUM_COL = 7U,          /**< Start number of columns */
+    AIE_OPS_ALL_MEM_ZEROIZATION = 8U,    /**< All memory zeroization */
+    AIE_OPS_AXIMM_ISOLATION = 9U,        /**< AXI-MM isolation */
+    AIE_OPS_NMU_CONFIG = 10U,            /**< NMU configuration */
+    AIE_OPS_DIS_MEM_PRIV = 11U,          /**< Disable memory privilege */
+    AIE_OPS_DIS_MEM_INTERLEAVE = 12U,    /**< Disable memory interleave */
+    AIE_OPS_ENB_UC_DMA_PAUSE = 13U,      /**< Enable UC DMA pause */
+    AIE_OPS_ENB_NOC_DMA_PAUSE = 14U,     /**< Enable NOC DMA pause */
+    AIE_OPS_SET_ECC_SCRUB_PERIOD = 15U,  /**< Set ECC scrub period */
+    AIE_OPS_DIS_COL_CLK_BUFF = 16U,      /**< Disable column clock buffer */
+    AIE_OPS_HW_ERR_INT = 17U,            /**< HW error interrupt */
+    AIE_OPS_HW_ERR_MASK = 18U,           /**< HW error mask */
+    AIE_OPS_ENB_MEM_PRIV = 19U,          /**< Enable memory privilege */
+    AIE_OPS_CTRL_PKT_TLAST_ERR = 20U,    /**< Control packet TLAST error */
+    AIE_OPS_ENB_AXI_MM_ERR_EVENT = 32U,  /**< Enable AXI-MM error event (backward compat AIE1/AIE2) */
+    AIE_OPS_SET_L2_CTRL_NPI_INTR = 64U,  /**< Set L2 control NPI interrupt (backward compat AIE1/AIE2) */
+    AIE_OPS_PROG_MEM_ZEROIZATION = 128U, /**< Program memory zeroization (backward compat AIE1/AIE2) */
+    AIE_OPS_DATA_MEM_ZEROIZATION = 256U, /**< Data memory zeroization (backward compat AIE1/AIE2) */
+    AIE_OPS_MEM_TILE_ZEROIZATION = 512U, /**< Memory tile zeroization (backward compat AIE1/AIE2) */
+};
 
 /**
  * PLL parameters
@@ -411,35 +466,13 @@ enum XPmPllMode {
 };
 
 /**
- * PM init node functions
- */
-enum XPmInitFunctions {
-	FUNC_INIT_START,				/**< Function ID INIT_START */
-	FUNC_INIT_FINISH,				/**< Function ID INIT_FINISH */
-	FUNC_SCAN_CLEAR,				/**< Function ID SCAN_CLEAR */
-	FUNC_BISR,					/**< Function ID BISR */
-	FUNC_LBIST,					/**< Function ID LBIST */
-	FUNC_MEM_INIT,					/**< Function ID MEM_INIT */
-	FUNC_MBIST_CLEAR,				/**< Function ID MBIST_CLEAR */
-	FUNC_HOUSECLEAN_PL,				/**< Function ID HOUSECLEAN_PL */
-	FUNC_HOUSECLEAN_COMPLETE,			/**< Function ID HOUSECLEAN_COMPLETE */
-	FUNC_MIO_FLUSH,					/**< Function ID MIO FLUSH */
-	FUNC_MEM_CTRLR_MAP,				/**< Function ID MEM_CTRLR_MAP */
-
-	/* Should be last item */
-	FUNC_MAX_COUNT_PMINIT,				/**< Function ID MAX */
-};
-
-/** @cond INTERNAL */
-/**
  * PM operating characteristic types
  */
 enum XPmOpCharType {
-	PM_OPCHAR_TYPE_POWER = 1,			/**< Operating characteristic ID power */
-	PM_OPCHAR_TYPE_TEMP,				/**< Operating characteristic ID temperature */
-	PM_OPCHAR_TYPE_LATENCY,				/**< Operating characteristic ID latency */
+    PM_OPCHAR_TYPE_POWER = 1, /**< Operating characteristic ID power */
+    PM_OPCHAR_TYPE_TEMP,      /**< Operating characteristic ID temperature */
+    PM_OPCHAR_TYPE_LATENCY,   /**< Operating characteristic ID latency */
 };
-/** @endcond */
 
 /**
  * PM notify events
@@ -473,6 +506,7 @@ enum XPmNotifyEvent {
  * State arguments of the self suspend
  */
 #define PM_SUSPEND_STATE_CPU_IDLE		0x0U
+#define PM_SUSPEND_STATE_CPU_OFF 0x1U
 #define PM_SUSPEND_STATE_SUSPEND_TO_RAM		0xFU
 /** @} */
 
@@ -485,6 +519,17 @@ enum XPmNotifyEvent {
  */
 #define XPM_RPU_MODE_LOCKSTEP	0U
 #define XPM_RPU_MODE_SPLIT	1U
+/** @} */
+
+/**
+ * @name APU operation mode
+ * @{
+ */
+/**
+ * APU operation mode
+ */
+#define XPM_APU_MODE_LOCKSTEP 1U
+#define XPM_APU_MODE_SPLIT 0U
 /** @} */
 
 /**
@@ -594,22 +639,6 @@ enum XPmNotifyEvent {
 /** @} */
 
 /**
- * @name Probe Counter Type
- * @{
- */
-/**
- * Probe Counter Type
- */
-#define XPM_PROBE_COUNTER_TYPE_LAR_LSR		(0U)
-#define XPM_PROBE_COUNTER_TYPE_MAIN_CTL		(1U)
-#define XPM_PROBE_COUNTER_TYPE_CFG_CTL		(2U)
-#define XPM_PROBE_COUNTER_TYPE_STATE_PERIOD	(3U)
-#define XPM_PROBE_COUNTER_TYPE_PORT_SEL		(4U)
-#define XPM_PROBE_COUNTER_TYPE_SRC		(5U)
-#define XPM_PROBE_COUNTER_TYPE_VAL		(6U)
-/** @} */
-
-/**
  * @name PM API versions
  * @{
  */
@@ -619,12 +648,10 @@ enum XPmNotifyEvent {
 #define XST_API_BASE_VERSION			(1U)
 #define XST_API_QUERY_DATA_VERSION		(2U)
 #define XST_API_REG_NOTIFIER_VERSION		(2U)
-/* Version 3 supports zeroization of AIE data and program memory separately */
-#define XST_API_PM_IOCTL_VERSION		(3U)
+#define XST_API_PM_IOCTL_VERSION (2U)
 #define XST_API_PM_FEATURE_CHECK_VERSION	(2U)
-
-/* Version 2 supports the CPU idling feature during force power down */
-#define XST_API_SELF_SUSPEND_VERSION		(2U)
+/* Version 3 supports the CPU idling feature during force power down */
+#define XST_API_SELF_SUSPEND_VERSION (3U)
 #define XST_API_FORCE_POWERDOWN_VERSION		(2U)
 /*
  * Version 2 supports some extra security checks for REQ_ACCESS_SECURE
@@ -638,35 +665,57 @@ enum XPmNotifyEvent {
  * the firmware
  */
 #define XST_API_GET_OP_CHAR_VERSION		(2U)
+/**
+ * @brief Version 2 supports halt state(12) in addition to standard states
+ */
+#define XST_API_GET_NODE_STATUS_VERSION (2U)
 /** @} */
 
 /**
- * @name Run time AIE Operations
+ * @name Destination Cluster/Core Ids
  * @{
  */
 /**
- * AIE Run time Operations
+ * Destination Cluster Ids
  */
-#define AIE_OPS_COL_RST			BIT(0U)
-#define AIE_OPS_SHIM_RST		BIT(1U)
-#define AIE_OPS_ENB_COL_CLK_BUFF	BIT(2U)
-#define AIE_OPS_ALL_MEM_ZEROIZATION	BIT(3U)
-#define AIE_OPS_DIS_COL_CLK_BUFF	BIT(4U)
-#define AIE_OPS_ENB_AXI_MM_ERR_EVENT	BIT(5U)
-#define AIE_OPS_SET_L2_CTRL_NPI_INTR	BIT(6U)
-#define AIE_OPS_PROG_MEM_ZEROIZATION	BIT(7U)
-#define AIE_OPS_DATA_MEM_ZEROIZATION	BIT(8U)
-#define AIE_OPS_MEM_TILE_ZEROIZATION	BIT(9U)
-#define AIE_OPS_MAX			(AIE_OPS_COL_RST |		\
-					 AIE_OPS_SHIM_RST |		\
-					 AIE_OPS_ENB_COL_CLK_BUFF |	\
-					 AIE_OPS_ALL_MEM_ZEROIZATION |	\
-					 AIE_OPS_DIS_COL_CLK_BUFF |	\
-					 AIE_OPS_ENB_AXI_MM_ERR_EVENT |	\
-					 AIE_OPS_SET_L2_CTRL_NPI_INTR | \
-					 AIE_OPS_PROG_MEM_ZEROIZATION | \
-					 AIE_OPS_DATA_MEM_ZEROIZATION | \
-					 AIE_OPS_MEM_TILE_ZEROIZATION)
+#define XPM_DSTN_CLUSTER_0 (0x0U)
+#define XPM_DSTN_CLUSTER_1 (0x1U)
+#define XPM_DSTN_CLUSTER_2 (0x2U)
+#define XPM_DSTN_CLUSTER_3 (0x3U)
+
+/**
+ * Destination Core Ids
+ */
+#define XPM_DSTN_CORE_0 (u8)(0x0U)
+#define XPM_DSTN_CORE_1 (u8)(0x1U)
+#define XPM_DSTN_CORE_2 (u8)(0x2U)
+#define XPM_DSTN_CORE_3 (u8)(0x3U)
+
+/**
+ * Macros to read Cluster/Core Ids
+ */
+#define GET_APU_CLUSTER_ID(DeviceId)                                                                                   \
+    ((NODEINDEX(DeviceId) <= XPM_NODEIDX_DEV_ACPU_0_3)   ? (u8)XPM_DSTN_CLUSTER_0                                      \
+     : (NODEINDEX(DeviceId) <= XPM_NODEIDX_DEV_ACPU_1_3) ? (u8)XPM_DSTN_CLUSTER_1                                      \
+     : (NODEINDEX(DeviceId) <= XPM_NODEIDX_DEV_ACPU_2_3) ? (u8)XPM_DSTN_CLUSTER_2                                      \
+                                                         : (u8)XPM_DSTN_CLUSTER_3)
+
+#define GET_CORE(DeviceId, Index) (NODEINDEX(DeviceId) - (u32)(Index))
+
+#define GET_APU_CORE_NUM(DeviceId)                                                                                     \
+    ((NODEINDEX(DeviceId) <= (u32)XPM_NODEIDX_DEV_ACPU_0_3)                                                            \
+         ? GET_CORE(DeviceId, (u32)XPM_NODEIDX_DEV_ACPU_0_0)                                                           \
+         : ((NODEINDEX(DeviceId) <= (u32)XPM_NODEIDX_DEV_ACPU_1_3)                                                     \
+                ? GET_CORE(DeviceId, (u32)XPM_NODEIDX_DEV_ACPU_1_0)                                                    \
+                : ((NODEINDEX(DeviceId) <= (u32)XPM_NODEIDX_DEV_ACPU_2_3)                                              \
+                       ? GET_CORE(DeviceId, (u32)XPM_NODEIDX_DEV_ACPU_2_0)                                             \
+                       : GET_CORE(DeviceId, (u32)XPM_NODEIDX_DEV_ACPU_3_0))))
+
+#define GET_RPU_CLUSTER_ID(DeviceId)                                                                                   \
+    ((NODEINDEX(DeviceId) <= (u32)XPM_NODEIDX_DEV_RPU_A_1) ? (u8)XPM_DSTN_CLUSTER_0 : (u8)XPM_DSTN_CLUSTER_1)
+
+#define GET_RPU_CORE_NUM(DeviceId)                                                                                     \
+    ((DeviceId == PM_DEV_RPU_A_0) || (DeviceId == PM_DEV_RPU_B_0) ? XPM_DSTN_CORE_0 : XPM_DSTN_CORE_1)
 /** @} */
 
 #ifdef __cplusplus

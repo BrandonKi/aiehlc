@@ -138,9 +138,33 @@ elif [[ "$platform" == "linux" ]]; then
     TOOL_PREFIX="aarch64-linux-gnu-"
 elif [[ "$platform" == "baremetal" ]]; then
     TOOL_PREFIX="aarch64-none-elf-"
+elif [[ "$platform" == "sim" ]]; then
+    TOOL_PREFIX=""
 else
-    echo "Unsupported platform: $platform (use baremetal or linux)"
+    echo "Unsupported platform: $platform (use baremetal, linux, or sim)"
     exit 1
+fi
+
+if [[ "$platform" == "sim" ]]; then
+    SIM_DIR="${AIEHLC_ROOT}/script/sim"
+    KERNEL_NAMES_LIST=""
+    for kobj in ${KERNEL_OBJ_LIST}; do
+        bname="$(basename "$kobj" .o)"
+        fname="${bname#kernel_}"
+        [ "$fname" == "kernel" ] && fname="${KERNEL_FUNC_NAME}"
+        KERNEL_NAMES_LIST="${KERNEL_NAMES_LIST:+$KERNEL_NAMES_LIST }${fname}"
+    done
+    echo "[sim] Tilinglinalg — handing off to runsim.sh (kernel objs: ${KERNEL_OBJ_LIST})"
+    SIM_HOST_FIXED="${WORKLOCAL_DIR}/host_sim_fixed.cc"
+    sed 's/int main()/int main(int, char**)/' "${WORKLOCAL_DIR}/host.cc" > "${SIM_HOST_FIXED}"
+    SIM_TILES_ARG="${SIM_TILES:-}"
+    bash "${SIM_DIR}/runsim.sh" \
+        --host-src     "${SIM_HOST_FIXED}" \
+        --kernel-objs  "${KERNEL_OBJ_LIST}" \
+        --kernel-names "${KERNEL_NAMES_LIST}" \
+        --aie-gen      "${aie_version}" \
+        $([ -n "$SIM_TILES_ARG" ] && echo "--stub-tiles $SIM_TILES_ARG" || echo "--stub-all")
+    exit $?
 fi
 
 XILINX_VITIS_AIETOOLS="${XILINX_VITIS}/aietools"
@@ -203,7 +227,7 @@ elif [[ "$aie_version" == "5" ]]; then
     AIELIB_APU_NAME="libxaienginea78.a"
     ARCH_APU_LD="${ARCH_DIR}/cortexa78_0/lscript.ld"
     compiler_cpu_flag="-mcpu=cortex-a78"
-    LINK_EXTRA="-lxiltimer,-lxilstandalone"
+    LINK_EXTRA="-lxiltimer,-lxilstandalone,-lxilpm_ng"
 else
     echo "Unsupported AIE version: $aie_version"
     exit 1

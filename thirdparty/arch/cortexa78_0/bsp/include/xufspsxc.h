@@ -5,37 +5,38 @@
 
 /*****************************************************************************/
 /**
-*
-* @file xufspsxc.h
-* @addtogroup ufspsxc Overview
-* @{
-* @details
-*
-* This section contains information about the driver structures, user
-* API prototypes and all the defines required for the user to interact
-* with the driver. ufspsxc driver supports the UFS controller in Versal Gen 2
-* SoC platform.
-*
-* <b>Initialization & Configuration</b>
-*
-*
-* <b>Supported features</b>
-*
-* This driver supports following features
-*
-*
-* <pre>
-* MODIFICATION HISTORY:
-*
-* Ver   Who Date     Changes
-* ----- --- -------- -----------------------------------------------.
-* 1.0   sk  01/16/24 First release
-* 1.1   sk  01/13/25 Update the example to enable the LU before
-*                    configuring the Boot LUN ID.
-*
-* </pre>
-*
-******************************************************************************/
+ *
+ * @file xufspsxc.h
+ * @addtogroup ufspsxc Overview
+ * @{
+ * @details
+ *
+ * This section contains information about the driver structures, user
+ * API prototypes and all the defines required for the user to interact
+ * with the driver. ufspsxc driver supports the UFS controller in Versal 2VE and
+ * 2VM SoC platforms.
+ *
+ * <b>Initialization & Configuration</b>
+ *
+ *
+ * <b>Supported features</b>
+ *
+ * This driver supports following features
+ *
+ *
+ * <pre>
+ * MODIFICATION HISTORY:
+ *
+ * Ver   Who Date     Changes
+ * ----- --- -------- -----------------------------------------------.
+ * 1.0   sk  01/16/24 First release
+ * 1.1   sk  01/13/25 Update the example to enable the LU before
+ *                    configuring the Boot LUN ID.
+ * 1.2   an  06/09/25 Configure RMMI and M-PHY registers for HS mode
+ *
+ * </pre>
+ *
+ ******************************************************************************/
 #ifndef XUFSPSXC_H_		/**< prevent circular inclusions */
 #define XUFSPSXC_H_		/**< by using protection macros */
 
@@ -351,43 +352,44 @@ enum Uic_Ctrl_Codes {
 
 /* General Error Codes [7:0] */
 enum General_Error_Codes {
-	XUFSPSXC_SUCCESS = 0U,
-	XUFSPSXC_BOOT_NOT_ENABLED,
-	XUFSPSXC_INVALID_BLUN_ENABLED,
-	XUFSPSXC_DP_ERROR,
-	XUFSPSXC_HCE_ERROR,
-	XUFSPSXC_UTRLRDY_ERROR,
-	XUFSPSXC_UTRLDBR_ERROR,
-	XUFSPSXC_UTRLRSR_ERROR,
-	XUFSPSXC_UCRDY_ERROR,
-	XUFSPSXC_TASKTAG_NOT_MATCHED,
-	XUFSPSXC_INVALID_LUN_CFG,
-	XUFSPSXC_MISMATCH_BLUNEN_BLUNID,
-	XUFSPSXC_BLUNID1_NOT_CONFIGURED,
-	XUFSPSXC_BLUNID2_NOT_CONFIGURED,
-	XUFSPSXC_BLUNEN_SET_ERROR,
-	XUFSPSXC_UTRLDBR_TIMEOUT,
-	XUFSPSXC_TRANSFER_TIMEOUT,
-	XUFSPSXC_SRAM_INIT_TIMEOUT,
-	XUFSPSXC_UIC_IS_ERROR,
-	XUFSPSXC_INVALID_BLKCNT,
-	XUFSPSXC_CCS_TIMEOUT,
-	XUFSPSXC_CFGRDY_TIMEOUT,
-	XUFSPSXC_TX_FSM_TIMEOUT,
-	XUFSPSXC_RX_FSM_TIMEOUT,
-	XUFSPSXC_INVALID_GEAR_CFG,
-	XUFSPSXC_POWER_MODE_TIMEOUT,
-	XUFSPSXC_POWER_MODE_FAILURE,
-	XUFSPSXC_INVALID_BLUN,
-	XUFSPSXC_PHY_INIT_FAILURE,
-	XUFSPSXC_LINKUP_ERROR,
-	XUFSPSXC_PWMG1_SET_ERROR,
-	XUFSPSXC_INVALID_CAPADJ_FACTOR,
-	XUFSPSXC_INVALID_UD_PARAMS,
-	XUFSPSXC_INVALID_LUNID,
-	XUFSPSXC_INVALID_MEMTYPE,
-	XUFSPSXC_INVALID_TRANS_CODE,
-	XUFSPSXC_FAILURE = 0xFFU
+    XUFSPSXC_SUCCESS = 0U,
+    XUFSPSXC_BOOT_NOT_ENABLED,
+    XUFSPSXC_INVALID_BLUN_ENABLED,
+    XUFSPSXC_DP_ERROR,
+    XUFSPSXC_HCE_ERROR,
+    XUFSPSXC_UTRLRDY_ERROR,
+    XUFSPSXC_UTRLDBR_ERROR,
+    XUFSPSXC_UTRLRSR_ERROR,
+    XUFSPSXC_UCRDY_ERROR,
+    XUFSPSXC_TASKTAG_NOT_MATCHED,
+    XUFSPSXC_INVALID_LUN_CFG,
+    XUFSPSXC_MISMATCH_BLUNEN_BLUNID,
+    XUFSPSXC_BLUNID1_NOT_CONFIGURED,
+    XUFSPSXC_BLUNID2_NOT_CONFIGURED,
+    XUFSPSXC_BLUNEN_SET_ERROR,
+    XUFSPSXC_UTRLDBR_TIMEOUT,
+    XUFSPSXC_TRANSFER_TIMEOUT,
+    XUFSPSXC_SRAM_INIT_TIMEOUT,
+    XUFSPSXC_UIC_IS_ERROR,
+    XUFSPSXC_INVALID_BLKCNT,
+    XUFSPSXC_CCS_TIMEOUT,
+    XUFSPSXC_CFGRDY_TIMEOUT,
+    XUFSPSXC_TX_FSM_TIMEOUT,
+    XUFSPSXC_RX_FSM_TIMEOUT,
+    XUFSPSXC_INVALID_GEAR_CFG,
+    XUFSPSXC_POWER_MODE_TIMEOUT,
+    XUFSPSXC_POWER_MODE_FAILURE,
+    XUFSPSXC_INVALID_BLUN,
+    XUFSPSXC_PHY_INIT_FAILURE,
+    XUFSPSXC_LINKUP_ERROR,
+    XUFSPSXC_PWMG1_SET_ERROR,
+    XUFSPSXC_INVALID_CAPADJ_FACTOR,
+    XUFSPSXC_INVALID_UD_PARAMS,
+    XUFSPSXC_INVALID_LUNID,
+    XUFSPSXC_INVALID_MEMTYPE,
+    XUFSPSXC_INVALID_TRANS_CODE,
+    XUFSPSXC_PHY_NOT_CALIBRATED,
+    XUFSPSXC_FAILURE = 0xFFU
 };
 
 enum Hce {

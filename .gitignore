@@ -1,3 +1,9 @@
+# generated files
+Crash_Report/
+*.mlir
+*.json
+*.txt
+
 # build/binary
 aout/
 build/
@@ -116,3 +122,10 @@ run_build_test2.py
 run_build_test3.py
 run_build_test4.py
 run_test2.py
+
+# aiesim generated directories
+script/sim/Work*/
+script/sim/build/
+
+/aiehlc_aiesimulator
+

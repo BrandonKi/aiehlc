@@ -260,8 +260,14 @@ struct KernelModuleToEmitCPattern : public OpConversionPattern<KernelModuleOp> {
         Block *entry = emitcMain.addEntryBlock();
         rewriter.setInsertionPointToStart(entry);
 
+        // avoids sim crash
+        rewriter.create<emitc::VerbatimOp>(loc, "#ifdef AIEHLC_KERNEL_SIM");
+        rewriter.create<emitc::VerbatimOp>(loc, "volatile int sync_buffer[8];");
+        rewriter.create<emitc::VerbatimOp>(loc, "#else");
         rewriter.create<emitc::VerbatimOp>(loc, "volatile static int sync_buffer[8] = {0, -1};");
+        rewriter.create<emitc::VerbatimOp>(loc, "#endif");
         rewriter.create<emitc::VerbatimOp>(loc, "sync_buffer[0] = 0;");
+        rewriter.create<emitc::VerbatimOp>(loc, "sync_buffer[1] = -1;");
         rewriter.create<emitc::VerbatimOp>(loc, "klog_init();");
 
         for (Operation &inner : mainBody) {

@@ -1,36 +1,39 @@
 /******************************************************************************
-* Copyright (C) 2017 - 2021 Xilinx, Inc.  All rights reserved.
-* Copyright (C) 2022 - 2023 Advanced Micro Devices, Inc. All Rights Reserved.
-* SPDX-License-Identifier: MIT
-******************************************************************************/
-
+ * Copyright (C) 2017 - 2021 Xilinx, Inc.  All rights reserved.
+ * Copyright (C) 2022 - 2026 Advanced Micro Devices, Inc. All Rights Reserved.
+ * SPDX-License-Identifier: MIT
+ ******************************************************************************/
 
 /*****************************************************************************/
 /**
-*
-* @file xcfupmc.h
-*
-* This is the file which contains code for CFU block.
-*
-* <pre>
-* MODIFICATION HISTORY:
-*
-* Ver   Who  Date        Changes
-* ----- ---- -------- -------------------------------------------------------
-* 1.00  kc   12/21/2017 Initial release
-* 2.00  bsv  03/01/2019 Added error handling APIs
-* 2.01  bsv  11/06/2019 XCfupmc_ClearCfuIsr API added
-* 3.00  bsv  06/27/2020 Code clean up
-* 4.00  ma   06/17/2021 Added defines for CFU_STREAM_2 and CFU_FDRO_2
-*                       base addresses
-*       bsv  07/15/2021 Fix doxygen warnings
-* 4.01  ng   06/30/23   Added support for system device tree flow
-*
-* </pre>
-*
-* @note
-*
-******************************************************************************/
+ *
+ * @file xcfupmc.h
+ *
+ * This is the file which contains code for CFU block.
+ *
+ * <pre>
+ * MODIFICATION HISTORY:
+ *
+ * Ver   Who  Date        Changes
+ * ----- ---- -------- -------------------------------------------------------
+ * 1.00  kc   12/21/2017 Initial release
+ * 2.00  bsv  03/01/2019 Added error handling APIs
+ * 2.01  bsv  11/06/2019 XCfupmc_ClearCfuIsr API added
+ * 3.00  bsv  06/27/2020 Code clean up
+ * 4.00  ma   06/17/2021 Added defines for CFU_STREAM_2 and CFU_FDRO_2
+ *                       base addresses
+ *       bsv  07/15/2021 Fix doxygen warnings
+ * 4.01  ng   06/30/23   Added support for system device tree flow
+ * 4.2   ng   03/26/2026 Fixed doxygen warnings
+ *
+ * </pre>
+ *
+ ******************************************************************************/
+
+/**
+ * @addtogroup cfupmc Overview
+ * @{
+ */
 
 #ifndef XCFUPMC_H
 #define XCFUPMC_H
@@ -110,19 +113,17 @@ typedef struct {
 	u32 Crc32Val;			/**< Checksum value */
 	u8 Crc8Dis;			/**< Indicates if CRC8 is enabled
 						* or not */
-}XCfupmc;
+} XCfupmc;
 
 /***************** Macros (Inline Functions) Definitions *********************/
 /*****************************************************************************/
 /**
-* This function clears CFU ISR
-*
-* @param	InstancePtr is a pointer to the XCfupmc instance.
-* @param	IsrMask specifies the bits to be cleared in ISR
-*
-* @return	None
-*
-******************************************************************************/
+ * This function clears CFU ISR
+ *
+ * @param	InstancePtr is a pointer to the XCfupmc instance.
+ * @param	IsrMask specifies the bits to be cleared in ISR
+ *
+ ******************************************************************************/
 static inline void XCfupmc_ClearIsr(const XCfupmc *InstancePtr, u32 IsrMask)
 {
 	(void)InstancePtr;
@@ -183,11 +184,9 @@ XCfupmc_Config *XCfupmc_LookupConfig(u16 DeviceId);
 XCfupmc_Config *XCfupmc_LookupConfig(UINTPTR BaseAddress);
 #endif
 
-s32 XCfupmc_CfgInitialize(XCfupmc *InstancePtr, const XCfupmc_Config *CfgPtr,
-	u32 EffectiveAddr);
+s32 XCfupmc_CfgInitialize(XCfupmc *InstancePtr, const XCfupmc_Config *CfgPtr, u32 EffectiveAddr);
 s32 XCfupmc_SelfTest(const XCfupmc *InstancePtr);
-void XCfupmc_MaskRegWrite(const XCfupmc *InstancePtr, u32 Addr, u32 Mask,
-	u32 Val);
+void XCfupmc_MaskRegWrite(const XCfupmc *InstancePtr, u32 Addr, u32 Mask, u32 Val);
 void XCfupmc_SetGlblSigEn(const XCfupmc *InstancePtr, u8 Enable);
 void XCfupmc_GlblSeqInit(const XCfupmc *InstancePtr);
 void XCfupmc_CfuErrHandler(const XCfupmc *InstancePtr);
@@ -201,3 +200,5 @@ void XCfupmc_ClearCfuIsr(const XCfupmc *InstancePtr);
 #endif
 
 #endif  /* XCFUPMC_H */
+
+/** @} */

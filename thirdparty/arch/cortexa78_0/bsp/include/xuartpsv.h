@@ -1,124 +1,126 @@
 /******************************************************************************
-* Copyright (C) 2017 - 2021 Xilinx, Inc.  All rights reserved.
-* Copyright (C) 2022 - 2023 Advanced Micro Devices, Inc.  All Rights Reserved.
-* SPDX-License-Identifier: MIT
-******************************************************************************/
+ * Copyright (C) 2017 - 2021 Xilinx, Inc.  All rights reserved.
+ * Copyright (C) 2022 - 2026 Advanced Micro Devices, Inc.  All Rights Reserved.
+ * A table contains the configuration info for each device in the system.
+ * SPDX-License-Identifier: MIT
+ ******************************************************************************/
 
 /*****************************************************************************/
 /**
-*
-* @file xuartpsv.h
-* @addtogroup uartpsv Overview
-* @{
-* @details
-*
-* This section contains the implementation of the interface functions for
-* XUartPsv driver. The UartPsv driver supports the following features:
-*
-* - Dynamic data format (baud rate, data bits, stop bits, parity)
-* - Polled mode
-* - Interrupt driven mode
-* - Transmit and receive FIFOs (32 byte FIFO depth)
-* - Access to the external modem control lines
-*
-* <b>Initialization & Configuration</b>
-*
-* The XUartPsv_Config structure is used by the driver to configure itself.
-* Fields inside this structure are properties of XUartPsv based on its
-* hardware build.
-*
-* To support multiple runtime loading and initialization strategies employed
-* by various operating systems, the driver instance can be initialized in
-* the following way:
-*
-*   - XUartPsv_CfgInitialize(InstancePtr, CfgPtr, EffectiveAddr) - Uses a
-*	 configuration structure provided by the caller. If running in a
-*	 system with address translation, the parameter EffectiveAddr should
-*	 be the virtual address.
-*
-* <b>Baud Rate</b>
-*
-* The UART has an internal baud rate generator, which furnishes the baud rate
-* clock for both the receiver and the transmitter. Their input clock frequency
-* can be either the master clock or the master clock divided by 8, configured
-* through the mode register.
-*
-* Accompanied with the baud rate divider register, the baud rate is determined
-* by:
-* <pre>
-*	baud_rate = input_clock / (bgen * (bdiv + 1)
-* </pre>
-* where bgen is the value of the baud rate generator, and bdiv is the value of
-* baud rate divider.
-*
-* <b>Interrupts</b>
-*
-* The FIFOs are not flushed when the driver is initialized, but a function is
-* provided to allow the user to reset the FIFOs if desired.
-*
-* The driver defaults to no interrupts at initialization such that interrupts
-* must be enabled if desired. An interrupt is generated for one of the
-* following conditions.
-*
-* - A change in the modem signals
-* - Data in the receive FIFO for a configuable time without receiver activity
-* - A parity error
-* - A framing error
-* - An overrun error
-* - Transmit FIFO is full
-* - Transmit FIFO is empty
-* - Receive FIFO is full
-* - Receive FIFO is empty
-* - Data in the receive FIFO equal to the receive threshold
-*
-* The application can control which interrupts are enabled using the
-* XUartPsv_SetInterruptMask() function.
-*
-* In order to use interrupts, it is necessary for the user to connect the
-* driver interrupt handler, XUartPsv_InterruptHandler(), to the interrupt
-* system of the application. A separate handler should be provided by the
-* application to communicate with the interrupt system, and conduct
-* application specific interrupt handling. An application registers its own
-* handler through the XUartPsv_SetHandler() function.
-*
-* <b>Data Transfer</b>
-*
-* The functions, XUartPsv_Send() and XUartPsv_Recv(), are provided in the
-* driver to allow data to be sent and received. They can be used in either
-* polled or interrupt mode.
-*
-* @note
-*
-* The default configuration for the UART after initialization is:
-*
-* - 9,600 bps or XPAR_DFT_BAUDRATE if defined
-* - 8 data bits
-* - 1 stop bit
-* - no parity
-* - FIFO's are enabled with a receive threshold of 8 bytes
-* - The RX timeout is enabled with a timeout of 1 (4 char times)
-*
-* <pre>
-* MODIFICATION HISTORY:
-*
-* Ver  Who  Date      Changes
-* ---  ---  --------- -----------------------------------------------
-* 1.0  sg   09/18/17  First Release
-* 1.2  rna  01/20/20  Modify the interrupt path according to the TRM
-*		      Add XUartPsv_ProgramCtrlReg function
-*		      Add XUartPsv_SetTxFifoThreshold function
-*		      Add XUartPsv_SetRxFifoThreshold function
-* 1.3  rna  04/05/20  Change input format for XUartPsv_SetDataFormat function
-*		      to reflect the Linecontrol register
-* 1.4  sne  02/03/21  Updated uartpsv_tapp.tcl to support CIPS3.0 hier designs.
-*      rna  03/15/21  Updated 'XUartPsv_SetBaudRate' function
-* 1.5  rna  03/31/21  Fixed doxygen warnings
-* 1.6  adk  03/15/22  Updated uartpsv_tapp.tcl interrupt id variable for
-* 		      CIPS3 designs when stdout is configured as none.
-* 1.9  adk  04/14/23  Added support for system device-tree flow.
-* </pre>
-*
-******************************************************************************/
+ *
+ * @file xuartpsv.h
+ * @addtogroup uartpsv Overview
+ * @{
+ * @details
+ *
+ * This section contains the implementation of the interface functions for
+ * XUartPsv driver. The UartPsv driver supports the following features:
+ *
+ * - Dynamic data format (baud rate, data bits, stop bits, parity)
+ * - Polled mode
+ * - Interrupt driven mode
+ * - Transmit and receive FIFOs (32 byte FIFO depth)
+ * - Access to the external modem control lines
+ *
+ * <b>Initialization & Configuration</b>
+ *
+ * The XUartPsv_Config structure is used by the driver to configure itself.
+ * Fields inside this structure are properties of XUartPsv based on its
+ * hardware build.
+ *
+ * To support multiple runtime loading and initialization strategies employed
+ * by various operating systems, the driver instance can be initialized in
+ * the following way:
+ *
+ *   - XUartPsv_CfgInitialize(InstancePtr, CfgPtr, EffectiveAddr) - Uses a
+ *	 configuration structure provided by the caller. If running in a
+ *	 system with address translation, the parameter EffectiveAddr should
+ *	 be the virtual address.
+ *
+ * <b>Baud Rate</b>
+ *
+ * The UART has an internal baud rate generator, which furnishes the baud rate
+ * clock for both the receiver and the transmitter. Their input clock frequency
+ * can be either the master clock or the master clock divided by 8, configured
+ * through the mode register.
+ *
+ * Accompanied with the baud rate divider register, the baud rate is determined
+ * by:
+ * <pre>
+ *	baud_rate = input_clock / (bgen * (bdiv + 1)
+ * </pre>
+ * where bgen is the value of the baud rate generator, and bdiv is the value of
+ * baud rate divider.
+ *
+ * <b>Interrupts</b>
+ *
+ * The FIFOs are not flushed when the driver is initialized, but a function is
+ * provided to allow the user to reset the FIFOs if desired.
+ *
+ * The driver defaults to no interrupts at initialization such that interrupts
+ * must be enabled if desired. An interrupt is generated for one of the
+ * following conditions.
+ *
+ * - A change in the modem signals
+ * - Data in the receive FIFO for a configuable time without receiver activity
+ * - A parity error
+ * - A framing error
+ * - An overrun error
+ * - Transmit FIFO is full
+ * - Transmit FIFO is empty
+ * - Receive FIFO is full
+ * - Receive FIFO is empty
+ * - Data in the receive FIFO equal to the receive threshold
+ *
+ * The application can control which interrupts are enabled using the
+ * XUartPsv_SetInterruptMask() function.
+ *
+ * In order to use interrupts, it is necessary for the user to connect the
+ * driver interrupt handler, XUartPsv_InterruptHandler(), to the interrupt
+ * system of the application. A separate handler should be provided by the
+ * application to communicate with the interrupt system, and conduct
+ * application specific interrupt handling. An application registers its own
+ * handler through the XUartPsv_SetHandler() function.
+ *
+ * <b>Data Transfer</b>
+ *
+ * The functions, XUartPsv_Send() and XUartPsv_Recv(), are provided in the
+ * driver to allow data to be sent and received. They can be used in either
+ * polled or interrupt mode.
+ *
+ * @note
+ *
+ * The default configuration for the UART after initialization is:
+ *
+ * - 9,600 bps or XPAR_DFT_BAUDRATE if defined
+ * - 8 data bits
+ * - 1 stop bit
+ * - no parity
+ * - FIFO's are enabled with a receive threshold of 8 bytes
+ * - The RX timeout is enabled with a timeout of 1 (4 char times)
+ *
+ * <pre>
+ * MODIFICATION HISTORY:
+ *
+ * Ver  Who  Date      Changes
+ * ---  ---  --------- -----------------------------------------------
+ * 1.0  sg   09/18/17  First Release
+ * 1.2  rna  01/20/20  Modify the interrupt path according to the TRM
+ *		      Add XUartPsv_ProgramCtrlReg function
+ *		      Add XUartPsv_SetTxFifoThreshold function
+ *		      Add XUartPsv_SetRxFifoThreshold function
+ * 1.3  rna  04/05/20  Change input format for XUartPsv_SetDataFormat function
+ *		      to reflect the Linecontrol register
+ * 1.4  sne  02/03/21  Updated uartpsv_tapp.tcl to support CIPS3.0 hier designs.
+ *      rna  03/15/21  Updated 'XUartPsv_SetBaudRate' function
+ * 1.5  rna  03/31/21  Fixed doxygen warnings
+ * 1.6  adk  03/15/22  Updated uartpsv_tapp.tcl interrupt id variable for
+ * 		      CIPS3 designs when stdout is configured as none.
+ * 1.9  adk  04/14/23  Added support for system device-tree flow.
+ * 1.14 vlt  12/30/25  Update Doxygen comments to include SDT flow details.
+ * </pre>
+ *
+ ******************************************************************************/
 
 #ifndef XUARTPSV_H		/* prevent circular inclusions */
 #define XUARTPSV_H		/**< by using protection macros */
@@ -242,7 +244,7 @@ typedef struct {
 #ifndef SDT
 	u16 DeviceId;				/**< Unique ID  of device */
 #else
-	char *Name;
+    char *Name; /**< Name of the device */
 #endif
 	UINTPTR BaseAddress;			/**< Base address of device (IPIF) */
 	u32 InputClockHz;			/**< Input clock frequency */
@@ -250,10 +252,10 @@ typedef struct {
 								  *  connected to MIO or FMIO */
 	u32 BaudRate;				/**< Current baud rate */
 #ifdef SDT
-	u32 IntrId;             /** Bits[11:0] Interrupt-id Bits[15:12]
-				 * trigger type and level flags */
-	UINTPTR IntrParent;     /** Bit[0] Interrupt parent type Bit[64/32:1]
-				 * Parent base address */
+    u32 IntrId;         /**< Bits[11:0] Interrupt-id Bits[15:12]
+                         * trigger type and level flags */
+    UINTPTR IntrParent; /**< Bit[0] Interrupt parent type Bit[64/32:1]
+                         * Parent base address */
 #endif
 } XUartPsv_Config;
 

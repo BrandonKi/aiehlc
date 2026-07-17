@@ -1325,7 +1325,8 @@ after_host_emit:
             TilingBcf bcf;
             bcf.setStack(0x70000, 0x2800);
             bcf.addReservedDMB(0x40000, 0x10000);
-            bcf.addReservedDMB(0x7F800, 0x800);
+            // This crashes the simulator, commenting out for now
+            // bcf.addReservedDMB(0x7F800, 0x800);
             for (const auto &slot : allocations) {
                 bcf.addSymbol(slot.symbolName, slot.address);
             }

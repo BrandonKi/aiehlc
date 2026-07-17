@@ -64,4 +64,5 @@ fi
 
 # Build from WORKLOCAL_DIR so the relative --kernel-cc ./kernel.cc resolves there.
 cd "${WORKLOCAL_DIR}"
-source ${AIEHLC_DIR}/script/kc.sh --kernel-cc ./kernel.cc --func-name "${KERNEL_FUNC_NAME}" --aie-version 5 --platform baremetal --debug-output --output-dir $BUILD_DIR --prx "${PRX_FILE}"
+_KC_PLATFORM="${PLATFORM:-baremetal}"
+source ${AIEHLC_DIR}/script/kc.sh --kernel-cc ./kernel.cc --func-name "${KERNEL_FUNC_NAME}" --aie-version 5 --platform "${_KC_PLATFORM}" --debug-output --output-dir $BUILD_DIR --prx "${PRX_FILE}"

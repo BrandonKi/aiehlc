@@ -1,31 +1,33 @@
 /******************************************************************************
-* Copyright (c) 2022 Xilinx, Inc.  All rights reserved.
-* Copyright (c) 2022-2023, Advanced Micro Devices, Inc.  All rights reserved.
-* SPDX-License-Identifier: MIT
-******************************************************************************/
+ * Copyright (c) 2025 - 2026 Advanced Micro Devices, Inc. All Rights Reserved.
+ * SPDX-License-Identifier: MIT
+ ******************************************************************************/
 
 /*****************************************************************************/
 /**
-*
-* @file xil_error_node.h
-*
-* This is the file which contains node IDs information for versal net error events.
-*
-* <pre>
-* MODIFICATION HISTORY:
-*
-* Ver   Who 	 Date        Changes
-* ----- -------- -------- -----------------------------------------------------
-* 8.0   bm       07/06/2022 Initial release
-*       dc       07/12/2022 Added XIL_EVENT_ERROR_MASK_DEV_STATE_CHANGE
-* 8.1   kal      01/05/2023 Added XIL_EVENT_ERROR_PCR_LOG_UPDATE
-*       rama     01/19/2023 Add XilSem errors to SW error events
-*
-* </pre>
-*
-* @note
-*
-******************************************************************************/
+ *
+ * @file xil_error_node.h
+ *
+ * This is the file which contains node IDs information for Versal 2VE and 2VM
+ * devices error events.
+ *
+ * <pre>
+ * MODIFICATION HISTORY:
+ *
+ * Ver   Who 	 Date        Changes
+ * ----- -------- -------- -----------------------------------------------------
+ * 1.0   sk       02/20/2025 Initial release
+ *       sk       02/21/2025 Added nodes for Versal 2VE and 2VM devices EAM
+ *                           register in LPD SLCR
+ *       sk       04/07/2025 Updated error id encoding for UFSFE
+ * 1.1   ng       09/19/2025 Fixed LPD SLCR error descriptions
+ * 1.2   sk       09/23/2025 Added Additional HBMON Error ID's
+ *
+ * </pre>
+ *
+ * @note
+ *
+ ******************************************************************************/
 #ifndef XIL_ERROR_NODE_H
 #define XIL_ERROR_NODE_H
 
@@ -34,7 +36,7 @@ extern "C" {
 #endif
 
 /************************** Constant Definitions *****************************/
-/**@name Versalnet Event Node IDs
+/**@name Versal_2VE_2VM Event Node IDs
  * @defgroup xileventnodes Event Node IDs
  * @ingroup xilnodeids
  * @{
@@ -48,16 +50,16 @@ extern "C" {
 #define XIL_NODETYPE_EVENT_ERROR_PMC_ERR1	(0x28100000U)
 #define XIL_NODETYPE_EVENT_ERROR_PMC_ERR2	(0x28104000U)
 #define XIL_NODETYPE_EVENT_ERROR_PMC_ERR3	(0x28108000U)
-#define XIL_NODETYPE_EVENT_ERROR_PSM_ERR1	(0x2810C000U)
-#define XIL_NODETYPE_EVENT_ERROR_PSM_ERR2	(0x28110000U)
-#define XIL_NODETYPE_EVENT_ERROR_PSM_ERR3	(0x28114000U)
-#define XIL_NODETYPE_EVENT_ERROR_PSM_ERR4	(0x28118000U)
+#define XIL_NODETYPE_EVENT_ERROR_LPD_SLCR_ERR1 (0x2810C000U)
+#define XIL_NODETYPE_EVENT_ERROR_LPD_SLCR_ERR2 (0x28110000U)
+#define XIL_NODETYPE_EVENT_ERROR_LPD_SLCR_ERR3 (0x28114000U)
+#define XIL_NODETYPE_EVENT_ERROR_LPD_SLCR_ERR4 (0x28118000U)
 #define XIL_NODETYPE_EVENT_ERROR_SW_ERR		(0x2811C000U)
 /**
  * @}
  */
 
-/**@name Versalnet Error event Mask
+/**@name Versal_2VE_2VM Error event Mask
  * @defgroup xilerroreventmask Error Event Mask
  * @ingroup xilnodeids
  * @{
@@ -97,13 +99,11 @@ extern "C" {
 /** Error event mask for CFRAME Error. */
 #define XIL_EVENT_ERROR_MASK_CFRAME		(0x00000080U)
 
-/** Error event mask for PSM Correctable Error,
- * Summary from PSM Error Management. */
-#define XIL_EVENT_ERROR_MASK_PMC_PSM_CR		(0x00000100U)
+/** Reserved */
+#define XIL_EVENT_ERROR_MASK_RESERVED_1 (0x00000100U)
 
-/** Error event mask for PSM Non-Correctable Error,
- * Summary from PSM Error Management. */
-#define XIL_EVENT_ERROR_MASK_PMC_PSM_NCR	(0x00000200U)
+/** Reserved */
+#define XIL_EVENT_ERROR_MASK_RESERVED_2 (0x00000200U)
 
 /** Error event mask for DDRMC MB Correctable ECC Error. */
 #define XIL_EVENT_ERROR_MASK_DDRMB_CR		(0x00000400U)
@@ -185,7 +185,7 @@ extern "C" {
  */
 /** Error event mask for General purpose PMC error,
  * can be triggered by any of the following peripherals:,
- * - PMC Global Regsiters,- PMC Clock & Reset (CRP),- PMC IOU Secure SLCR,
+ * - PMC Global Registers,- PMC Clock & Reset (CRP),- PMC IOU Secure SLCR,
  * - PMC IOU SLCR,- BBRAM Controller,- PMC Analog Control Registers,
  * - RTC Control Registers. */
 #define XIL_EVENT_ERROR_MASK_PMCAPB		(0x00000001U)
@@ -341,15 +341,49 @@ extern "C" {
 
 /** Error event mask for PCR parity. */
 #define XIL_EVENT_ERROR_MASK_PCR_PAR		(0x00002000U)
+
+/** Error event mask for PSX_EAM_E0. */
+#define XIL_EVENT_ERROR_MASK_PSX_EAM_E0 (0x00004000U)
+
+/** Error event mask for PSX_EAM_E1. */
+#define XIL_EVENT_ERROR_MASK_PSX_EAM_E1 (0x00008000U)
+
+/** Error event mask for PSX_EAM_E2. */
+#define XIL_EVENT_ERROR_MASK_PSX_EAM_E2 (0x00010000U)
+
+/** Error event mask for PSX_EAM_E3. */
+#define XIL_EVENT_ERROR_MASK_PSX_EAM_E3 (0x00020000U)
+
+/** Error event mask for ASU_EAM_GD. */
+#define XIL_EVENT_ERROR_MASK_ASU_EAM_GD (0x00040000U)
+
+/** Error event mask for PMC_EAM_GD. */
+#define XIL_EVENT_ERROR_MASK_PMC_EAM_GD (0x00080000U)
+
+/** Error event mask for PMC_EAM_SMIRQ0 */
+#define XIL_EVENT_ERROR_MASK_PMC_EAM_SMIRQ0 (0x00100000U)
+
+/** Error event mask for PMC_EAM_SMIRQ1 */
+#define XIL_EVENT_ERROR_MASK_PMC_EAM_SMIRQ1 (0x00200000U)
+
+/** Error event mask for PMC_EAM_PRAM */
+#define XIL_EVENT_ERROR_MASK_PMC_EAM_PRAM (0x00400000U)
+
+/** Error event mask for PMC_EAM_AGERR */
+#define XIL_EVENT_ERROR_MASK_PMC_EAM_AGERR (0x00800000U)
+
+/** Error event mask for PMC_EAM_UFSFE */
+#define XIL_EVENT_ERROR_MASK_PMC_EAM_UFSFE (0x01000000U)
+
 /**
  * @}
  */
 
 /**
- * @defgroup psmerr1 Error Event Mask for PSM ERR1
+ * @defgroup LPD SLCR err0 Error Event Mask for LPD SLCR ERR0
  * @ingroup xilpmerroreventmask
  * @{
- * @brief Error Events belong to PSM ERR1 Node
+ * @brief Error Events belong to LPD SLCR ERR0 Node
  */
 /** Error event mask for PS Software can write to trigger register to
  * generate this Correctable Error. */
@@ -359,107 +393,98 @@ extern "C" {
  * generate this Non-Correctable Error. */
 #define XIL_EVENT_ERROR_MASK_PS_SW_NCR		(0x00000002U)
 
-/** Error event mask for PSM Firmware can write to trigger register to
- * generate this Correctable Error. */
-#define XIL_EVENT_ERROR_MASK_PSM_B_CR		(0x00000004U)
+/** Error event mask for Aggregated LPX USB errors. */
+#define XIL_EVENT_ERROR_MASK_USB_ERR (0x00000004U)
 
-/** Error event mask for PSM Firmware can write to trigger register to
- * generate this Non-Correctable Error. */
-#define XIL_EVENT_ERROR_MASK_PSM_B_NCR		(0x00000008U)
+/** Error event mask for Aggregated LPX DFX controllers
+ * unexpected activation errors. */
+#define XIL_EVENT_ERROR_MASK_LPX_DFX (0x00000008U)
 
-/** Error event mask for Or of MB Fatal1, Fatal2, Fatal3 Error. */
-#define XIL_EVENT_ERROR_MASK_MB_FATAL		(0x00000010U)
+/** Error event mask for UFSHC_FE_IRQ Error-Unused. */
+#define XIL_EVENT_ERROR_MASK_UFSHC_FE_IRQ (0x00000010U)
 
-/** Error event mask for PSM Correctable. */
-#define XIL_EVENT_ERROR_MASK_PSM_CR		(0x00000020U)
+/** Error event mask for APLL1 lock error. */
+#define XIL_EVENT_ERROR_MASK_APLL1_LOCK (0x00000020U)
 
-/** Error event mask for PSM Non-Correctable. */
-#define XIL_EVENT_ERROR_MASK_PSM_NCR		(0x00000040U)
-
-/** Error event mask for PSMX CHK error. */
-#define XIL_EVENT_ERROR_MASK_PSMX_CHK		(0x00000080U)
-
-/** Error event mask for APLL1 lock error. The error can be unmasked
- * after the PLL is locked to alert when the PLL loses lock. */
-#define XIL_EVENT_ERROR_MASK_APLL1_LOCK		(0x00000100U)
-
-/** Error event mask for APLL2 lock error. The error can be unmasked
- * after the PLL is locked to alert when the PLL loses lock. */
-#define XIL_EVENT_ERROR_MASK_APLL2_LOCK		(0x00000200U)
+/** Error event mask for APLL2 lock error. */
+#define XIL_EVENT_ERROR_MASK_APLL2_LOCK (0x00000040U)
 
 /** Error event mask for RPLL Lock Errors. The error can be unmasked
  * after the PLL is locked to alert when the PLL loses lock. */
-#define XIL_EVENT_ERROR_MASK_RPLL_LOCK		(0x00000400U)
+#define XIL_EVENT_ERROR_MASK_RPLL_LOCK (0x00000080U)
 
 /** Error event mask for FLXPLL Lock Errors. The error can be unmasked
  * after the PLL is locked to alert when the PLL loses lock. */
-#define XIL_EVENT_ERROR_MASK_FLXPLL_LOCK		(0x00000800U)
+#define XIL_EVENT_ERROR_MASK_FLXPLL_LOCK (0x00000100U)
 
-/** Error event mask for INT_PSM correctable error. */
-#define XIL_EVENT_ERROR_MASK_INT_PSM_CR		(0x00001000U)
+/** Error event mask for Aggregated LPX ASIL B correctable
+ * errors from OCMASILB, LPXASILB, IOU */
+#define XIL_EVENT_ERROR_MASK_INT_LPXASILB_CR (0x00000200U)
 
-/** Error event mask for INT_PSM non-correctable error. */
-#define XIL_EVENT_ERROR_MASK_INT_PSM_NCR		(0x00002000U)
+/** Error event mask for Aggregated LPX ASIL B uncorrectable
+ * errors from OCMASILB, LPXASILB, IOU */
+#define XIL_EVENT_ERROR_MASK_INT_LPXASILB_NCR (0x00000400U)
 
-/** Error event mask for Consolidated Error from the two USB2 blocks. */
-#define XIL_EVENT_ERROR_MASK_USB2		(0x00004000U)
+/** Error event mask for Aggregated LPX ASIL D correctable
+ * errors from OCMASILD, LPXASILD */
+#define XIL_EVENT_ERROR_MASK_INT_LPXASILD_CR (0x00000800U)
 
-/** Error event mask for LPX unexpected dfx activation error. */
-#define XIL_EVENT_ERROR_MASK_LPX_UXPT_ACT	(0x00008000U)
+/** Error event mask for Aggregated LPX ASIL D uncorrectable
+ * errors from OCMASILD, LPXASILD */
+#define XIL_EVENT_ERROR_MASK_INT_LPXASILD_NCR (0x00001000U)
 
-/** Error event mask for INT_LPD correctable error. */
-#define XIL_EVENT_ERROR_MASK_INT_LPD_CR		(0x00020000U)
+/** Error event mask for Aggregated FPX ASIL D correctable
+ * errors. */
+#define XIL_EVENT_ERROR_MASK_INT_FPXASILD_CR (0x00002000U)
 
-/** Error event mask for INT_LPD non-correctable error. */
-#define XIL_EVENT_ERROR_MASK_INT_LPD_NCR		(0x00040000U)
+/** Error event mask for Aggregated FPX ASIL D uncorrectable
+ * errors. */
+#define XIL_EVENT_ERROR_MASK_INT_FPXASILD_NCR (0x00004000U)
 
-/** Error event mask for INT_OCM correctable error. */
-#define XIL_EVENT_ERROR_MASK_INT_OCM_CR		(0x00080000U)
+/** Error event mask for Aggregated FPX ASIL B correctable
+ * errors. */
+#define XIL_EVENT_ERROR_MASK_INT_FPXASILB_CR (0x00008000U)
 
-/** Error event mask for INT_OCM non-correctable error. */
-#define XIL_EVENT_ERROR_MASK_INT_OCM_NCR		(0x00100000U)
+/** Error event mask for Aggregated FPX ASIL B uncorrectable
+ * errors. */
+#define XIL_EVENT_ERROR_MASK_INT_FPXASILB_NCR (0x00010000U)
 
-/** Error event mask for INT_FPD correctable error. */
-#define XIL_EVENT_ERROR_MASK_INT_FPD_CR		(0x00200000U)
+/** Error event mask for Splitter interconnect correctable error */
+#define XIL_EVENT_ERROR_MASK_INT_SPLIT_CR (0x00020000U)
 
-/** Error event mask for INT_FPD non-correctable error. */
-#define XIL_EVENT_ERROR_MASK_INT_FPD_NCR		(0x00400000U)
+/** Error event mask for Splitter interconnect uncorrectable error */
+#define XIL_EVENT_ERROR_MASK_INT_SPLIT_NCR (0x00040000U)
 
-/** Error event mask for INT_IOU correctable Error. */
-#define XIL_EVENT_ERROR_MASK_INT_IOU_CR		(0x00800000U)
+/** Error event mask for Firewall write errors from NOC NMUs*/
+#define XIL_EVENT_ERROR_MASK_NOC_NMU_FIREWALL_WR_ERR (0x00800000U)
 
-/** Error event mask for INT_IOU non-correctable Error. */
-#define XIL_EVENT_ERROR_MASK_INT_IOU_NCR		(0x01000000U)
+/** Error event mask for Firewall read error from NOC NMU */
+#define XIL_EVENT_ERROR_MASK_NOC_NMU_FIREWALL_RD_ERR (0x01000000U)
 
-/** Error event mask for RPU lockstep error for ClusterA. */
-#define XIL_EVENT_ERROR_MASK_RPUA_LOCKSTEP	(0x02000000U)
+/** Error event mask for Firewall error from NOC NSU. */
+#define XIL_EVENT_ERROR_MASK_NOC_NSU_FIREWALL_ERR (0x02000000U)
 
-/** Error event mask for RPU lockstep error for ClusterB. */
-#define XIL_EVENT_ERROR_MASK_RPUB_LOCKSTEP	(0x04000000U)
+/** Error event mask for GIC_FMU_ERR, ARM suggested to have
+ * separated from GIC_ERR. */
+#define XIL_EVENT_ERROR_MASK_GIC_FMU_ERR (0x04000000U)
 
-/** Error event mask for APU GIC AXI error (slverr, decerr). */
-#define XIL_EVENT_ERROR_MASK_APU_GIC_AXI		(0x08000000U)
+/** Error event mask for GIC_FMU_FAULT, ARM suggested to have
+ * separated from GIC_FAULT */
+#define XIL_EVENT_ERROR_MASK_GIC_FMU_FAULT (0x08000000U)
 
-/** Error event mask for APU GIC ECC error. */
-#define XIL_EVENT_ERROR_MASK_APU_GIC_ECC		(0x10000000U)
+/** Error event mask for Aggregated IPI error (see IPI_ISR reg) */
+#define XIL_EVENT_ERROR_MASK_IPI_ERR (0x40000000U)
 
-/** Error event mask for CPM correctable error. */
-#define XIL_EVENT_ERROR_MASK_CPM_CR		(0x20000000U)
-
-/** Error event mask for CPM non-correctable error. */
-#define XIL_EVENT_ERROR_MASK_CPM_NCR		(0x40000000U)
-
-/** Error event mask for CPI error. */
-#define XIL_EVENT_ERROR_MASK_CPI			(0x80000000U)
+/** Error event mask for Aggregated CPI error (see CPI_IRQ reg) */
+#define XIL_EVENT_ERROR_MASK_FPD_CPI (0x80000000U)
 /**
  * @}
  */
 
-
 /**
- * @defgroup psmerr2 Error Event Mask for PSM ERR2
+ * @defgroup LPD SLCR 1 Error Event Mask for LPD SLCR EAM ERR1
  * @ingroup xilpmerroreventmask
- * @brief Error Events belong to PSM ERR2 Node
+ * @brief Error Events belong to LPD SLCR ERR1 Node
  * @{
  */
 /** Error event mask for FPD WDT0 error. */
@@ -475,205 +500,217 @@ extern "C" {
 #define XIL_EVENT_ERROR_MASK_FPD_WDT3		(0x00000008U)
 
 /** Error event mask for Memory Errors for Splitter0. */
-#define XIL_EVENT_ERROR_MASK_MEM_SPLITTER0	(0x00000010U)
-
-/** Error event mask for Consolidated Errror indicating AXI parity Error for Splitter0. */
-#define XIL_EVENT_ERROR_MASK_AXI_PAR_SPLITTER0	(0x00000020U)
+#define XIL_EVENT_ERROR_MASK_PSXC_SPLITTER0_NON_FATAL_ERR (0x00000010U)
 
 /** Error event mask for Memory Errors for Splitter1. */
-#define XIL_EVENT_ERROR_MASK_MEM_SPLITTER1	(0x00000040U)
-
-/** Error event mask for Consolidated Errror indicating AXI parity Error for Splitter1. */
-#define XIL_EVENT_ERROR_MASK_AXI_PAR_SPLITTER1	(0x00000080U)
+#define XIL_EVENT_ERROR_MASK_PSXC_SPLITTER1_NON_FATAL_ERR (0x00000020U)
 
 /** Error event mask for Memory Errors for Splitter2. */
-#define XIL_EVENT_ERROR_MASK_MEM_SPLITTER2	(0x00000100U)
-
-/** Error event mask for Consolidated Errror indicating AXI parity Error for Splitter2. */
-#define XIL_EVENT_ERROR_MASK_AXI_PAR_SPLITTER2	(0x00000200U)
+#define XIL_EVENT_ERROR_MASK_PSXC_SPLITTER2_NON_FATAL_ERR (0x00000040U)
 
 /** Error event mask for Memory Errors for Splitter3. */
-#define XIL_EVENT_ERROR_MASK_MEM_SPLITTER3    	(0x00000400U)
+#define XIL_EVENT_ERROR_MASK_PSXC_SPLITTER3_NON_FATAL_ERR (0x00000080U)
 
-/** Error event mask for Consolidated Errror indicating AXI parity Error for Splitter3. */
-#define XIL_EVENT_ERROR_MASK_AXI_PAR_SPLITTER3	(0x00000800U)
+/** Error event mask for aggregated Fatal Error For Splitter0-3. */
+#define XIL_EVENT_ERROR_MASK_PSXC_SPLITTER_FATAL_ERR (0x00000100U)
 
-/** Error event mask for APU Cluster 0 error. */
-#define XIL_EVENT_ERROR_MASK_APU_CLUSTER0 	(0x00001000U)
+/** Error event mask for Aggregated GIC_error */
+#define XIL_EVENT_ERROR_MASK_GIC_ERR (0x00000200U)
 
-/** Error event mask for APU Cluster 1 error. */
-#define XIL_EVENT_ERROR_MASK_APU_CLUSTER1	(0x00002000U)
+/** Error event mask for Aggregated GIC_fault */
+#define XIL_EVENT_ERROR_MASK_GIC_FAULT (0x00000400U)
 
-/** Error event mask for APU Cluster 2 error. */
-#define XIL_EVENT_ERROR_MASK_APU_CLUSTER2	(0x00004000U)
+/** Error event mask for aggregated CMN faults from all
+ * PD domains and FMU*/
+#define XIL_EVENT_ERROR_MASK_CMN_FAULT (0x00000800U)
 
-/** Error event mask for APU Cluster 3 error. */
-#define XIL_EVENT_ERROR_MASK_APU_CLUSTER3	(0x00008000U)
+/** Error event mask for aggregated CMN errors from
+ * all PD domains and FMU */
+#define XIL_EVENT_ERROR_MASK_CMN_ERR (0x00001000U)
 
-/** Error event mask for WWDT0 LPX Error. */
-#define XIL_EVENT_ERROR_MASK_LPD_WWDT0		(0x00010000U)
+/** Error event mask for aggregated errors from
+ * ACP0 + ACP1 */
+#define XIL_EVENT_ERROR_MASK_ACP_ERR (0x00002000U)
 
-/** Error event mask for WWDT0 LPX Error. */
-#define XIL_EVENT_ERROR_MASK_LPD_WWDT1		(0x00020000U)
+/** Error event mask for APU Cluster 0 fatal error */
+#define XIL_EVENT_ERROR_MASK_FPD_APU0_ERI (0x00004000U)
 
-/** Error event mask for ADMA Lockstep Error. */
-#define XIL_EVENT_ERROR_MASK_ADMA_LOCKSTEP	(0x00040000U)
+/** Error event mask for APU Cluster 0 non-fatal/fatal error */
+#define XIL_EVENT_ERROR_MASK_FPD_APU0_FHI (0x00008000U)
 
-/** Error event mask for IPI Error */
-#define XIL_EVENT_ERROR_MASK_IPI			(0x00080000U)
+/** Error event mask forAPU Cluster 1 error. */
+#define XIL_EVENT_ERROR_MASK_FPD_APU1_ERI (0x00010000U)
 
-/** Error event mask for OCM Bank0 Corr Error. */
-#define XIL_EVENT_ERROR_MASK_OCM_BANK0_CR	(0x00100000U)
+/** Error event mask for APU Cluster 1 non-fatal/fatal error */
+#define XIL_EVENT_ERROR_MASK_FPD_APU1_FHI (0x00020000U)
 
-/** Error event mask for OCM Bank1 Corr Error. */
-#define XIL_EVENT_ERROR_MASK_OCM_BANK1_CR	(0x00200000U)
+/** Error event mask for APU Cluster 2 error */
+#define XIL_EVENT_ERROR_MASK_FPD_APU2_ERI (0x00040000U)
 
-/** Error event mask for OCM Bank0 UnCorr Error. */
-#define XIL_EVENT_ERROR_MASK_OCM_BANK0_NCR	(0x00400000U)
+/** Error event mask for APU Cluster 2 non-fatal/fatal error */
+#define XIL_EVENT_ERROR_MASK_FPD_APU2_FHI (0x00080000U)
 
-/** Error event mask for OCM Bank1 UnCorr Error. */
-#define XIL_EVENT_ERROR_MASK_OCM_BANK1_NCR	(0x00800000U)
+/** Error event mask for APU Cluster 3 error */
+#define XIL_EVENT_ERROR_MASK_FPD_APU3_ERI (0x00100000U)
 
-/** Error event mask for LPXAFIFS Corr Error. */
-#define XIL_EVENT_ERROR_MASK_LPXAFIFS_CR		(0x01000000U)
+/** Error event mask for APU Cluster 3 non-fatal/fatal error */
+#define XIL_EVENT_ERROR_MASK_FPD_APU3_FHI (0x00200000U)
 
-/** Error event mask for LPXAFIFS UnCorr Error. */
-#define XIL_EVENT_ERROR_MASK_LPXAFIFS_NCR	(0x02000000U)
+/** Error event mask for aggregated MMU error. */
+#define XIL_EVENT_ERROR_MASK_FPD_MMU_ERR (0x00400000U)
 
-/** Error event mask for LPX Glitch Detector0 glitch detected. */
-#define XIL_EVENT_ERROR_MASK_LPX_GLITCH_DETECT0	(0x04000000U)
+/** Error event mask for aggregated MMU fault. */
+#define XIL_EVENT_ERROR_MASK_FPD_MMU_FAULT (0x00800000U)
 
-/** Error event mask for LPX Glitch Detector1 glitch detected. */
-#define XIL_EVENT_ERROR_MASK_LPX_GLITCH_DETECT1	(0x08000000U)
+/** Error event mask for SLCR errors */
+#define XIL_EVENT_ERROR_MASK_FPD_SLCR_ERR (0x01000000U)
 
-/** Error event mask for Firewall write errors from NOC NMUs. */
-#define XIL_EVENT_ERROR_MASK_FWALL_WR_NOC_NMU	(0x10000000U)
+/** Error event mask for SLCR SECURE errors. */
+#define XIL_EVENT_ERROR_MASK_FPD_SLCR_SECURE_ERR (0x02000000U)
 
-/** Error event mask for Firewall read error from NOC NMU. */
-#define XIL_EVENT_ERROR_MASK_FWALL_RD_NOC_NMU	(0x20000000U)
+/** Error event mask for Non Fatal Error from AFI FM0 in FPX. */
+#define XIL_EVENT_ERROR_MASK_FPX_AFIFM0_NONFATAL_ERR (0x04000000U)
 
-/** Error event mask for Firewall error from NOC NSU. */
-#define XIL_EVENT_ERROR_MASK_FWALL_NOC_NSU	(0x40000000U)
+/** Error event mask for Non Fatal Error from AFI FM1 in FPX. */
+#define XIL_EVENT_ERROR_MASK_FPX_AFIFM1_NONFATAL_ERR (0x08000000U)
 
-/** Error event mask for Bit[18] from R52 Core A0, Err event. */
-#define XIL_EVENT_ERROR_MASK_B18_R52_A0		(0x80000000U)
+/** Error event mask for Non Fatal Error from AFI FM2 in FPX */
+#define XIL_EVENT_ERROR_MASK_FPX_AFIFM2_NONFATAL_ERR (0x10000000U)
+
+/** Error event mask for Non Fatal Error from AFI FM3 in FPX */
+#define XIL_EVENT_ERROR_MASK_FPX_AFIFM3_NONFATAL_ERR (0x20000000U)
+
+/** Error event mask for FPXAFIFS Corr Error */
+#define XIL_EVENT_ERROR_MASK_FPX_AFIFS_CORR_ERR (0x40000000U)
+
+/** Error event mask for FPXAFIFS UnCorr Error */
+#define XIL_EVENT_ERROR_MASK_FPX_AFIFS_UNCORR_ERR (0x80000000U)
 /**
  * @}
  */
 
 /**
- * @defgroup psmerr3 Error Event Mask for PSM ERR3
+ * @defgroup LPDSLCRERR@ Error Event Mask for LPDSLCR ERR2
  * @ingroup xilpmerroreventmask
- * @brief Error Events belong to PSM ERR3 Node
+ * @brief Error Events belong to LPDSLCR ERR2 Node
  * @{
  */
-/** Error event mask for Bit[18] from R52 Core A1, Err event. */
-#define XIL_EVENT_ERROR_MASK_B18_R52_A1		(0x00000001U)
+/** Error event mask for Aggregated RPU Cluster A
+ * cluster+ core Fatal Error */
+#define XIL_EVENT_ERROR_MASK_RPUA_CORE_CLUSTER_FATAL (0x00000001U)
 
-/** Error event mask for Bit[18] from R52 Core B0, Err event. */
-#define XIL_EVENT_ERROR_MASK_B18_R52_B0		(0x00000002U)
+/** Error event mask for RPUA Core0 NonFatal Error */
+#define XIL_EVENT_ERROR_MASK_RPUA_CORE0_NON_FATAL (0x00000002U)
 
-/** Error event mask for Bit[18] from R52 Core B1, Err event. */
-#define XIL_EVENT_ERROR_MASK_B18_R52_B1		(0x00000004U)
+/** Error event mask for RPUA Core1 NonFatal Error */
+#define XIL_EVENT_ERROR_MASK_RPUA_CORE1_NON_FATAL (0x00000004U)
 
-/** Error event mask for R52 A0 Core Correctable Error. */
-#define XIL_EVENT_ERROR_MASK_R52_A0_CR		(0x00000008U)
+/** Error event mask for Aggregated RPU Cluster B
+ * cluster+ core Fatal Error */
+#define XIL_EVENT_ERROR_MASK_RPUB_CORE_CLUSTER_FATAL (0x00000008U)
 
-/** Error event mask for R52 A0 Core TFatal Error. */
-#define XIL_EVENT_ERROR_MASK_R52_A0_TFATAL	(0x00000010U)
+/** Error event mask for RPUB Core0 NonFatal Error */
+#define XIL_EVENT_ERROR_MASK_RPUB_CORE0_NON_FATAL (0x00000010U)
 
-/** Error event mask for R52 A0 Core Timeout Error. */
-#define XIL_EVENT_ERROR_MASK_R52_A0_TIMEOUT	(0x00000020U)
+/** Error event mask for RPUB Core1 NonFatal Error. */
+#define XIL_EVENT_ERROR_MASK_RPUB_CORE1_NON_FATAL (0x00000020U)
 
-/** Error event mask for Bit[24:20] pf ERREVNT for RPUA0. */
-#define XIL_EVENT_ERROR_MASK_B24_B20_RPUA0	(0x00000040U)
+/** Error event mask for Aggregated RPU Cluster C
+ * cluster+ core Fatal Error */
+#define XIL_EVENT_ERROR_MASK_RPUC_CORE_CLUSTER_FATAL (0x00000040U)
 
-/** Error event mask for Bit[25] of ERREVNT for RPUA0. */
-#define XIL_EVENT_ERROR_MASK_B25_RPUA0		(0x00000080U)
+/** Error event mask for RPUC Core0 NonFatal Error */
+#define XIL_EVENT_ERROR_MASK_RPUC_CORE0_NON_FATAL (0x00000080U)
 
-/** Error event mask for R52 A1 Core Correctable Error. */
-#define XIL_EVENT_ERROR_MASK_R52_A1_CR		(0x00000100U)
+/** Error event mask for RPUC Core1 NonFatal Error*/
+#define XIL_EVENT_ERROR_MASK_RPUC_CORE1_NON_FATAL (0x00000100U)
 
-/** Error event mask for R52 A1 Core TFatal Error. */
-#define XIL_EVENT_ERROR_MASK_R52_A1_TFATAL	(0x00000200U)
+/** Error event mask for Aggregated RPU Cluster D
+ * cluster+ core Fatal Error */
+#define XIL_EVENT_ERROR_MASK_RPUD_CORE_CLUSTER_FATAL (0x00000200U)
 
-/** Error event mask for R52 A1 Core Timeout Error. */
-#define XIL_EVENT_ERROR_MASK_R52_A1_TIMEOUT    	(0x00000400U)
+/** Error event mask for RPUD Core0 NonFatal Error */
+#define XIL_EVENT_ERROR_MASK_RPUD_CORE0_NON_FATAL (0x00000400U)
 
-/** Error event mask for Bit[24:20] pf ERREVNT for RPUA1. */
-#define XIL_EVENT_ERROR_MASK_B24_B20_RPUA1	(0x00000800U)
+/** Error event mask for RPUD Core1 NonFatal Error */
+#define XIL_EVENT_ERROR_MASK_RPUD_CORE1_NON_FATAL (0x00000800U)
 
-/** Error event mask for Bit[25] of ERREVNT for RPUA1. */
-#define XIL_EVENT_ERROR_MASK_B25_RPUA1		(0x00001000U)
+/** Error event mask for Aggregated RPU Cluster E
+ * cluster+ core Fatal Error */
+#define XIL_EVENT_ERROR_MASK_RPUE_CORE_CLUSTER_FATAL (0x00001000U)
 
-/** Error event mask for R52 A1 Core Correctable Error. */
-#define XIL_EVENT_ERROR_MASK_R52_B0_CR		(0x00002000U)
+/** Error event mask for RPUE Core0 NonFatal Error */
+#define XIL_EVENT_ERROR_MASK_RPUE_CORE0_NON_FATAL (0x00002000U)
 
-/** Error event mask for R52 A1 Core TFatal Error. */
-#define XIL_EVENT_ERROR_MASK_R52_B0_TFATAL	(0x00004000U)
+/** Error event mask for RPUE Core1 NonFatal Error */
+#define XIL_EVENT_ERROR_MASK_RPUE_CORE1_NON_FATAL (0x00004000U)
 
-/** Error event mask for R52 A1 Core Timeout Error. */
-#define XIL_EVENT_ERROR_MASK_R52_B0_TIMEOUT    	(0x00008000U)
+/** Error event mask for PCIL ERR FOR RPU Clusters */
+#define XIL_EVENT_ERROR_MASK_RPU_PCIL_ERR (0x00008000U)
 
-/** Error event mask for Bit[24:20] pf ERREVNT for RPUB0. */
-#define XIL_EVENT_ERROR_MASK_B24_B20_RPUB0	(0x00010000U)
+/** Error event mask for OCM Bank0 NonFatal Error */
+#define XIL_EVENT_ERROR_MASK_OCM0_NONFATAL_ERR (0x00010000U)
 
-/** Error event mask for Bit[25] of ERREVNT for RPUB0. */
-#define XIL_EVENT_ERROR_MASK_B25_RPUB0		(0x00020000U)
+/** Error event mask for OCM Bank0 Fatal Error */
+#define XIL_EVENT_ERROR_MASK_OCM0_FATAL_ERR (0x00020000U)
 
-/** Error event mask for R52 A1 Core Correctable Error. */
-#define XIL_EVENT_ERROR_MASK_R52_B1_CR		(0x00040000U)
+/** Error event mask for OCM Bank1 NonFatal Error */
+#define XIL_EVENT_ERROR_MASK_OCM1_NONFATAL_ERR (0x00040000U)
 
-/** Error event mask for R52 A1 Core TFatal Error. */
-#define XIL_EVENT_ERROR_MASK_R52_B1_TFATAL	(0x00080000U)
+/** Error event mask for OCM Bank1 Fatal Error */
+#define XIL_EVENT_ERROR_MASK_OCM1_FATAL_ERR (0x00080000U)
 
-/** Error event mask for R52 A1 Core Timeout Error. */
-#define XIL_EVENT_ERROR_MASK_R52_B1_TIMEOUT    	(0x00100000U)
+/** Error event mask for OCM Bank2 NonFatal Error */
+#define XIL_EVENT_ERROR_MASK_OCM2_NONFATAL_ERR (0x00100000U)
 
-/** Error event mask for Bit[24:20] pf ERREVNT for RPUB1. */
-#define XIL_EVENT_ERROR_MASK_B24_B20_RPUB1	(0x00200000U)
+/** Error event mask for OCM Bank2 Fatal Error */
+#define XIL_EVENT_ERROR_MASK_OCM2_FATAL_ERR (0x00200000U)
 
-/** Error event mask for Bit[25] of ERREVNT for RPUB1.*/
-#define XIL_EVENT_ERROR_MASK_B25_RPUB1		(0x00400000U)
+/** Error event mask for OCM Bank3 NonFatal Error*/
+#define XIL_EVENT_ERROR_MASK_OCM3_NONFATAL_ERR (0x00400000U)
 
 /** Error event mask for PCIL ERR FOR RPU Clusters. */
-#define XIL_EVENT_ERROR_MASK_PCIL_RPU		(0x01000000U)
+#define XIL_EVENT_ERROR_MASK_OCM3_FATAL_ERR (0x00800000U)
 
-/** Error event mask for FPXAFIFS Corr Error. */
-#define XIL_EVENT_ERROR_MASK_FPXAFIFS_CR		(0x02000000U)
+/** Error event mask for LPX WDT0 Errors*/
+#define XIL_EVENT_ERROR_MASK_LPX_WWDT0 (0x01000000U)
 
-/** Error event mask for FPXAFIFS UnCorr Error. */
-#define XIL_EVENT_ERROR_MASK_FPXAFIFS_NCR	(0x04000000U)
+/** Error event mask for LPX WDT1 Errors */
+#define XIL_EVENT_ERROR_MASK_LPX_WWDT1 (0x02000000U)
 
-/** Error event mask for PSX_CMN_1 PD block consolidated ERROR. */
-#define XIL_EVENT_ERROR_MASK_PSX_CMN_1		(0x08000000U)
+/** Error event mask for LPX WDT2 Errors */
+#define XIL_EVENT_ERROR_MASK_LPX_WWDT2 (0x04000000U)
 
-/** Error event mask for PSX_CMN_2 PD block consolidated ERROR. */
-#define XIL_EVENT_ERROR_MASK_PSX_CMN_2		(0x10000000U)
+/** Error event mask for LPX WDT3 Errors */
+#define XIL_EVENT_ERROR_MASK_LPX_WWDT3 (0x08000000U)
 
-/** Error event mask for PSX_CMN_3 PD block consolidated ERROR. */
-#define XIL_EVENT_ERROR_MASK_PSX_CMN_3		(0x20000000U)
+/** Error event mask for LPX WDT4 Errors */
+#define XIL_EVENT_ERROR_MASK_LPX_WWDT4 (0x10000000U)
 
-/** Error event mask for PSX_CML PD block consolidated ERROR. */
-#define XIL_EVENT_ERROR_MASK_PSX_CML		(0x40000000U)
+/** Error event mask for ADMA LS Error */
+#define XIL_EVENT_ERROR_MASK_ADMA_LS_ERR (0x20000000U)
 
-/** Error event mask for FPD_INT_WRAP PD block consolidated ERROR. */
-#define XIL_EVENT_ERROR_MASK_FPD_INT_WRAP	(0x80000000U)
+/** Error event mask for LPX Glitch Detector0 glitch detected. */
+#define XIL_EVENT_ERROR_MASK_LPX_GLITCH_DET0 (0x40000000U)
+
+/** Error event mask for LPX Glitch Detector1 glitch detected. */
+#define XIL_EVENT_ERROR_MASK_LPX_GLITCH_DET1 (0x80000000U)
+
 /**
  * @}
  */
 
 /**
- * @defgroup psmerr4 Error Event Mask for PSM ERR4
+ * @defgroup lpdslcr3 Error Event Mask for LPDSLCR ERR3
  * @ingroup xilpmerroreventmask
- * @brief Error Events belong to PSM ERR4 Node
+ * @brief Error Events belong to LPDSLCR ERR3 Node
  * @{
  */
-/** Error event mask for FPD Reset Monitor ERROR. */
-#define XIL_EVENT_ERROR_MASK_FPD_RST_MON		(0x00000001U)
+/** Error event mask for FPD Reset Monitor ERROR*/
+#define XIL_EVENT_ERROR_MASK_FPD_CRF (0x00000001U)
 
 /** Error event mask for LPD reset and Clock Monitor Error. */
-#define XIL_EVENT_ERROR_MASK_LPD_RST_CLK_MON	(0x00000002U)
+#define XIL_EVENT_ERROR_MASK_LPD_MON_ERR (0x00000002U)
 
 /** Error event mask for Fatal Error from all AFI FM. */
 #define XIL_EVENT_ERROR_MASK_FATAL_AFI_FM	    (0x00000004U)
@@ -681,23 +718,90 @@ extern "C" {
 /** Error event mask for Non Fatal Error from AFI FM in LPX. */
 #define XIL_EVENT_ERROR_MASK_NFATAL_AFI_FM_LPX      (0x00000008U)
 
-/** Error event mask for Non Fatal Error from AFI FM0 in FPX. */
-#define XIL_EVENT_ERROR_MASK_NFATAL_AFI_FM0_FPX	    (0x00000010U)
+/** Error event mask for aggregated ASU + ASU_PL Fatal error */
+#define XIL_EVENT_ERROR_MASK_LPD_ASU_FATAL (0x00000010U)
 
-/** Error event mask for Non Fatal Error from AFI FM1 in FPX. */
-#define XIL_EVENT_ERROR_MASK_NFATAL_AFI_FM1_FPX	    (0x00000020U)
+/** Error event mask for aggregated ASU + ASU_PL NonFatal error. */
+#define XIL_EVENT_ERROR_MASK_LPD_ASU_NON_FATAL (0x00000020U)
 
-/** Error event mask for Non Fatal Error from AFI FM2 in FPX. */
-#define XIL_EVENT_ERROR_MASK_NFATAL_AFI_FM2_FPX	    (0x00000040U)
+/** Error event mask for LPX AFI FS Non Fatal Error. */
+#define XIL_EVENT_ERROR_MASK_LPX_AFIFS_CORR_ERR (0x00000040U)
 
-/** Error event mask for Non Fatal Error from AFI FM3 in FPX. */
-#define XIL_EVENT_ERROR_MASK_NFATAL_AFI_FM3_FPX	    (0x00000080U)
+/** Error event mask for LPX AFI FS Fatal Error */
+#define XIL_EVENT_ERROR_MASK_LPX_AFIFS_UNCORR_ERR (0x00000080U)
 
-/** Error event mask for Errors from RPU cluster A. */
-#define XIL_EVENT_ERROR_MASK_RPU_CLUSTERA	    (0x00000100U)
+/** Error event mask for MMI top level correctable error */
+#define XIL_EVENT_ERROR_MASK_MMI_CORR_EVENT (0x00000100U)
 
-/** Error event mask for Errors from RPU cluster B. */
-#define XIL_EVENT_ERROR_MASK_RPU_CLUSTERB	    (0x00000200U)
+/** Error event mask for MMI top level uncorrectable error */
+#define XIL_EVENT_ERROR_MASK_MMI_UNCORR_EVENT (0x00000200U)
+
+/** Error event mask for MMI gpu correctable error */
+#define XIL_EVENT_ERROR_MASK_MMI_GPU_COR_EVENT (0x00000400U)
+
+/** Error event mask for MMI pcie0 correctable error*/
+#define XIL_EVENT_ERROR_MASK_MMI_PCIE0_COR_EVENT (0x00000800U)
+
+/** Error event mask MMI pcie1 correctable error */
+#define XIL_EVENT_ERROR_MASK_MMI_PCIE1_COR_EVENT (0x00001000U)
+
+/** Error event mask for RPUE Core0 NonFatal Error */
+#define XIL_EVENT_ERROR_MASK_MMI_GEM_COR_EVENT (0x00002000U)
+
+/** Error event mask for MMI dc correctable error */
+#define XIL_EVENT_ERROR_MASK_MMI_DC_COR_EVENT (0x00004000U)
+
+/** Error event mask for MMI udh correctable error */
+#define XIL_EVENT_ERROR_MASK_MMI_UDH_COR_EVENT (0x00008000U)
+
+/** Error event mask for ADMA perchannel error*/
+#define XIL_EVENT_ERROR_MASK_ADMA_ERR1 (0x00010000U)
+
+/** Error event mask for ADMA perchannel error*/
+#define XIL_EVENT_ERROR_MASK_ADMA_ERR2 (0x00020000U)
+
+/** Error event mask for ADMA perchannel error*/
+#define XIL_EVENT_ERROR_MASK_ADMA_ERR3 (0x00040000U)
+
+/** Error event mask for ADMA perchannel error*/
+#define XIL_EVENT_ERROR_MASK_ADMA_ERR4 (0x00080000U)
+
+/** Error event mask for ADMA perchannel error*/
+#define XIL_EVENT_ERROR_MASK_ADMA_ERR5 (0x00100000U)
+
+/** Error event mask for ADMA perchannel error*/
+#define XIL_EVENT_ERROR_MASK_ADMA_ERR6 (0x00200000U)
+
+/** Error event mask for ADMA perchannel error*/
+#define XIL_EVENT_ERROR_MASK_ADMA_ERR7 (0x00400000U)
+
+/** Error event mask for ADMA perchannel error*/
+#define XIL_EVENT_ERROR_MASK_ADMA_ERR8 (0x00800000U)
+
+/** Error event mask for SDMA perchannel error*/
+#define XIL_EVENT_ERROR_MASK_SDMA_ERR1 (0x01000000U)
+
+/** Error event mask for SDMA perchannel error*/
+#define XIL_EVENT_ERROR_MASK_SDMA_ERR2 (0x02000000U)
+
+/** Error event mask for SDMA perchannel error*/
+#define XIL_EVENT_ERROR_MASK_SDMA_ERR3 (0x04000000U)
+
+/** Error event mask for SDMA perchannel error*/
+#define XIL_EVENT_ERROR_MASK_SDMA_ERR4 (0x08000000U)
+
+/** Error event mask for SDMA perchannel error*/
+#define XIL_EVENT_ERROR_MASK_SDMA_ERR5 (0x10000000U)
+
+/** Error event mask for SDMA perchannel error*/
+#define XIL_EVENT_ERROR_MASK_SDMA_ERR6 (0x20000000U)
+
+/** Error event mask for SDMA perchannel error*/
+#define XIL_EVENT_ERROR_MASK_SDMA_ERR7 (0x40000000U)
+
+/** Error event mask for SDMA perchannel error*/
+#define XIL_EVENT_ERROR_MASK_SDMA_ERR8 (0x80000000U)
+
 /**
  * @}
  */
@@ -721,6 +825,16 @@ extern "C" {
 #define XIL_EVENT_ERROR_MASK_XSEM_CRAM_CE	(0x00000080U)
 #define XIL_EVENT_ERROR_MASK_XSEM_CRAM_UE	(0x00000100U)
 #define XIL_EVENT_ERROR_MASK_XSEM_NPI_UE	(0x00000200U)
+#define XIL_EVENT_ERROR_MASK_HB_MON_4 (0x00000400U)
+#define XIL_EVENT_ERROR_MASK_HB_MON_5 (0x00000800U)
+#define XIL_EVENT_ERROR_MASK_HB_MON_6 (0x00001000U)
+#define XIL_EVENT_ERROR_MASK_HB_MON_7 (0x00002000U)
+
+/** OCP subsystem update events */
+#define XIL_EVENT_ERROR_MASK_OCP_SUBSYS_UPDATE (0x00004000U)
+
+/** ASU firmware update event */
+#define XIL_EVENT_ERROR_MASK_ASU_UPDATE (0x00008000U)
 /**
  * @}
  */

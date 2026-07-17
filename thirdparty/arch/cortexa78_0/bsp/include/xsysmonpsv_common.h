@@ -1,26 +1,31 @@
 /******************************************************************************
-* Copyright (C) 2016 - 2022 Xilinx, Inc.  All rights reserved.
-* Copyright (C) 2022 - 2023 Advanced Micro Devices, Inc. All Rights Reserved.
-* SPDX-License-Identifier: MIT
-******************************************************************************/
+ * Copyright (C) 2016 - 2022 Xilinx, Inc.  All rights reserved.
+ * Copyright (C) 2022 - 2026 Advanced Micro Devices, Inc. All Rights Reserved.
+ * SPDX-License-Identifier: MIT
+ ******************************************************************************/
 
 /*****************************************************************************/
 /**
-* @file xsysmonpsv_common.h
-* @addtogroup sysmonpsv_api SYSMONPSV APIs
-*
-* Functions in the xsysmonpsv_common.h file are basic driver functions which will be used in the
-* in servies or directly by the user.
-*
-* <pre>
-* MODIFICATION HISTORY:
-* Ver   Who    Date     Changes
-* ----- -----  -------- -----------------------------------------------
-* 3.0   cog    03/25/21 Driver Restructure
-* 4.0   se     10/04/22 Update return value definitions
-* </pre>
-*
-******************************************************************************/
+ * @file xsysmonpsv_common.h
+ * @addtogroup sysmonpsv_api SYSMONPSV APIs
+ *
+ * Functions in the xsysmonpsv_common.h file are basic driver functions which will be used in the
+ * in services or directly by the user.
+ *
+ * <pre>
+ * MODIFICATION HISTORY:
+ * Ver   Who    Date     Changes
+ * ----- -----  -------- -----------------------------------------------
+ * 3.0   cog    03/25/21 Driver Restructure
+ * 4.0   se     10/04/22 Update return value definitions
+ * 5.2   se     08/24/25 Microblaze support added
+ * 5.3   dc     02/18/26 Correct spelling errors
+ *       se     03/25/26 Fix Coverity/MISRA-C violations: U suffix,
+ *                       (void) cast, sign conversion, parentheses
+ *
+ * </pre>
+ *
+ ******************************************************************************/
 #ifndef _XSYSMONPSV_COMMON_H_
 #define _XSYSMONPSV_COMMON_H_
 
@@ -33,7 +38,7 @@ extern "C" {
 
 /************************** Constant Definitions *****************************/
 #define XSYSMONPSV_INTR_OFFSET 0xCU /**< Interrupt Offset */
-#define XSYSMONPSV_LOCK_CODE 0xF9E8D7C6 /**< Lock code value */
+#define XSYSMONPSV_LOCK_CODE 0xF9E8D7C6U /**< Lock code value */
 #define XSYSMONPSV_INTR_0_ID (144U + 32U) /**< Interrupt unique ID */
 #define XSYSMONPSV_INTR_1_ID (145U + 32U) /**< Interrupt unique ID */
 
@@ -48,30 +53,30 @@ extern "C" {
 #define XSYSMONPSV_BIT_OT 8U /**< Over Temperature bit*/
 #define XSYSMONPSV_BIT_TEMP 9U /**< Temperature bit*/
 
-#define XSYSMONPSV_UP_SAT_SIGNED_VAL                                           \
-	0x7FFF /**< Signed upper saturation
-						  value */
-#define XSYSMONPSV_LOW_SAT_SIGNED_VAL                                          \
-	0x8000 /**< Signed lower saturation
-						  value */
+#define XSYSMONPSV_UP_SAT_SIGNED_VAL                                                                                   \
+    0x7FFFU /**< Signed upper saturation                                                                               \
+                          value */
+#define XSYSMONPSV_LOW_SAT_SIGNED_VAL                                                                                  \
+    0x8000U /**< Signed lower saturation                                                                               \
+                          value */
 
-#define XSYSMONPSV_UP_SAT_VAL 0xFFFF /**< Upper saturation value */
-#define XSYSMONPSV_LOW_SAT_VAL 0x0000 /**< Upper saturation value */
+#define XSYSMONPSV_UP_SAT_VAL 0xFFFFU  /**< Upper saturation value */
+#define XSYSMONPSV_LOW_SAT_VAL 0x0000U /**< Lower saturation value */
 
-#define compare(val, thresh)                                                   \
-	(((val)&0x8000) || ((thresh)&0x8000) ?                                 \
-		 ((val) < (thresh)) :                                          \
-		 ((val) > (thresh))) /**< Macro to compare threshold
-									  with current value */
+#define XSYSMONPSV_MILLI_SCALE 1000 /**< Milli scale factor */
 
-#define twoscomp(val)                                                          \
-	((((val) ^ 0xFFFF) + 1) & 0x0000FFFF) /**< Macro for 2's compliment */
-#define ALARM_REG(address)                                                     \
-	((address) / 32U) /**< Alarm Register offet for supply */
+#define compare(val, thresh)                                                                                           \
+    (((val) & 0x8000U) || ((thresh) & 0x8000U) ? ((val) < (thresh))                                                    \
+                                               : ((val) > (thresh))) /**< Macro to compare threshold                   \
+                                                                              with current value */
+
+#define twoscomp(val) ((((val) ^ 0xFFFFU) + 1U) & 0x0000FFFFU) /**< Macro for 2's complement */
+#define ALARM_REG(address) ((address) / 32U)                   /**< Alarm Register offset for supply */
 #define ALARM_SHIFT(address)                                                   \
 	((address) % 32U) /**< Supply bit in Alarm Register */
 #define GET_BIT(nr) (1UL << (nr)) /**< Macro for bit shifter */
 
+/** Event direction for threshold comparison. */
 typedef enum {
 	XSYSMONPSV_EV_DIR_EITHER, /**< Rising or falling both direction */
 	XSYSMONPSV_EV_DIR_RISING, /**< Rising both direction */
@@ -79,12 +84,14 @@ typedef enum {
 	XSYSMONPSV_EV_DIR_NONE, /**< No direction */
 } XSysMonPsv_EventDir;
 
+/** Temperature reading type selection. */
 typedef enum {
 	XSYSMONPSV_TEMP, /**< Current temperature */
 	XSYSMONPSV_TEMP_MAX, /**< Maximum temperature reached since reset */
 	XSYSMONPSV_TEMP_MIN, /**< Minimum temperature reached since reset */
 } XSysMonPsv_TempType;
 
+/** Temperature event type for threshold configuration. */
 typedef enum {
 	XSYSMONPSV_TEMP_EVENT, /**< Temperature event */
 	XSYSMONPSV_OT_EVENT, /**< Over Temperature event */

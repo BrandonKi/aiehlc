@@ -1,8 +1,7 @@
 /******************************************************************************
-* Copyright (c) 2018 - 2022 Xilinx, Inc.  All rights reserved.
-* Copyright (c) 2022 - 2023, Advanced Micro Devices, Inc. All Rights Reserved.
-* SPDX-License-Identifier: MIT
-******************************************************************************/
+ * Copyright (C) 2025 Advanced Micro Devices, Inc. All Rights Reserved.
+ * SPDX-License-Identifier: MIT
+ ******************************************************************************/
 
 /**
  * @file pm_api_sys.h
@@ -63,8 +62,8 @@ typedef struct XPm_Ntfier {
 	 *  event-driven notifications)
 	 */
 	void (*const callback)(struct XPm_Ntfier* const notifier);
-	u32 node; /**< Node argument (the node to receive notifications about) */
-	u32 event;	/**< Event argument (the event type to receive notifications about) */
+    const u32 node; /**< Node argument (the node to receive notifications about) */
+    u32 event;	/**< Event argument (the event type to receive notifications about) */
 	u32 received_event;	/**< Event received from PLM) */
 	u32 flags;	/**< Flags */
 	/**
@@ -91,9 +90,11 @@ typedef struct XPm_Ntfier {
 extern struct pm_init_suspend pm_susp;
 extern struct pm_acknowledge pm_ack;
 
+XStatus XPm_InitXilpm(XIpiPsu *IpiInst);
 enum XPmBootStatus XPm_GetBootStatus(void);
 XStatus XPm_GetChipID(u32* IDCode, u32 *Version);
 XStatus XPm_GetApiVersion(u32 *Version);
+XStatus XPm_RequestNode(const u32 DeviceId, const u32 Capabilities, const u32 QoS, const u32 Ack);
 XStatus XPm_ReleaseNode(const u32 DeviceId);
 XStatus XPm_SetRequirement(const u32 DeviceId, const u32 Capabilities,
 			   const u32 QoS, const u32 Ack);
@@ -107,6 +108,8 @@ XStatus XPm_PinCtrlSetFunction(const u32 PinId, const u32 FunctionId);
 XStatus XPm_PinCtrlGetFunction(const u32 PinId, u32 *const FunctionId);
 XStatus XPm_PinCtrlSetParameter(const u32 PinId, const u32 ParamId, const u32 ParamVal);
 XStatus XPm_PinCtrlGetParameter(const u32 PinId, const u32 ParamId, u32 *const ParamVal);
+XStatus XPm_DevIoctl(const u32 DeviceId, const pm_ioctl_id IoctlId, const u32 Arg1, const u32 Arg2,
+                     u32 *const Response);
 XStatus XPm_DevIoctl2(u32 DeviceId, pm_ioctl_id IoctlId,
 		      const u32 *Payload, u32 PayloadSize,
 		      u32 *const Response, u32 ResponseSize);
@@ -130,8 +133,6 @@ XStatus XPm_SelfSuspend(const u32 DeviceId, const u32 Latency, const u8 State,
 XStatus XPm_RequestWakeUp(const u32 TargetDevId, const u8 SetAddress,
 			  const u64 Address, const u32 Ack);
 void XPm_SuspendFinalize(void);
-XStatus XPm_RequestSuspend(const u32 TargetSubsystemId, const u32 Ack,
-			   const u32 Latency, const u32 State);
 XStatus XPm_AbortSuspend(const enum XPmAbortReason Reason);
 XStatus XPm_ForcePowerDown(const u32 TargetDevId, const u32 Ack);
 XStatus XPm_SystemShutdown(const u32 Type, const u32 SubType);
@@ -143,6 +144,7 @@ XStatus XPm_SetMaxLatency(const u32 DeviceId, const u32 Latency);
 XStatus XPm_GetOpCharacteristic(const u32 DeviceId,
 				const enum XPmOpCharType Type,
 				u32 *const Result);
+XStatus XPm_InitFinalize(void);
 XStatus XPm_RegisterNotifier(XPm_Notifier* const Notifier);
 XStatus XPm_UnregisterNotifier(XPm_Notifier* const Notifier);
 void XPm_NotifyCb(const u32 Node, const u32 Event, const u32 Oppoint);
@@ -158,12 +160,7 @@ XStatus XPm_MmioWrite(const u32 Address, const u32 Mask, const u32 Value);
 XStatus XPm_MmioRead(const u32 Address, u32 *const Value);
 u32 XPm_GetRegisterNotifierVersionServer(void);
 /** @endcond */
-static XStatus XPm_InitFinalize(void) { return 0;};
-static XStatus XPm_DevIoctl(const u32 DeviceId, const pm_ioctl_id IoctlId, const u32 Arg1,
-		     const u32 Arg2, u32 *const Response) {return 0;};
-static XStatus XPm_InitXilpm(XIpiPsu *IpiInst) {return 0;};
-static XStatus XPm_RequestNode(const u32 DeviceId, const u32 Capabilities,
-			const u32 QoS, const u32 Ack) {return 0;};
+
 #ifdef __cplusplus
 }
 #endif

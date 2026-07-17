@@ -1,20 +1,19 @@
 /******************************************************************************
-* Copyright (C) 1995 - 2021 Xilinx, Inc.  All rights reserved.
-* Copyright (C) 2023 Advanced Micro Devices, Inc. All Rights Reserved.
-* SPDX-License-Identifier: MIT
-*******************************************************************************/
- #ifndef XIL_PRINTF_H
- #define XIL_PRINTF_H
+ * Copyright (C) 1995 - 2021 Xilinx, Inc.  All rights reserved.
+ * Copyright (C) 2023 - 2026 Advanced Micro Devices, Inc. All Rights Reserved.
+ * SPDX-License-Identifier: MIT
+ *******************************************************************************/
+#ifndef XIL_PRINTF_H
+#define XIL_PRINTF_H
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-#include <ctype.h>
-#include <string.h>
-#include <stdarg.h>
-#include "xil_types.h"
 #include "bspconfig.h"
+#include "xil_stdarg.h"
+#include "xil_types.h"
+#include <string.h>
 #ifndef SDT
 #include "xparameters.h"
 #endif

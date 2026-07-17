@@ -1,14 +1,21 @@
 #ifndef XSYSMONPSV_SUPPLYLIST
 #define XSYSMONPSV_SUPPLYLIST
 
-#define XPAR_XSYSMONPSV_0_NO_MEAS       255
-
 /*
 * The supply configuration table for sysmon
 */
 typedef enum {
-	EndList,
-	NO_SUPPLIES_CONFIGURED = XPAR_XSYSMONPSV_0_NO_MEAS,
+    VCCAUX,
+    VCCINT,
+    VCC_RAM,
+    VCC_SOC,
+    VCCAUX_LPD,
+    VCC_PMC,
+    VCC_PSFP,
+    VCC_PSLP,
+    VP_VN,
+    VCCINT_MMI_MMI,
+    EndList,
 } XSysMonPsv_Supply;
 
 #endif

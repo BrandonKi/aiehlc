@@ -1,8 +1,7 @@
 /******************************************************************************
-* Copyright (c) 2019 - 2022 Xilinx, Inc.  All rights reserved.
-* SPDX-License-Identifier: MIT
-******************************************************************************/
-
+ * Copyright (c) 2025 Advanced Micro Devices, Inc. All Rights Reserved.
+ * SPDX-License-Identifier: MIT
+ ******************************************************************************/
 
 #ifndef PM_CALLBACKS_H_
 #define PM_CALLBACKS_H_

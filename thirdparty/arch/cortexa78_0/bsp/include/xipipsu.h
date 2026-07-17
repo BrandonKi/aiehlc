@@ -1,15 +1,15 @@
 /******************************************************************************
-* Copyright (C) 2015 - 2022 Xilinx, Inc.  All rights reserved.
-* Copyright (C) 2022 - 2025 Advanced Micro Devices, Inc. All Rights Reserved.
-* SPDX-License-Identifier: MIT
-******************************************************************************/
+ * Copyright (C) 2015 - 2022 Xilinx, Inc.  All rights reserved.
+ * Copyright (C) 2022 - 2026 Advanced Micro Devices, Inc. All Rights Reserved.
+ * SPDX-License-Identifier: MIT
+ ******************************************************************************/
 
 /*****************************************************************************/
 /**
  * @file xipipsu.h
-* @addtogroup ipipsu Overview
-* @{
-* @details
+ * @addtogroup ipipsu Overview
+ * @{
+ * @details
  *
  *
  * <pre>
@@ -44,10 +44,13 @@
  * 		     in system device-tree flow.
  * 2.14 sd 07/27/23  Update the target count.
  * 2.15 ht 01/11/24  Add PMC, PSM bitmasks macros for versal-net
- * 2.16 ma 09/10/24  Updated to support VERSAL_AIEPG2 platform
+ * 2.16 ma 09/10/24  Updated to support VERSAL_2VE_2VM platform
  * 2.17 ht 11/25/24  Update Max Message length to accommodate for CRC bytes
  *                   when IPI CRC is enabled
  *	jb 12/26/24 Fixed misrac warnings
+ * 2.19 vlt 12/30/25 Update Doxygen comments to include SDT flow details.
+ * 2.19 vlt 03/15/26 Updated BaseAddress type from u32 to UINTPTR
+ *                    to support 64-bit addressing
  * </pre>
  *
  *****************************************************************************/
@@ -96,7 +99,7 @@ extern "C" {
  * would be generating the defines using lopper.
  */
 #ifdef	SDT
-#if defined (VERSAL_AIEPG2)
+#if defined(VERSAL_2VE_2VM)
 #define XPAR_XIPIPS_TARGET_PMC_0_CH0_MASK			0x00000002U
 #define XPAR_XIPIPS_TARGET_PMC_0_CH1_MASK			0x00000100U
 #define XPAR_XIPIPS_TARGET_ASU_0_CH0_MASK			0x00000001U
@@ -138,7 +141,7 @@ typedef struct {
 #ifndef SDT
 	u32 DeviceId; /**< Unique ID  of device */
 #else
-	char *Name;
+    char *Name; /**< Name of the device */
 #endif
 	UINTPTR BaseAddress; /**< Base address of the device */
 	u32 BitMask; /**< BitMask to be used to identify this CPU */
@@ -165,36 +168,36 @@ typedef struct {
 
 /***************** Macros (Inline Functions) Definitions *********************/
 /**
-*
-* Reads the register specified by the base address and offset
-*
-* @param	BaseAddress Base address of the IPI instance
-* @param	RegOffset Offset of the register relative to base
-*
-* @return	Value of the specified register
-* @note
-* C-style signature
-*	u32 XIpiPsu_ReadReg(u32 BaseAddress, u32 RegOffset)
-*
-*****************************************************************************/
+ *
+ * Reads the register specified by the base address and offset
+ *
+ * @param	BaseAddress Base address of the IPI instance
+ * @param	RegOffset Offset of the register relative to base
+ *
+ * @return	Value of the specified register
+ * @note
+ * C-style signature
+ *	u32 XIpiPsu_ReadReg(UINTPTR BaseAddress, u32 RegOffset)
+ *
+ *****************************************************************************/
 
 #define XIpiPsu_ReadReg(BaseAddress, RegOffset) \
 	Xil_In32((BaseAddress) + (RegOffset))
 
 /****************************************************************************/
 /**
-*
-* Writes a value into a register specified by base address and offset
-*
-* @param BaseAddress Base address of the IPI instance
-* @param RegOffset Offset of the register relative to base
-* @param Data 32-bit value that is to be written into the specified register
-*
-* @note
-* C-style signature
-*	void XIpiPsu_WriteReg(u32 BaseAddress, u32 RegOffset, u32 Data)
-*
-*****************************************************************************/
+ *
+ * Writes a value into a register specified by base address and offset
+ *
+ * @param BaseAddress Base address of the IPI instance
+ * @param RegOffset Offset of the register relative to base
+ * @param Data 32-bit value that is to be written into the specified register
+ *
+ * @note
+ * C-style signature
+ *	void XIpiPsu_WriteReg(UINTPTR BaseAddress, u32 RegOffset, u32 Data)
+ *
+ *****************************************************************************/
 
 #define XIpiPsu_WriteReg(BaseAddress, RegOffset, Data) \
 	Xil_Out32(((BaseAddress) + (RegOffset)), (Data))
@@ -307,16 +310,15 @@ extern XIpiPsu_Config XIpiPsu_ConfigTable[];
 
 /* Static lookup function implemented in xipipsu_sinit.c */
 #ifndef SDT
-static XIpiPsu_Config *XIpiPsu_LookupConfig(u32 DeviceId) {return 0;};
+XIpiPsu_Config *XIpiPsu_LookupConfig(u32 DeviceId);
 #else
-static XIpiPsu_Config *XIpiPsu_LookupConfig(u32 BaseAddress){return 0;};
+XIpiPsu_Config *XIpiPsu_LookupConfig(UINTPTR BaseAddress);
 #endif
 
 /* Interface Functions implemented in xipipsu.c */
 
-static XStatus XIpiPsu_CfgInitialize(XIpiPsu *InstancePtr, XIpiPsu_Config *CfgPtr,
-			      UINTPTR EffectiveAddress){return 0;}
-				  
+XStatus XIpiPsu_CfgInitialize(XIpiPsu *InstancePtr, XIpiPsu_Config *CfgPtr, UINTPTR EffectiveAddress);
+
 void XIpiPsu_Reset(XIpiPsu *InstancePtr);
 
 XStatus XIpiPsu_TriggerIpi(XIpiPsu *InstancePtr, u32 DestCpuMask);

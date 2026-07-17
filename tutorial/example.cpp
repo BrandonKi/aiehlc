@@ -4,9 +4,12 @@
  ******************************************************************************/
 
 #include "xaiengine.h"
+#include <stdio.h>
 
+#ifndef __AIESIM__
 #include "xil_printf.h"
 #include "xil_cache.h"
+#endif
 
 #if AIE_GEN <= 2
 #define HW_GEN XAIE_DEV_GEN_AIEML
@@ -16,26 +19,36 @@
 
 #ifdef __AIELINUX__
 #define OUT_COL 35
+#elif defined(__AIESIM__)
+#define OUT_COL 3
+#elif AIE_GEN == 5
+#define OUT_COL 10
 #else
-#define OUT_COL 2
+#define OUT_COL 6
 #endif
 
-#define CORE_IP_MEM 0x1000
-#define CORE_OP_MEM 0x2000
+// these are fallbacks, the actual values are injected via dm_offsets.h by aiehlc
+#ifndef CORE_IP_MEM
+#define CORE_IP_MEM 0x8000
+#endif
+#ifndef CORE_OP_MEM
+#define CORE_OP_MEM 0x8800
+#endif
 
-__global__
-void loop_kernel(int *in, int *out) {    
+__global__ void loop_kernel(int *in, int *out) {
     for (int i = 0; i < 20; ++i)
         *(out++) = 100 + i;
 }
+
+void routing(XAie_DevInst *) {}
 
 int test_kernel(XAie_DevInst *DevInst) {
     printf("\nLoading kernel 1...\n");
     XAie_CoreReset(DevInst, XAie_TileLoc(4,4));
     XAie_CoreUnreset(DevInst, XAie_TileLoc(4,4));
-    XAie_LoadElfMem(DevInst, XAie_TileLoc(4,4), (unsigned char *)loop_kernel);
-    printf("Finished. Continuing...\n");
-    
+    AieRC elfrc = XAie_LoadElfMem(DevInst, XAie_TileLoc(4, 4), (unsigned char *)loop_kernel);
+    printf("Finished (ELF rc=%d). Continuing...\n", (int)elfrc);
+
     printf("\nRouting...\n");
     XAie_RoutingInstance* routingInstance = XAie_InitRoutingHandler(DevInst);
     XAie_Route(routingInstance, NULL, /*src=*/ XAie_TileLoc(2,0), /*dest=*/ XAie_TileLoc(4,4));
@@ -64,13 +77,14 @@ int test_kernel(XAie_DevInst *DevInst) {
     XAie_MoveDataExternal2Aie(routingInstance, /*src=*/ XAie_TileLoc(2,0),
                               in, len*sizeof(u32),
                               CORE_IP_MEM, /*dest=*/ XAie_TileLoc(4,4));
+#if AIE_GEN == 5
+    XAie_RouteDmaWait(routingInstance, XAie_TileLoc(2, 0), XAie_TileLoc(4, 4), true);
+#endif
     printf("Finished. Continuing...\n");
     
     printf("\nRunning kernel 1...\n");
     XAie_Run(routingInstance, 1);
-    // wait until core is done
-    while(XAie_CoreWaitForDone(DevInst, XAie_TileLoc(4,4), 0) != XAIE_OK) {
-
+    while (XAie_CoreWaitForDone(DevInst, XAie_TileLoc(4, 4), 0) != XAIE_OK) {
     }
     printf("Finished. Continuing...\n");
 
@@ -78,6 +92,9 @@ int test_kernel(XAie_DevInst *DevInst) {
     XAie_MoveDataAie2External(routingInstance, /*src=*/ XAie_TileLoc(4,4),
                               CORE_OP_MEM, len*sizeof(u32),
                               out, /*dest=*/ XAie_TileLoc(OUT_COL,0));
+#if AIE_GEN == 5
+    XAie_RouteDmaWait(routingInstance, XAie_TileLoc(4, 4), XAie_TileLoc(OUT_COL, 0), false);
+#endif
     XAie_MemSyncForCPU(out);
     printf("Finished. Continuing...\n");
 
@@ -101,7 +118,6 @@ int test_kernel(XAie_DevInst *DevInst) {
         printf("\n\nDone with kernel 1!\n\n");
         return -1;
     }
-
 }
 
 #define XAIE_BASE_ADDR 0x20000000000
@@ -117,8 +133,10 @@ int test_kernel(XAie_DevInst *DevInst) {
 #define XAIE_AIE_TILE_NUM_ROWS 8
 
 int main(int argc, char* argv[]) {
-	Xil_DCacheDisable();
-	Xil_ICacheDisable();
+#ifndef __AIESIM__
+    Xil_DCacheDisable();
+    Xil_ICacheDisable();
+#endif
 
     XAie_SetupConfig(ConfigPtr, HW_GEN, XAIE_BASE_ADDR,
                      XAIE_COL_SHIFT, XAIE_ROW_SHIFT,
@@ -134,6 +152,9 @@ int main(int argc, char* argv[]) {
         return -1;
     }
 
+#ifdef __AIESIM__
+    XAie_SetIOBackend(&DevInst, XAIE_IO_BACKEND_SIM);
+#else
     XAie_SetIOBackend(&DevInst, XAIE_IO_BACKEND_BAREMETAL);
 
 #if AIE_GEN >= 2
@@ -150,8 +171,9 @@ int main(int argc, char* argv[]) {
         return -1;
     }
 #else
-    XAie_PmRequestTiles(&DevInst, NULL, 0); 
+    XAie_PmRequestTiles(&DevInst, NULL, 0);
 #endif
+#endif /* __AIESIM__ */
 
     if(test_kernel(&DevInst) == 0){
         printf("\nKernel test passed!\n");

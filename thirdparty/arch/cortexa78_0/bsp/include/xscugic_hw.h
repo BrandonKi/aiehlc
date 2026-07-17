@@ -1,82 +1,87 @@
 /******************************************************************************
-* Copyright (C) 2010 - 2022 Xilinx, Inc.  All rights reserved.
-* Copyright (C) 2022 - 2025 Advanced Micro Devices, Inc. All Rights Reserved.
-* SPDX-License-Identifier: MIT
-******************************************************************************/
+ * Copyright (C) 2010 - 2022 Xilinx, Inc.  All rights reserved.
+ * Copyright (C) 2022 - 2026 Advanced Micro Devices, Inc. All Rights Reserved.
+ * SPDX-License-Identifier: MIT
+ ******************************************************************************/
 
 /*****************************************************************************/
 /**
-*
-* @file xscugic_hw.h
-* @addtogroup scugic_api SCUGIC APIs
-* @{
-*
-* The xscugic_hw.h header file contains identifiers and hardware access functions (or
-* macros) that can be used to access the device. The user should refer to the
-* hardware device specification for more details of the device operation.
-* The driver functions/APIs are defined in xscugic.h.
-*
-* This GIC device has two parts, a distributor and CPU interface(s). Each part
-* has separate register definition sections.
-*
-*
-* <pre>
-* MODIFICATION HISTORY:
-*
-* Ver   Who  Date     Changes
-* ----- ---- -------- -----------------------------------------------------
-* 1.00a drg  01/19/10 First release
-* 1.01a sdm  11/09/11 "xil_exception.h" added as include.
-*		      Macros XScuGic_EnableIntr and XScuGic_DisableIntr are
-*		      added to enable or disable interrupts based on
-*		      Distributor Register base address. Normally users use
-*		      XScuGic instance and call XScuGic_Enable or
-*		      XScuGic_Disable to enable/disable interrupts. These
-*		      new macros are provided when user does not want to
-*		      use an instance pointer but still wants to enable or
-*		      disable interrupts.
-*		      Function prototypes for functions (present in newly
-*		      added file xscugic_hw.c) are added.
-* 1.03a srt  02/27/13 Moved Offset calculation macros from *_hw.c (CR
-*		      702687).
-* 1.04a hk   05/04/13 Fix for CR#705621. Moved function prototypes
-*		      XScuGic_SetPriTrigTypeByDistAddr and
-*         	      XScuGic_GetPriTrigTypeByDistAddr here from xscugic.h
-* 3.0	pkp  12/09/14 changed XSCUGIC_MAX_NUM_INTR_INPUTS for
-*		      Zynq Ultrascale Mp
-* 3.0   kvn  02/13/14 Modified code for MISRA-C:2012 compliance.
-* 3.2	pkp  11/09/15 Corrected the interrupt processsor target mask value
-*					  for CPU interface 2 i.e. XSCUGIC_SPI_CPU2_MASK
-* 3.9   mus  02/21/18 Added new API's XScuGic_InterruptUnmapFromCpuByDistAddr
-*					  and XScuGic_UnmapAllInterruptsFromCpuByDistAddr, These
-*					  API's can be used by applications to unmap specific/all
-*					  interrupts from target CPU. It fixes CR#992490.
-* 3.10  aru  08/23/18 Resolved MISRA-C:2012 compliance mandatory violations
-* 4.1   asa  03/30/19 Removed macros for XScuGic_EnableIntr, and
-*                     XScuGic_DisableIntr. These are now C functions. This
-*                     change was to fix CR-1024716.
-* 4.1   mus  06/12/19 Updated XSCUGIC_MAX_NUM_INTR_INPUTS for Versal.
-* 4.6	sk   06/07/21 Delete the commented macro code to fix the MISRA-C warning.
-* 4.6	sk   08/05/21 Fix Scugic Misrac violations.
-* 4.7	sk   12/10/21 Update XSCUGIC_SPI_INT_ID_START macro from signed to unsigned
-* 		      to fix misrac violation.
-* 4.7   mus  03/17/22 GICv3 coupled with A72 has different redistributor for
-*                     each core, and each redistributor has different address,
-*                     Updated #define for re-distributor address to have correct
-*                     value based on the cpu number. It fixes CR#1126156.
-* 5.0   mus  22/02/22 Added support for VERSAL NET
-* 5.1   mus  02/13/23 Added #defines required for logic to find redistributor
-*                     based address for specific CPU core. Also, added new macro
-*                     XScuGic_ReadReg64 to read 64 bit value from specific address.
-* 5.1   mus  02/15/23 Added support for VERSAL_NET APU and RPU GIC.
-* 5.2   ml   03/02/23 Add description to fix Doxygen warnings.
-* 5.2   mus  03/26/23 Fixed calculation for XSCUGIC_RDIST_INT_PRIORITY_OFFSET_CALC.
-* 5.4   ksr  07/23/24 Added support for Versal Gen2
-* 5.5   ml   01/08/25 Update datatype of function arguments from u32 to UINTPTR to
-*                     support both 32bit and 64bit platforms.
-* </pre>
-*
-******************************************************************************/
+ *
+ * @file xscugic_hw.h
+ * @addtogroup scugic_api SCUGIC APIs
+ * @{
+ *
+ * The xscugic_hw.h header file contains identifiers and hardware access functions (or
+ * macros) that can be used to access the device. The user should refer to the
+ * hardware device specification for more details of the device operation.
+ * The driver functions/APIs are defined in xscugic.h.
+ *
+ * This GIC device has two parts, a distributor and CPU interface(s). Each part
+ * has separate register definition sections.
+ *
+ *
+ * <pre>
+ * MODIFICATION HISTORY:
+ *
+ * Ver   Who  Date     Changes
+ * ----- ---- -------- -----------------------------------------------------
+ * 1.00a drg  01/19/10 First release
+ * 1.01a sdm  11/09/11 "xil_exception.h" added as include.
+ *		      Macros XScuGic_EnableIntr and XScuGic_DisableIntr are
+ *		      added to enable or disable interrupts based on
+ *		      Distributor Register base address. Normally users use
+ *		      XScuGic instance and call XScuGic_Enable or
+ *		      XScuGic_Disable to enable/disable interrupts. These
+ *		      new macros are provided when user does not want to
+ *		      use an instance pointer but still wants to enable or
+ *		      disable interrupts.
+ *		      Function prototypes for functions (present in newly
+ *		      added file xscugic_hw.c) are added.
+ * 1.03a srt  02/27/13 Moved Offset calculation macros from *_hw.c (CR
+ *		      702687).
+ * 1.04a hk   05/04/13 Fix for CR#705621. Moved function prototypes
+ *		      XScuGic_SetPriTrigTypeByDistAddr and
+ *         	      XScuGic_GetPriTrigTypeByDistAddr here from xscugic.h
+ * 3.0	pkp  12/09/14 changed XSCUGIC_MAX_NUM_INTR_INPUTS for
+ *		      Zynq Ultrascale Mp
+ * 3.0   kvn  02/13/14 Modified code for MISRA-C:2012 compliance.
+ * 3.2	pkp  11/09/15 Corrected the interrupt processor target mask value
+ *					  for CPU interface 2 i.e. XSCUGIC_SPI_CPU2_MASK
+ * 3.9   mus  02/21/18 Added new API's XScuGic_InterruptUnmapFromCpuByDistAddr
+ *					  and XScuGic_UnmapAllInterruptsFromCpuByDistAddr, These
+ *					  API's can be used by applications to unmap specific/all
+ *					  interrupts from target CPU. It fixes CR#992490.
+ * 3.10  aru  08/23/18 Resolved MISRA-C:2012 compliance mandatory violations
+ * 4.1   asa  03/30/19 Removed macros for XScuGic_EnableIntr, and
+ *                     XScuGic_DisableIntr. These are now C functions. This
+ *                     change was to fix CR-1024716.
+ * 4.1   mus  06/12/19 Updated XSCUGIC_MAX_NUM_INTR_INPUTS for Versal.
+ * 4.6	sk   06/07/21 Delete the commented macro code to fix the MISRA-C warning.
+ * 4.6	sk   08/05/21 Fix Scugic Misrac violations.
+ * 4.7	sk   12/10/21 Update XSCUGIC_SPI_INT_ID_START macro from signed to unsigned
+ * 		      to fix misrac violation.
+ * 4.7   mus  03/17/22 GICv3 coupled with A72 has different redistributor for
+ *                     each core, and each redistributor has different address,
+ *                     Updated #define for re-distributor address to have correct
+ *                     value based on the cpu number. It fixes CR#1126156.
+ * 5.0   mus  22/02/22 Added support for VERSAL NET
+ * 5.1   mus  02/13/23 Added #defines required for logic to find redistributor
+ *                     based address for specific CPU core. Also, added new macro
+ *                     XScuGic_ReadReg64 to read 64 bit value from specific address.
+ * 5.1   mus  02/15/23 Added support for VERSAL_NET APU and RPU GIC.
+ * 5.2   ml   03/02/23 Add description to fix Doxygen warnings.
+ * 5.2   mus  03/26/23 Fixed calculation for XSCUGIC_RDIST_INT_PRIORITY_OFFSET_CALC.
+ * 5.4   ksr  07/23/24 Added support for Versal_2VE_2VM
+ * 5.5   ml   01/08/25 Update datatype of function arguments from u32 to UINTPTR to
+ *                     support both 32bit and 64bit platforms.
+ * 5.6   ml   07/21/25 Fixed GCC warnings.
+ * 5.7   bdk  11/29/25 Updated XScuGic_DeviceInitialize() declaratoin to fix 8.3 misra-c violation.
+ * 5.7   ml   03/05/26 Added Redistributor ICENABLER offset (0x180) definition.
+ * 5.7   vmt  03/27/26 Fix GICv3 redistributor address range for EL1_NONSECURE without HYP_GUEST
+ * 		      and correct default security configuration based on EL3 state.
+ * </pre>
+ *
+ ******************************************************************************/
 
 #ifndef XSCUGIC_HW_H /**< prevent circular inclusions */
 #define XSCUGIC_HW_H /**< by using protection macros */
@@ -117,10 +122,11 @@ extern "C" {
 #define XSCUGIC_MAX_NUM_INTR_INPUTS    95U /**< Maximum number of
                                                 interrupt defined by
                                                 Zynq */
-#elif defined (VERSAL_AIEPG2)
-#define XSCUGIC_MAX_NUM_INTR_INPUTS     288U /**< Maximum number of
-                                                  interrupt sources in
-                                                  VersalGen2 */
+#elif defined(VERSAL_2VE_2VM)
+#define XSCUGIC_MAX_NUM_INTR_INPUTS                                                                                    \
+    288U /**< Maximum number of                                                                                        \
+              interrupt sources in                                                                                     \
+              Versal_2VE_2VM */
 #elif defined (VERSAL_NET)
 #define XSCUGIC_MAX_NUM_INTR_INPUTS     256U /**< Maximum number of
                                                   interrupt sources in
@@ -155,8 +161,9 @@ extern "C" {
 							Register */
 #define XSCUGIC_IC_TYPE_OFFSET		0x00000004U /**< Interrupt Controller
 							Type Register */
-#define XSCUGIC_DIST_IDENT_OFFSET	0x00000008U /**< Implementor ID
-							Register */
+#define XSCUGIC_DIST_IDENT_OFFSET                                                                                      \
+    0x00000008U                                 /**< Implementer ID                                                    \
+                            Register */
 #define XSCUGIC_SECURITY_OFFSET		0x00000080U /**< Interrupt Security
 							Register */
 #define XSCUGIC_ENABLE_SET_OFFSET	0x00000100U /**< Enable Set
@@ -209,12 +216,12 @@ extern "C" {
 #define XSCUGIC_NUM_INT_MASK	0x0000001FU /**< Number of Interrupt IDs */
 /* @} */
 
-/** @name  Implementor ID Register
- * Implementor and revision information.
+/** @name  Implementer ID Register
+ * Implementer and revision information.
  * @{
  */
 #define XSCUGIC_REV_MASK	0x00FFF000U /**< Revision Number */
-#define XSCUGIC_IMPL_MASK	0x00000FFFU /**< Implementor */
+#define XSCUGIC_IMPL_MASK 0x00000FFFU   /**< Implementer */
 /* @} */
 
 /** @name  Interrupt Security Registers
@@ -527,8 +534,13 @@ extern "C" {
 #define XSCUGIC_RDIST_START_ADDR        0xE2100000U
 #define XSCUGIC_RDIST_END_ADDR          0xE2130000U
 #else
+#if EL1_NONSECURE && HYP_GUEST
+#define XSCUGIC_RDIST_START_ADDR 0x03020000U
+#define XSCUGIC_RDIST_END_ADDR 0x03040000U
+#else
 #define XSCUGIC_RDIST_START_ADDR        0xF9080000U
 #define XSCUGIC_RDIST_END_ADDR          0xF90B0000U
+#endif
 #endif
 #define XSCUGIC_RDIST_OFFSET		0x20000U /* offset between consecutive redistributors */
 #define XSCUGIC_RDIST_SGI_PPI_OFFSET	0x10000U  /* offset between control redistributor and SGI/PPI redistributor */
@@ -536,6 +548,7 @@ extern "C" {
 #define XSCUGIC_GICR_TYPER_AFFINITY_MASK 0xFFFFFFFF00000000UL
 
 #define XSCUGIC_RDIST_ISENABLE_OFFSET     0x100U
+#define XSCUGIC_RDIST_ICENABLER_OFFSET 0x180U
 #define XSCUGIC_RDIST_IPRIORITYR_OFFSET   0x400U
 #define XSCUGIC_RDIST_IGROUPR_OFFSET      0x80U
 
@@ -551,7 +564,7 @@ extern "C" {
 /*
  * GICR_IGROUPR  register definitions
  */
-#if EL3
+#if defined(EL3) && (EL3 == 1)
 #define XSCUGIC_DEFAULT_SECURITY    0x0U
 #else
 #define XSCUGIC_DEFAULT_SECURITY    0xFFFFFFFFU
@@ -731,7 +744,11 @@ extern "C" {
 /************************** Function Prototypes ******************************/
 
 void XScuGic_DeviceInterruptHandler(void *DeviceId);
+#ifndef SDT
 s32  XScuGic_DeviceInitialize(u32 DeviceId);
+#else
+s32 XScuGic_DeviceInitialize(u32 DistBaseAddr);
+#endif
 void XScuGic_RegisterHandler(UINTPTR BaseAddress, s32 InterruptID,
 			     Xil_InterruptHandler IntrHandler, void *CallBackRef);
 void XScuGic_SetPriTrigTypeByDistAddr(UINTPTR DistBaseAddress, u32 Int_Id,

@@ -1,85 +1,86 @@
 /******************************************************************************
-* Copyright (C) 2024 Advanced Micro Devices, Inc.  All rights reserved.
-* SPDX-License-Identifier: MIT
-******************************************************************************/
+ * Copyright (C) 2024 - 2026 Advanced Micro Devices, Inc.  All rights reserved.
+ * SPDX-License-Identifier: MIT
+ ******************************************************************************/
 /*****************************************************************************/
 /**
-*
-* The file is a wrapper that calls APIs declared in xscudma.h This wrapper is
-* added for Versal Gen2 as there is no CSU DMA in Versal Gen2 and hence the ASUFW
-* should have no reference to CSU DMA. This is a security requirement.
-*
-* The ASU_DMA is present inside ASU (Application Security Unit) module.
-* ASU_DMA allows the ASU to move data efficiently between the memory (128 bit
-* AXI interface) and the ASU stream peripherals (SHA, AES and PLI) via Secure
-* Stream Switch (SSS).
-*
-* The ASU_DMA is a 2 channel simple DMA, allowing separate control of the SRC
-* (read) channel and DST (write) channel. The DMA is effectively able to
-* transfer data:
-*	- From ASU to the SSS-side (SRC DMA only)
-*	- From SSS-side to the ASU (DST DMA only)
-*	- Simultaneous ASU to SSS_side and SSS-side to ASU
-*
-* Initialization & Configuration
-*
-* The device driver enables higher layer software (e.g., an application) to
-* communicate to the ASU_DMA core. The device driver internally calls CSU DMA
-* APIs.
-*
-* XAsuDma_CfgInitialize() API is used to initialize the ASU_DMA core.
-* The user needs to first call the XAsuDma_LookupConfig() API which returns
-* the Configuration structure pointer which is passed as a parameter to the
-* XAsuDma_CfgInitialize() API.
-*
-* Reset
-* This driver will not support handling of ASU_GLOBAL DMA Reset in case of
-* ASU_DMA inorder to support multiple level of handoff's. User needs to call
-* the XAsuDma_Reset() API before performing any driver operation to make
-* sure ASU_DMA is in proper state.
-*
-* Interrupts
-* This driver will not support handling of interrupts user should write handler
-* to handle the interrupts.
-*
-* Virtual Memory
-*
-* This driver supports Virtual Memory. The RTOS is responsible for calculating
-* the correct device base address in Virtual Memory space.
-*
-* Threads
-*
-* This driver is not thread safe. Any needs for threads or thread mutual
-* exclusion must be satisfied by the layer above this driver.
-*
-* Asserts
-*
-* Asserts are used within all Xilinx drivers to enforce constraints on argument
-* values. Asserts can be turned off on a system-wide basis by defining, at
-* compile time, the NDEBUG identifier. By default, asserts are turned on and it
-* is recommended that users leave asserts on during development.
-*
-* Building the driver
-*
-* The XAsuDma driver is composed of several source files. This allows the user
-* to build and link only those parts of the driver that are necessary.
-*
-* This header file contains identifiers and register-level driver functions (or
-* macros), range macros, structure typedefs that can be used to access the
-* Xilinx ASU_DMA core instance.
-*
-* The functionality wise ZU+ CSU_DMA and Versal Gen2 ASU_DMA are similar, so all
-* ZU+ code is reused by wrapping in this file
-*
-* MODIFICATION HISTORY:
-*
-* Ver   Who     Date     Changes
-* ----- ------  -------- -----------------------------------------------------
-* 1.0   mmd     03/23/24 Initial release
-*
-* </pre>
-*
-******************************************************************************/
+ *
+ * The file is a wrapper that calls APIs declared in xscudma.h This wrapper is
+ * added for Versal_2VE_2VM devices as there is no CSU DMA in Versal_2VE_2VM
+ * devices and hence the ASUFW should have no reference to CSU DMA. This is a
+ * security requirement.
+ *
+ * The ASU_DMA is present inside ASU (Application Security Unit) module.
+ * ASU_DMA allows the ASU to move data efficiently between the memory (128 bit
+ * AXI interface) and the ASU stream peripherals (SHA, AES and PLI) via Secure
+ * Stream Switch (SSS).
+ *
+ * The ASU_DMA is a 2 channel simple DMA, allowing separate control of the SRC
+ * (read) channel and DST (write) channel. The DMA is effectively able to
+ * transfer data:
+ *	- From ASU to the SSS-side (SRC DMA only)
+ *	- From SSS-side to the ASU (DST DMA only)
+ *	- Simultaneous ASU to SSS_side and SSS-side to ASU
+ *
+ * Initialization & Configuration
+ *
+ * The device driver enables higher layer software (e.g., an application) to
+ * communicate to the ASU_DMA core. The device driver internally calls CSU DMA
+ * APIs.
+ *
+ * XAsuDma_CfgInitialize() API is used to initialize the ASU_DMA core.
+ * The user needs to first call the XAsuDma_LookupConfig() API which returns
+ * the Configuration structure pointer which is passed as a parameter to the
+ * XAsuDma_CfgInitialize() API.
+ *
+ * Reset
+ * This driver will not support handling of ASU_GLOBAL DMA Reset in case of
+ * ASU_DMA inorder to support multiple level of handoff's. User needs to call
+ * the XAsuDma_Reset() API before performing any driver operation to make
+ * sure ASU_DMA is in proper state.
+ *
+ * Interrupts
+ * This driver will not support handling of interrupts user should write handler
+ * to handle the interrupts.
+ *
+ * Virtual Memory
+ *
+ * This driver supports Virtual Memory. The RTOS is responsible for calculating
+ * the correct device base address in Virtual Memory space.
+ *
+ * Threads
+ *
+ * This driver is not thread safe. Any needs for threads or thread mutual
+ * exclusion must be satisfied by the layer above this driver.
+ *
+ * Asserts
+ *
+ * Asserts are used within all Xilinx drivers to enforce constraints on argument
+ * values. Asserts can be turned off on a system-wide basis by defining, at
+ * compile time, the NDEBUG identifier. By default, asserts are turned on and it
+ * is recommended that users leave asserts on during development.
+ *
+ * Building the driver
+ *
+ * The XAsuDma driver is composed of several source files. This allows the user
+ * to build and link only those parts of the driver that are necessary.
+ *
+ * This header file contains identifiers and register-level driver functions (or
+ * macros), range macros, structure typedefs that can be used to access the
+ * Xilinx ASU_DMA core instance.
+ *
+ * The functionality wise ZU+ CSU_DMA and Versal_2VE_2VM ASU_DMA are similar, so
+ * all ZU+ code is reused by wrapping in this file
+ *
+ * MODIFICATION HISTORY:
+ *
+ * Ver   Who     Date     Changes
+ * ----- ------  -------- -----------------------------------------------------
+ * 1.0   mmd     03/23/24 Initial release
+ *
+ * </pre>
+ *
+ ******************************************************************************/
 
 #ifndef XASUDMA_H_
 #define XASUDMA_H_
@@ -90,7 +91,7 @@ extern "C" {
 
 /***************************** Include Files *********************************/
 #include "xcsudma.h"
-#if defined (VERSAL_AIEPG2)
+#if defined(VERSAL_2VE_2VM)
 
 /************************** Constant Definitions *****************************/
 /** Ranges of Size */
@@ -923,25 +924,25 @@ static INLINE void XAsuDma_DisableIntr(XAsuDma *InstancePtr, XAsuDma_Channel Cha
 
 /*****************************************************************************/
 /**
-*
-* This function returns the interrupt mask to know which interrupts are
-* enabled and which of them were disaled.
-*
-* @param	InstancePtr is a pointer to XAsuDma instance to be worked on.
-* @param	Channel represents the type of channel either it is Source or
-*		Destination.
-*		Source channel      - XASUDMA_SRC_CHANNEL
-*		Destination Channel - XASUDMA_DST_CHANNEL
-*
-* @return	The current interrupt mask. The mask indicates which interrupts
-*		are enabled/disabled.
-*		0 bit represents .....corresponding interrupt is enabled.
-*		1 bit represents .....Corresponding interrupt is disabled.
-*		To interpret returned mask use
-*		XASUDMA_IXR_SRC_MASK........For source channel
-*		XASUDMA_IXR_DST_MASK........For destination channel
-*
-******************************************************************************/
+ *
+ * This function returns the interrupt mask to know which interrupts are
+ * enabled and which of them were disabled.
+ *
+ * @param	InstancePtr is a pointer to XAsuDma instance to be worked on.
+ * @param	Channel represents the type of channel either it is Source or
+ *		Destination.
+ *		Source channel      - XASUDMA_SRC_CHANNEL
+ *		Destination Channel - XASUDMA_DST_CHANNEL
+ *
+ * @return	The current interrupt mask. The mask indicates which interrupts
+ *		are enabled/disabled.
+ *		0 bit represents .....corresponding interrupt is enabled.
+ *		1 bit represents .....Corresponding interrupt is disabled.
+ *		To interpret returned mask use
+ *		XASUDMA_IXR_SRC_MASK........For source channel
+ *		XASUDMA_IXR_DST_MASK........For destination channel
+ *
+ ******************************************************************************/
 static INLINE u32 XAsuDma_GetIntrMask(XAsuDma *InstancePtr, XAsuDma_Channel Channel)
 {
 	return XCsuDma_GetIntrMask(InstancePtr, Channel);
@@ -1004,7 +1005,7 @@ static INLINE void XAsuDma_ByteAlignedTransfer(XAsuDma *InstancePtr, XAsuDma_Cha
 
 /******************************************************************************/
 
-#endif /* VERSAL_AIEPG2 */
+#endif /* VERSAL_2VE_2VM */
 
 #ifdef __cplusplus
 }

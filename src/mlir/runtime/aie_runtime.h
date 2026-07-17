@@ -41,6 +41,9 @@ typedef struct {
 // Global routing instance (kept for legacy path)
 extern XAie_RoutingInstance *g_RoutingInst;
 
+extern XAie_DevInst *g_DevInst;
+XAie_DevInst *getOrCreateDeviceInstance(void);
+
 // Debug level: bits 0-3 = verbosity (0-15), bits 4-31 = feature flags
 // Use AIE_DEBUG_LEVEL(v) to extract verbosity, AIE_DEBUG_HAS_FLAG(v, flag) to test flags
 #define AIE_DEBUG_LEVEL(v) ((v) & 0xF)
@@ -328,6 +331,24 @@ void __Runtime_wait_io(XAie_DevInst *dev, struct_ioevent io_ev);
 /* C++ overloads so emitted host can call __Runtime_wait(dev, event_or_ioevent) */
 inline void __Runtime_wait(XAie_DevInst *dev, struct_event ev) { __Runtime_wait_event(dev, ev); }
 inline void __Runtime_wait(XAie_DevInst *dev, struct_ioevent ev) { __Runtime_wait_io(dev, ev); }
+
+inline struct_kernel_group __Runtime_load_kernel_group_4t(XAie_LocType t0, XAie_LocType t1, XAie_LocType t2,
+                                                          XAie_LocType t3, int n) {
+    return __Runtime_load_kernel_group_4t(g_DevInst, t0, t1, t2, t3, n);
+}
+inline struct_kernel_group __Runtime_load_kernel_group_8t(XAie_LocType t0, XAie_LocType t1, XAie_LocType t2,
+                                                          XAie_LocType t3, XAie_LocType t4, XAie_LocType t5,
+                                                          XAie_LocType t6, XAie_LocType t7, int n) {
+    return __Runtime_load_kernel_group_8t(g_DevInst, t0, t1, t2, t3, t4, t5, t6, t7, n);
+}
+inline struct_event __Runtime_launch_kernel_group(struct_kernel_group kg) {
+    return __Runtime_launch_kernel_group(g_DevInst, kg);
+}
+inline struct_ioevent __Runtime_startio(struct_io io, int32_t repeat) {
+    return __Runtime_startio(g_DevInst, io, io.bd_id, repeat);
+}
+inline void __Runtime_wait(struct_event ev) { __Runtime_wait_event(g_DevInst, ev); }
+inline void __Runtime_wait(struct_ioevent ev) { __Runtime_wait_io(g_DevInst, ev); }
 #endif
 
 // Kernel log reader (reads log entries from core tile data memory)

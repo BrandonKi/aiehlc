@@ -1,41 +1,42 @@
 /******************************************************************************
-* Copyright (c) 2010 - 2021 Xilinx, Inc.  All rights reserved.
-* Copyright (c) 2022 - 2025 Advanced Micro Devices, Inc. All Rights Reserved.
-* SPDX-License-Identifier: MIT
-******************************************************************************/
+ * Copyright (c) 2010 - 2021 Xilinx, Inc.  All rights reserved.
+ * Copyright (c) 2022 - 2026 Advanced Micro Devices, Inc. All Rights Reserved.
+ * SPDX-License-Identifier: MIT
+ ******************************************************************************/
 
 /*****************************************************************************/
 /**
-*
-* @file xil_types.h
-*
-* @addtogroup common_types Basic Data types for Xilinx&reg; Software IP
-*
-* The xil_types.h file contains basic types for Xilinx software IP. These data types
-* are applicable for all processors supported by Xilinx.
-* @{
-* <pre>
-* MODIFICATION HISTORY:
-*
-* Ver   Who    Date   Changes
-* ----- ---- -------- -------------------------------------------------------
-* 1.00a hbm  07/14/09 First release
-* 3.03a sdm  05/30/11 Added Xuint64 typedef and XUINT64_MSW/XUINT64_LSW macros
-* 5.00 	pkp  05/29/14 Made changes for 64 bit architecture
-*	srt  07/14/14 Use standard definitions from stdint.h and stddef.h
-*		      Define LONG and ULONG datatypes and mask values
-* 7.00  mus  01/07/19 Add cpp extern macro
-* 7.1   aru  08/19/19 Shift the value in UPPER_32_BITS only if it
-*                     is 64-bit processor
-* 8.1   dp   12/23/22 Updated UINTPTR and INTPTR to point to 64bit data types
-*                     incase of microblaze 32-bit with extended address enabled
-* 9.0   ml   04/14/23 Add parenthesis on sub-expression to fix misra-c violation.
-* 9.2   ml   09/26/24 Removed checks to fix below compilation warning
-*                     XPAR_MICROBLAZE_ADDR_SIZE is not defined, evaluates to 0
-* 9.3   ml   12/20/24 Fixed GCC warnings
-* </pre>
-*
-******************************************************************************/
+ *
+ * @file xil_types.h
+ *
+ * @addtogroup common_types Basic Data types for Xilinx&reg; Software IP
+ *
+ * The xil_types.h file contains basic types for Xilinx software IP. These data types
+ * are applicable for all processors supported by Xilinx.
+ * @{
+ * <pre>
+ * MODIFICATION HISTORY:
+ *
+ * Ver   Who    Date   Changes
+ * ----- ---- -------- -------------------------------------------------------
+ * 1.00a hbm  07/14/09 First release
+ * 3.03a sdm  05/30/11 Added Xuint64 typedef and XUINT64_MSW/XUINT64_LSW macros
+ * 5.00 	pkp  05/29/14 Made changes for 64 bit architecture
+ *	srt  07/14/14 Use standard definitions from stdint.h and stddef.h
+ *		      Define LONG and ULONG datatypes and mask values
+ * 7.00  mus  01/07/19 Add cpp extern macro
+ * 7.1   aru  08/19/19 Shift the value in UPPER_32_BITS only if it
+ *                     is 64-bit processor
+ * 8.1   dp   12/23/22 Updated UINTPTR and INTPTR to point to 64bit data types
+ *                     in case of microblaze 32-bit with extended address enabled
+ * 9.0   ml   04/14/23 Add parenthesis on sub-expression to fix misra-c violation.
+ * 9.2   ml   09/26/24 Removed checks to fix below compilation warning
+ *                     XPAR_MICROBLAZE_ADDR_SIZE is not defined, evaluates to 0
+ * 9.3   ml   12/20/24 Fixed GCC warnings
+ * 9.4   vmt  24/09/25 Added extended address support for RISC-V
+ * </pre>
+ *
+ ******************************************************************************/
 
 /**
  *@cond nocomments
@@ -66,14 +67,16 @@ extern "C" {
 #define NULL		0U
 #endif
 
-#define XIL_COMPONENT_IS_READY     0x11111111U  /**< In device drivers, This macro will be
-                                                 assigend to "IsReady" member of driver
-												 instance to indicate that driver
-												 instance is initialized and ready to use. */
-#define XIL_COMPONENT_IS_STARTED   0x22222222U  /**< In device drivers, This macro will be assigend to
-                                                 "IsStarted" member of driver instance
-												 to indicate that driver instance is
-												 started and it can be enabled. */
+#define XIL_COMPONENT_IS_READY                                                                                         \
+    0x11111111U /**< In device drivers, This macro will be                                                             \
+                 assigned to "IsReady" member of driver                                                                \
+                 instance to indicate that driver                                                                      \
+                 instance is initialized and ready to use. */
+#define XIL_COMPONENT_IS_STARTED                                                                                       \
+    0x22222222U /**< In device drivers, This macro will be assigned to                                                 \
+                 "IsStarted" member of driver instance                                                                 \
+                 to indicate that driver instance is                                                                   \
+                 started and it can be enabled. */
 
 /* @name New types
  * New simple types.
@@ -132,8 +135,9 @@ typedef int64_t s64;
 typedef uint64_t u64;
 typedef int sint32;
 
-#if defined(__MICROBLAZE__) && !defined(__arch64__) && \
-    defined(XPAR_MICROBLAZE_ADDR_SIZE) && (XPAR_MICROBLAZE_ADDR_SIZE > 32)
+#if (defined(__MICROBLAZE__) && !defined(__arch64__) &&                                                                \
+     (defined(XPAR_MICROBLAZE_ADDR_SIZE) && (XPAR_MICROBLAZE_ADDR_SIZE > 32))) ||                                      \
+    (defined(__riscv) && (__riscv_xlen == 32) && (XPAR_MICROBLAZE_RISCV_ADDR_SIZE > 32))
 typedef uint64_t UINTPTR;
 typedef int64_t INTPTR;
 #else

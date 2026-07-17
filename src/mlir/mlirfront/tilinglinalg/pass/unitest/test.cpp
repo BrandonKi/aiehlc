@@ -1296,9 +1296,12 @@ void routingtodfschedule(const std::string &irFilepath = "", int startStage = 0)
                 TilingBcf bcf;
                 bcf.setStack(0x70000, 0x2800);
                 bcf.addReservedDMB(0x40000, 0x10000);
+
+                // This crashes the simulator, commenting out for now
                 // Reserve the last 2KB of DM for kernel_log.h klog() region
                 // (DM absolute 0x7F800-0x7FFFF = DM offset 0xF800, 0x800 bytes)
-                bcf.addReservedDMB(0x7F800, 0x800);
+                // bcf.addReservedDMB(0x7F800, 0x800);
+
                 for (const auto &slot : allocations) {
                     bcf.addSymbol(slot.symbolName, slot.address);
                 }

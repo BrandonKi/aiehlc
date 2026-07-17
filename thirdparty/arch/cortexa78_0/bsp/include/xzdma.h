@@ -1,124 +1,125 @@
 /******************************************************************************
-* Copyright (C) 2014 - 2022 Xilinx, Inc.  All rights reserved.
-* Copyright (C) 2022 - 2024 Advanced Micro Devices, Inc.  All rights reserved.
-* SPDX-License-Identifier: MIT
-******************************************************************************/
+ * Copyright (C) 2014 - 2022 Xilinx, Inc.  All rights reserved.
+ * Copyright (C) 2022 - 2026 Advanced Micro Devices, Inc.  All rights reserved.
+ * SPDX-License-Identifier: MIT
+ ******************************************************************************/
 
 /*****************************************************************************/
 /**
-*
-* @file xzdma.h
-* @addtogroup zdma Overview
-* @{
-* @details
-*
-* ZDMA is a general purpose DMA designed to support memory to memory and memory
-* to IO buffer transfers. ZynqMP has two instance of general purpose ZDMA.
-* One is located in FPD (full power domain) which is GDMA and other is located
-* in LPD (low power domain) which is ADMA.
-*
-* GMDA & ADMA are configured each with 8 DMA channels and and each channel can
-* be programmed secure or non-secure.
-* Each channel is divided into two functional sides, Source (Read) and
-* Destination (Write). Each DMA channel can be independently programmed
-* in one of following DMA modes.
-*	- Simple DMA
-*		- Normal data transfer from source to destination.
-*		- Write Only mode.
-*		- Read Only mode.
-*	- Scatter Gather DMA
-*		- Only Normal mode it can't support other two modes.
-* In Scatter gather descriptor can be of 3 types
-*	- Linear descriptor.
-*	- Linked list descriptor
-*	- Hybrid descriptor (Combination of both Linear and Linked list)
-* Our driver will not support Hybrid type of descriptor.
-*
-* <b>Initialization & Configuration</b>
-*
-* The device driver enables higher layer software (e.g., an application) to
-* communicate to the ZDMA core.
-*
-* XZDma_CfgInitialize() API is used to initialize the ZDMA core.
-* The user needs to first call the XZDma_LookupConfig() API which returns
-* the Configuration structure pointer which is passed as a parameter to the
-* XZDma_CfgInitialize() API.
-*
-* <b> Interrupts </b>
-* The driver provides an interrupt handler XZDma_IntrHandler for handling
-* the interrupt from the ZDMA core. The users of this driver have to
-* register this handler with the interrupt system and provide the callback
-* functions by using XZDma_SetCallBack API. In this version Descriptor done
-* option is disabled.
-*
-* <b> Virtual Memory </b>
-*
-* This driver supports Virtual Memory. The RTOS is responsible for calculating
-* the correct device base address in Virtual Memory space.
-*
-* <b> Threads </b>
-*
-* This driver is not thread safe. Any needs for threads or thread mutual
-* exclusion must be satisfied by the layer above this driver.
-*
-* <b> Asserts </b>
-*
-* Asserts are used within all Xilinx drivers to enforce constraints on argument
-* values. Asserts can be turned off on a system-wide basis by defining, at
-* compile time, the NDEBUG identifier. By default, asserts are turned on and it
-* is recommended that users leave asserts on during development.
-*
-* <b> Building the driver </b>
-*
-* The XZDma driver is composed of several source files. This allows the user
-* to build and link only those parts of the driver that are necessary.
-*
-* This header file contains identifiers and register-level driver functions (or
-* macros), range macros, structure typedefs that can be used to access the
-* Xilinx ZDMA core instance.
-*
-* <pre>
-* MODIFICATION HISTORY:
-*
-* Ver   Who     Date     Changes
-* ----- ------  -------- ------------------------------------------------------
-* 1.0   vns     2/27/15  First release
-* 1.1   vns    15/02/16  Corrected Destination descriptor address calculation
-*                        in XZDma_CreateBDList API
-*                        Modified XZDma_SetMode to return XST_FAILURE on
-*                        selecting DMA mode other than normal mode in
-*                        scatter gather mode data transfer and corrected
-*                        XZDma_SetChDataConfig API to set over fetch and
-*                        src issue parameters correctly.
-*       ms     03/17/17  Added readme.txt file in examples folder for doxygen
-*                        generation.
-*       ms     04/05/17  Modified comment lines notation in functions of zdma
-*                        examples to avoid unnecessary description to get
-*                        displayed while generating doxygen and also changed
-*                        filename tag to include the readonly mode example file
-*                        in doxygen.
-* 1.3   mus     08/14/17 Update cache coherency information of the interface in
-*                        its config structure.
-* 1.4   adk 	11/02/17 Updated examples to fix compilation errors for IAR
-*			 compiler.
-* 1.5   adk     11/22/17 Added peripheral test app support for ZDMA driver.
-*		12/11/17 Fixed peripheral test app generation issues when dma
-*			 buffers are configured on OCM memory(CR#990806).
-* 1.6   adk     13/07/18 Fixed doxygen warnings in the driver(CR#1006353)
-*			 Fixed cppcheck warnings and coverity tool reported
-*			 errors in the driver(CR#1006353).
-*		19/07/18 Fixed cppcheck warning in the driver.
-* 1.6   aru     08/18/18 Resolved MISRA-C mandatory violations.
-* 1.7	adk	08/03/19 Added support for versal IP.
-* 1.7   adk     18/03/19 Updated the writeonly mode example data verification
-*			 check to support versal adma IP.
-* 1.10  hk      04/29/20 Enable Scatter Gather setup and Enable APIs for use
-*                        in applications directly.
-* 1.14	adk	03/15/22 Fixed syntax errors in zdma_tapp.tcl file, when stdout
-* 			 is configured as none.
-* </pre>
-*
-******************************************************************************/
+ *
+ * @file xzdma.h
+ * @addtogroup zdma Overview
+ * @{
+ * @details
+ *
+ * ZDMA is a general purpose DMA designed to support memory to memory and memory
+ * to IO buffer transfers. ZynqMP has two instance of general purpose ZDMA.
+ * One is located in FPD (full power domain) which is GDMA and other is located
+ * in LPD (low power domain) which is ADMA.
+ *
+ * GMDA & ADMA are configured each with 8 DMA channels and and each channel can
+ * be programmed secure or non-secure.
+ * Each channel is divided into two functional sides, Source (Read) and
+ * Destination (Write). Each DMA channel can be independently programmed
+ * in one of following DMA modes.
+ *	- Simple DMA
+ *		- Normal data transfer from source to destination.
+ *		- Write Only mode.
+ *		- Read Only mode.
+ *	- Scatter Gather DMA
+ *		- Only Normal mode it can't support other two modes.
+ * In Scatter gather descriptor can be of 3 types
+ *	- Linear descriptor.
+ *	- Linked list descriptor
+ *	- Hybrid descriptor (Combination of both Linear and Linked list)
+ * Our driver will not support Hybrid type of descriptor.
+ *
+ * <b>Initialization & Configuration</b>
+ *
+ * The device driver enables higher layer software (e.g., an application) to
+ * communicate to the ZDMA core.
+ *
+ * XZDma_CfgInitialize() API is used to initialize the ZDMA core.
+ * The user needs to first call the XZDma_LookupConfig() API which returns
+ * the Configuration structure pointer which is passed as a parameter to the
+ * XZDma_CfgInitialize() API.
+ *
+ * <b> Interrupts </b>
+ * The driver provides an interrupt handler XZDma_IntrHandler for handling
+ * the interrupt from the ZDMA core. The users of this driver have to
+ * register this handler with the interrupt system and provide the callback
+ * functions by using XZDma_SetCallBack API. In this version Descriptor done
+ * option is disabled.
+ *
+ * <b> Virtual Memory </b>
+ *
+ * This driver supports Virtual Memory. The RTOS is responsible for calculating
+ * the correct device base address in Virtual Memory space.
+ *
+ * <b> Threads </b>
+ *
+ * This driver is not thread safe. Any needs for threads or thread mutual
+ * exclusion must be satisfied by the layer above this driver.
+ *
+ * <b> Asserts </b>
+ *
+ * Asserts are used within all Xilinx drivers to enforce constraints on argument
+ * values. Asserts can be turned off on a system-wide basis by defining, at
+ * compile time, the NDEBUG identifier. By default, asserts are turned on and it
+ * is recommended that users leave asserts on during development.
+ *
+ * <b> Building the driver </b>
+ *
+ * The XZDma driver is composed of several source files. This allows the user
+ * to build and link only those parts of the driver that are necessary.
+ *
+ * This header file contains identifiers and register-level driver functions (or
+ * macros), range macros, structure typedefs that can be used to access the
+ * Xilinx ZDMA core instance.
+ *
+ * <pre>
+ * MODIFICATION HISTORY:
+ *
+ * Ver   Who     Date     Changes
+ * ----- ------  -------- ------------------------------------------------------
+ * 1.0   vns     2/27/15  First release
+ * 1.1   vns    15/02/16  Corrected Destination descriptor address calculation
+ *                        in XZDma_CreateBDList API
+ *                        Modified XZDma_SetMode to return XST_FAILURE on
+ *                        selecting DMA mode other than normal mode in
+ *                        scatter gather mode data transfer and corrected
+ *                        XZDma_SetChDataConfig API to set over fetch and
+ *                        src issue parameters correctly.
+ *       ms     03/17/17  Added readme.txt file in examples folder for doxygen
+ *                        generation.
+ *       ms     04/05/17  Modified comment lines notation in functions of zdma
+ *                        examples to avoid unnecessary description to get
+ *                        displayed while generating doxygen and also changed
+ *                        filename tag to include the readonly mode example file
+ *                        in doxygen.
+ * 1.3   mus     08/14/17 Update cache coherency information of the interface in
+ *                        its config structure.
+ * 1.4   adk 	11/02/17 Updated examples to fix compilation errors for IAR
+ *			 compiler.
+ * 1.5   adk     11/22/17 Added peripheral test app support for ZDMA driver.
+ *		12/11/17 Fixed peripheral test app generation issues when dma
+ *			 buffers are configured on OCM memory(CR#990806).
+ * 1.6   adk     13/07/18 Fixed doxygen warnings in the driver(CR#1006353)
+ *			 Fixed cppcheck warnings and coverity tool reported
+ *			 errors in the driver(CR#1006353).
+ *		19/07/18 Fixed cppcheck warning in the driver.
+ * 1.6   aru     08/18/18 Resolved MISRA-C mandatory violations.
+ * 1.7	adk	08/03/19 Added support for versal IP.
+ * 1.7   adk     18/03/19 Updated the writeonly mode example data verification
+ *			 check to support versal adma IP.
+ * 1.10  hk      04/29/20 Enable Scatter Gather setup and Enable APIs for use
+ *                        in applications directly.
+ * 1.14	adk	03/15/22 Fixed syntax errors in zdma_tapp.tcl file, when stdout
+ * 			 is configured as none.
+ * 1.20	gn	16/06/25 Add the declaration for the stop API.
+ * </pre>
+ *
+ ******************************************************************************/
 #ifndef XZDMA_H_
 #define XZDMA_H_
 
@@ -306,10 +307,10 @@ typedef struct {
 	u8 IsCacheCoherent; /**< Describes whether Cache Coherent or not;
                               * Applicable only to A53 in EL1 NS mode */
 #ifdef SDT
-	u16 IntrId;		/** Bits[11:0] Interrupt-id Bits[15:12]
-				 * trigger type and level flags */
-	UINTPTR IntrParent; 	/** Bit[0] Interrupt parent type Bit[64/32:1]
-				 * Parent base address */
+    u16 IntrId;         /**< Bits[11:0] Interrupt-id Bits[15:12]
+                         * trigger type and level flags */
+    UINTPTR IntrParent; /**< Bit[0] Interrupt parent type Bit[64/32:1]
+                         * Parent base address */
 #endif
 } XZDma_Config;
 
@@ -347,7 +348,7 @@ typedef struct {
 	XZDma_DscrConfig DscrConfig;	/**< Current configurations */
 	XZDmaState ChannelState;	 /**< ZDMA channel is busy */
 
-	u32 irq_offset;			/**< IRQ offset for Versal Gen 2 */
+    u32 irq_offset; /**< IRQ offset for Versal_2VE_2VM */
 
 } XZDma;
 
@@ -702,6 +703,7 @@ void XZDma_Reset(XZDma *InstancePtr);
 XZDmaState XZDma_ChannelState(XZDma *InstancePtr);
 
 s32 XZDma_SelfTest(XZDma *InstancePtr);
+s32 XZDma_Stop(XZDma *InstancePtr);
 
 void XZDma_IntrHandler(void *Instance);
 s32 XZDma_SetCallBack(XZDma *InstancePtr, XZDma_Handler HandlerType,

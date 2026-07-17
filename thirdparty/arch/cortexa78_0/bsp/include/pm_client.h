@@ -1,9 +1,7 @@
 /******************************************************************************
-* Copyright (c) 2018 - 2021 Xilinx, Inc.  All rights reserved.
-* Copyright (c) 2022 - 2023, Advanced Micro Devices, Inc. All Rights Reserved.
-* SPDX-License-Identifier: MIT
-******************************************************************************/
-
+ * Copyright (c) 2025 Advanced Micro Devices, Inc. All Rights Reserved.
+ * SPDX-License-Identifier: MIT
+ ******************************************************************************/
 
 #ifndef PM_CLIENT_H_
 #define PM_CLIENT_H_
@@ -25,11 +23,12 @@ extern "C" {
 /* #define DEBUG_MODE */
 
 /* 1 for API ID + 5 for API arguments + 1 for reserved + 1 for CRC */
-#define PAYLOAD_ARG_CNT			(8U)
+#define PAYLOAD_ARG_CNT XIPIPSU_MAX_MSG_LEN
 /* 1 for status + 3 for values + 3 for reserved + 1 for CRC */
-#define RESPONSE_ARG_CNT		(8U)
+#define RESPONSE_ARG_CNT XIPIPSU_MAX_MSG_LEN
 #define PM_IPI_TIMEOUT			(~0U)
-#define TARGET_IPI_INT_MASK		XPAR_XIPIPS_TARGET_PSV_PMC_0_CH0_MASK
+
+#define TARGET_IPI_INT_MASK XPAR_XIPIPS_TARGET_PMC_0_CH0_MASK
 
 /**
  * This macro defines "always false" value which is of boolean type.
@@ -40,10 +39,10 @@ extern "C" {
  * XPm_Proc - Processor structure
  */
 struct XPm_Proc {
-	const u32 DevId;                /**< Device ID */
-	const u32 PwrCtrl;              /**< Power Control Register Address */
-	const u32 PwrDwnMask;           /**< Power Down Mask */
-	XIpiPsu *Ipi;			/**< IPI Instance */
+    const u32 DevId;        /**< Device ID */
+    const u32 PwrCtrl;      /**< Power Control Register Address */
+    const u32 PwrDwnMask;   /**< Power Down Mask */
+    XIpiPsu *Ipi;			/**< IPI Instance */
 };
 
 extern struct XPm_Proc *PrimaryProc;
@@ -56,7 +55,7 @@ extern struct XPm_Proc *PrimaryProc;
 #if defined (__aarch64__)
 #define XPm_Print(MSG, ...)		xil_printf("APU: "MSG, ##__VA_ARGS__)
 #elif defined (__arm__)
-extern char ProcName[5];
+extern char ProcName[7];
 #define XPm_Print(MSG, ...)		xil_printf("%s: "MSG, ProcName, ##__VA_ARGS__)
 #elif defined (__microblaze__)
 #define XPm_Print(MSG, ...)		xil_printf("MicroBlaze: "MSG, ##__VA_ARGS__)
@@ -64,14 +63,20 @@ extern char ProcName[5];
 
 /* Conditional debugging prints */
 #ifdef DEBUG_MODE
-	#define XPm_Dbg(MSG, ...) 	do { XPm_Print(MSG, ##__VA_ARGS__); } while (XPM_FALSE_COND)
+#define XPm_Dbg(MSG, ...)                                                                                              \
+    do {                                                                                                               \
+        XPm_Print(MSG, ##__VA_ARGS__);                                                                                 \
+    } while (XPM_FALSE_COND)
 #else
 	#define XPm_Dbg(MSG, ...)	do {} while (XPM_FALSE_COND)
 #endif
 
 /* Define below macro to disable error prints for memory constrained applications */
 #ifndef DISABLE_ERROR_PRINTS
-	#define XPm_Err(MSG, ...) 	do { XPm_Print("ERROR: "MSG, ##__VA_ARGS__); } while (XPM_FALSE_COND)
+#define XPm_Err(MSG, ...)                                                                                              \
+    do {                                                                                                               \
+        XPm_Print("ERROR: " MSG, ##__VA_ARGS__);                                                                       \
+    } while (XPM_FALSE_COND)
 #else
 	#define XPm_Err(MSG, ...)	do {} while (XPM_FALSE_COND)
 #endif
@@ -81,15 +86,17 @@ extern char ProcName[5];
 #define pm_read			XPm_Read
 #define pm_write		XPm_Write
 
+/**
+ * Read Modify Write a register
+ */
+void XPm_RMW32(u32 RegAddress, u32 Mask, u32 Value);
 XStatus XPm_SetPrimaryProc(void);
 struct XPm_Proc *XPm_GetProcByDeviceId(u32 DeviceId);
 void XPm_ClientSuspend(const struct XPm_Proc *const Proc);
 void XPm_ClientWakeUp(const struct XPm_Proc *const Proc);
 void XPm_ClientSuspendFinalize(void);
 void XPm_ClientAbortSuspend(void);
-static inline XStatus XPm_AddIdleCallBack(void){
-	return XST_SUCCESS;
-}
+
 /** @endcond */
 
 #ifdef __cplusplus

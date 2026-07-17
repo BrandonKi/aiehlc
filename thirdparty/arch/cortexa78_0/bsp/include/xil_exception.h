@@ -1,67 +1,67 @@
 /******************************************************************************
-* Copyright (c) 2015 - 2022 Xilinx, Inc.  All rights reserved.
-* Copyright (c) 2022 - 2023 Advanced Micro Devices, Inc. All rights reserved.
-* SPDX-License-Identifier: MIT
-******************************************************************************/
+ * Copyright (c) 2015 - 2022 Xilinx, Inc.  All rights reserved.
+ * Copyright (c) 2022 - 2026 Advanced Micro Devices, Inc. All rights reserved.
+ * SPDX-License-Identifier: MIT
+ ******************************************************************************/
 
 /*****************************************************************************/
 /**
-*
-* @file xil_exception.h
-*
-* This header file contains ARM Cortex A53,A9,R5 specific exception related APIs.
-* For exception related functions that can be used across all Xilinx supported
-* processors, please use xil_exception.h.
-*
-* @addtogroup arm_exception_apis ARM Processor Exception Handling
-* @{
-* ARM processors specific exception related APIs for cortex A53,A9 and R5 can
-* utilized for enabling/disabling IRQ, registering/removing handler for
-* exceptions or initializing exception vector table with null handler.
-*
-* <pre>
-* MODIFICATION HISTORY:
-*
-* Ver   Who      Date     Changes
-* ----- -------- -------- -----------------------------------------------
-* 5.2	pkp  	 28/05/15 First release
-* 6.0   mus      27/07/16 Consolidated file for a53,a9 and r5 processors
-* 6.7   mna      26/04/18 Add API Xil_GetExceptionRegisterHandler.
-* 6.7   asa      18/05/18 Update signature of API Xil_GetExceptionRegisterHandler.
-* 7.0   mus      01/03/19 Tweak Xil_ExceptionEnableMask and
-*                         Xil_ExceptionDisableMask macros to support legacy
-*                         examples for Cortexa72 EL3 exception level.
-* 7.3   mus      04/15/20 Added Xil_EnableNestedInterrupts and
-*                         Xil_DisableNestedInterrupts macros for ARMv8.
-*                         For Cortexa72, these macro's would not be supported
-*                         at EL3, as Cortexa72 is using GIC-500(GICv3),  which
-*                         triggeres only FIQ at EL3. Fix for CR#1062506
-* 7.6   mus      09/17/21 Updated flag checking to fix warning reported with
-*                         -Wundef compiler option CR#1110261
-* 7.7   mus      01/31/22 Few of the #defines in xil_exception.h in are treated
-*                         in different way based on "versal" flag. In existing
-*                         flow, this flag is defined only in xparameters.h and
-*                         BSP compiler flags, it is not defined in application
-*                         compiler flags. So, including xil_exception.h in
-*                         application source file, without including
-*                         xparameters.h results  in incorrect behavior.
-*                         Including xparameters.h in xil_exception.h to avoid
-*                         such issues. It fixes CR#1120498.
-* 8.0  mus       02/24/22 Updated few macros to support legacy driver examples
-*                         for CortexR52. This is needed, as by default scugic
-*                         driver configures interrupts as group0 and CortexR52
-*                         GIC triggers FIQ for group0 interrupts.
-* 8.0  sk	 03/02/22 Define XExc_VectorTableEntry structure to fix
-* 			  misra_c_2012_rule_5_6 violation.
-* 8.0  sk	 03/02/22 Add XExc_VectorTable as extern to fix misra_c_2012_
-* 			  rule_8_4 violation.
-* 8.1  asa       02/12/23 Updated data abort and prefetch abort fault
-*                         status reporting for ARMv7.
-*						  Updated Sync and SError fault status reporting
-*						  for ARMv8.
-* </pre>
-*
-******************************************************************************/
+ *
+ * @file xil_exception.h
+ *
+ * This header file contains ARM Cortex A53,A9,R5 specific exception related APIs.
+ * For exception related functions that can be used across all Xilinx supported
+ * processors, please use xil_exception.h.
+ *
+ * @addtogroup arm_exception_apis ARM Processor Exception Handling
+ * @{
+ * ARM processors specific exception related APIs for cortex A53,A9 and R5 can
+ * utilized for enabling/disabling IRQ, registering/removing handler for
+ * exceptions or initializing exception vector table with null handler.
+ *
+ * <pre>
+ * MODIFICATION HISTORY:
+ *
+ * Ver   Who      Date     Changes
+ * ----- -------- -------- -----------------------------------------------
+ * 5.2	pkp  	 28/05/15 First release
+ * 6.0   mus      27/07/16 Consolidated file for a53,a9 and r5 processors
+ * 6.7   mna      26/04/18 Add API Xil_GetExceptionRegisterHandler.
+ * 6.7   asa      18/05/18 Update signature of API Xil_GetExceptionRegisterHandler.
+ * 7.0   mus      01/03/19 Tweak Xil_ExceptionEnableMask and
+ *                         Xil_ExceptionDisableMask macros to support legacy
+ *                         examples for Cortexa72 EL3 exception level.
+ * 7.3   mus      04/15/20 Added Xil_EnableNestedInterrupts and
+ *                         Xil_DisableNestedInterrupts macros for ARMv8.
+ *                         For Cortexa72, these macro's would not be supported
+ *                         at EL3, as Cortexa72 is using GIC-500(GICv3),  which
+ *                         triggers only FIQ at EL3. Fix for CR#1062506
+ * 7.6   mus      09/17/21 Updated flag checking to fix warning reported with
+ *                         -Wundef compiler option CR#1110261
+ * 7.7   mus      01/31/22 Few of the #defines in xil_exception.h in are treated
+ *                         in different way based on "versal" flag. In existing
+ *                         flow, this flag is defined only in xparameters.h and
+ *                         BSP compiler flags, it is not defined in application
+ *                         compiler flags. So, including xil_exception.h in
+ *                         application source file, without including
+ *                         xparameters.h results  in incorrect behavior.
+ *                         Including xparameters.h in xil_exception.h to avoid
+ *                         such issues. It fixes CR#1120498.
+ * 8.0  mus       02/24/22 Updated few macros to support legacy driver examples
+ *                         for CortexR52. This is needed, as by default scugic
+ *                         driver configures interrupts as group0 and CortexR52
+ *                         GIC triggers FIQ for group0 interrupts.
+ * 8.0  sk	 03/02/22 Define XExc_VectorTableEntry structure to fix
+ * 			  misra_c_2012_rule_5_6 violation.
+ * 8.0  sk	 03/02/22 Add XExc_VectorTable as extern to fix misra_c_2012_
+ * 			  rule_8_4 violation.
+ * 8.1  asa       02/12/23 Updated data abort and prefetch abort fault
+ *                         status reporting for ARMv7.
+ *						  Updated Sync and SError fault status reporting
+ *						  for ARMv8.
+ * </pre>
+ *
+ ******************************************************************************/
 
 /**
  *@cond nocomments

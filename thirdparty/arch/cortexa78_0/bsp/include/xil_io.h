@@ -1,41 +1,42 @@
 /******************************************************************************
-* Copyright (C) 2014 - 2021 Xilinx, Inc.  All rights reserved.
-* Copyright (C) 2022 - 2023 Advanced Micro Devices, Inc. All Rights Reserved.
-* SPDX-License-Identifier: MIT
-******************************************************************************/
+ * Copyright (C) 2014 - 2021 Xilinx, Inc.  All rights reserved.
+ * Copyright (C) 2022 - 2025 Advanced Micro Devices, Inc. All Rights Reserved.
+ * SPDX-License-Identifier: MIT
+ ******************************************************************************/
 
 /*****************************************************************************/
 /**
-*
-* @file xil_io.h
-*
-* @addtogroup common_io_interfacing_apis Register IO interfacing APIs
-*
-* The xil_io.h file contains the interface for the general I/O component, which
-* encapsulates the Input/Output functions for the processors that do not
-* require any special I/O handling.
-*
-* @{
-* <pre>
-* MODIFICATION HISTORY:
-*
-* Ver   Who      Date     Changes
-* ----- -------- -------- -----------------------------------------------
-* 5.00 	pkp  	 05/29/14 First release
-* 6.00  mus      08/19/16 Remove checking of __LITTLE_ENDIAN__ flag for
-*                         ARM processors
-* 7.20  har      01/03/20 Added Xil_SecureOut32 for avoiding blindwrite for
-*                         CR-1049218
-* 7.30  kpt      09/21/20 Moved Xil_EndianSwap16 and Xil_EndianSwap32 to
-*                         xil_io.h and made them as static inline
-*       am       10/13/20 Changed the return type of Xil_SecureOut32 function
-*                         from u32 to int
-* 7.50  dp       02/12/21 Fix compilation error in Xil_EndianSwap32() that occur
-*                         when -Werror=conversion compiler flag is enabled
-* 7.5   mus      05/17/21 Update the functions with comments. It fixes CR#1067739.
-* 9.0   ml       03/03/23 Add description and remove comments to fix doxygen warnings.
-* </pre>
-******************************************************************************/
+ *
+ * @file xil_io.h
+ *
+ * @addtogroup common_io_interfacing_apis Register IO interfacing APIs
+ *
+ * The xil_io.h file contains the interface for the general I/O component, which
+ * encapsulates the Input/Output functions for the processors that do not
+ * require any special I/O handling.
+ *
+ * @{
+ * <pre>
+ * MODIFICATION HISTORY:
+ *
+ * Ver   Who      Date     Changes
+ * ----- -------- -------- -----------------------------------------------
+ * 5.00 	pkp  	 05/29/14 First release
+ * 6.00  mus      08/19/16 Remove checking of __LITTLE_ENDIAN__ flag for
+ *                         ARM processors
+ * 7.20  har      01/03/20 Added Xil_SecureOut32 for avoiding blindwrite for
+ *                         CR-1049218
+ * 7.30  kpt      09/21/20 Moved Xil_EndianSwap16 and Xil_EndianSwap32 to
+ *                         xil_io.h and made them as static inline
+ *       am       10/13/20 Changed the return type of Xil_SecureOut32 function
+ *                         from u32 to int
+ * 7.50  dp       02/12/21 Fix compilation error in Xil_EndianSwap32() that occur
+ *                         when -Werror=conversion compiler flag is enabled
+ * 7.5   mus      05/17/21 Update the functions with comments. It fixes CR#1067739.
+ * 9.0   ml       03/03/23 Add description and remove comments to fix doxygen warnings.
+ * 9.4   vmt      30/09/25 Included riscv_interface.h header for RISC-V processors.
+ * </pre>
+ ******************************************************************************/
 
 #ifndef XIL_IO_H           /**< prevent circular inclusions */
 #define XIL_IO_H           /**< by using protection macros */
@@ -56,6 +57,9 @@ extern "C" {
 #include "xpseudo_asm.h"
 #endif
 
+#if defined(__riscv)
+#include "riscv_interface.h"
+#endif
 /************************** Function Prototypes ******************************/
 #ifdef ENABLE_SAFETY
 extern u32 XStl_RegUpdate(u32 RegAddr, u32 RegVal);
