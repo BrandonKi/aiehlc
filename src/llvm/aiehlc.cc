@@ -2201,14 +2201,11 @@ public:
                         derivedTilingParams.tileM = tileM_eff;
                         derivedTilingParams.tileN = tileN_eff;
                         derivedTilingParams.effectiveK = tileK_eff;
-                        // Always compute spatialMRounds/spatialNRounds from the per-tile
-                        // row/col count divided by the tile size. Do NOT use explicitGroupsM
-                        // from d1.groups: that value is derived from d1.fullsize (the global
-                        // tensor dimension, e.g. M=256), giving global groups (256/16=16),
-                        // whereas spatialMRounds must be the per-tile group count
-                        // (tileRows/tileM = 64/16 = 4). Using the global count causes the
-                        // kernel to demand 4x more A/B windows than the shim supplies,
-                        // deadlocking after the first pass.
+                        // spatialMRounds: number of M sub-tile rounds the kernel processes per tile.
+                        // Use per-tile formula (tileRows/tileM): each compute tile owns tileRows rows
+                        // and processes them in tileM-sized chunks.  The global groups count
+                        // (explicitGroupsM = fullsize/tile_size) spans ALL tiles and must NOT be used
+                        // here — it causes a 16× supply/demand mismatch that deadlocks shim DMA.
                         derivedTilingParams.spatialMRounds = (tileM_eff > 0 && tileM_eff < derivedTilingParams.tileRows)
                                                                  ? derivedTilingParams.tileRows / tileM_eff
                                                                  : 1;
