@@ -138,6 +138,16 @@ class AieGdb:
         self.aie_version = str(aie_version)
         self.json_dir = json_dir
         self.dry_run = dry_run
+        # Hard cap on raw aiedbg passthroughs (scan/show/reg/mem). An array-wide
+        # `scan dma` can block forever when a board run is holding the JTAG or
+        # the target/hw_server is unresponsive — without a timeout that hangs the
+        # caller (e.g. the MCP tool call, freezing the embedded LLM). Override via
+        # $AIEGDB_PASSTHROUGH_TIMEOUT.
+        try:
+            self.passthrough_timeout = float(
+                os.environ.get("AIEGDB_PASSTHROUGH_TIMEOUT", "120"))
+        except (TypeError, ValueError):
+            self.passthrough_timeout = 120.0
         # deeper scopes (None until pushed)
         self.tile = None       # dict {col, row, type}
         self.channel = None    # dict {direction, channel}
@@ -211,9 +221,17 @@ class AieGdb:
             print("  [dry-run] would execute: " + " ".join(cmd))
             return
         try:
-            subprocess.run(cmd)
+            subprocess.run(cmd, timeout=self.passthrough_timeout)
         except FileNotFoundError:
             print("Error: 'aiedbg' not found in PATH", file=sys.stderr)
+        except subprocess.TimeoutExpired:
+            # subprocess.run already SIGKILLed the child before re-raising.
+            print("Error: aiedbg timed out after %gs (%s). The JTAG link may be "
+                  "blocked \u2014 a board run can hold it, or the target/"
+                  "hw_server is unresponsive. Prefer a scoped read (e.g. "
+                  "'target tile C R' then 'dma status') over an array-wide "
+                  "'scan'." % (self.passthrough_timeout, " ".join(cmd[3:])),
+                  file=sys.stderr)
 
     def _reg_read(self, phys_col, row, off):
         """Decoded-path register read via aiediag (respects dry_run).

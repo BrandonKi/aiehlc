@@ -48,6 +48,8 @@ Protocol smoke test:               mcp dev src/tool/debug/aiemcp.py
 
 import os
 import re
+import socket
+import struct
 import sys
 import threading
 
@@ -63,6 +65,97 @@ import aiegdb  # noqa: E402
 from mcp.server.fastmcp import FastMCP  # noqa: E402
 
 mcp = FastMCP("aiegdb")
+
+# ── Simulator IPC register read (mirrors schedule_debug_server.py) ─────────
+# Used when AIEMCP_BACKEND=simulator + AEG_PS_IPC_DBG_SOCKET is set.
+_IPC_READ32   = 0x11
+_IPC_STATUS_OK = 0x00
+_IPC_REQ_FMT  = "<BxxxQI"    # 16 bytes
+_IPC_RESP_FMT = "<BxxxxxxxQ" # 16 bytes
+_IPC_REQ_SIZE  = struct.calcsize(_IPC_REQ_FMT)
+_IPC_RESP_SIZE = struct.calcsize(_IPC_RESP_FMT)
+
+
+def _ipc_recvall(sock, n):
+    buf = b""
+    while len(buf) < n:
+        chunk = sock.recv(n - len(buf))
+        if not chunk:
+            return None
+        buf += chunk
+    return buf
+
+
+def _sim_ipc_read32(dbg_socket_path, addr):
+    """Send one READ32 request over the IPC debug socket and return the value."""
+    try:
+        s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        s.settimeout(5.0)
+        s.connect(dbg_socket_path)
+        req = struct.pack(_IPC_REQ_FMT, _IPC_READ32, addr, 0)
+        s.sendall(req)
+        raw = _ipc_recvall(s, _IPC_RESP_SIZE)
+        s.close()
+        if raw is None or len(raw) < _IPC_RESP_SIZE:
+            return None
+        status, value = struct.unpack(_IPC_RESP_FMT, raw)
+        return int(value) if status == _IPC_STATUS_OK else None
+    except OSError:
+        return None
+
+
+def _sim_tile_addr(phys_col, row, offset, base_addr, col_shift, row_shift):
+    return base_addr + (phys_col << col_shift) + (row << row_shift) + offset
+
+
+def _make_sim_reg_read(dbg_socket, base, col_shift, row_shift):
+    """Return a _reg_read replacement that reads via IPC."""
+    def _sim_reg_read(self_gdb, phys_col, row, offset):
+        addr = _sim_tile_addr(phys_col, row, offset, base, col_shift, row_shift)
+        val = _sim_ipc_read32(dbg_socket, addr)
+        if val is None:
+            print(f"ipc: READ32 failed at 0x{addr:016x} (col={phys_col} row={row} off=0x{offset:x})",
+                  file=sys.stderr)
+        return val
+    return _sim_reg_read
+
+
+def _patch_gdb_for_simulator(gdb_instance):
+    """Monkeypatch gdb._reg_read and gdb._passthrough for simulator IPC reads.
+
+    Called when AIEMCP_BACKEND=simulator. After patching:
+    - Decoded-path reads (dma, pc, event, channels, bd) go via IPC READ32.
+    - Raw passthrough commands (reg read, mem read, scan) return an error
+      message instead of spawning aiedbg (which has no sim target).
+    """
+    dbg_socket = os.environ.get("AEG_PS_IPC_DBG_SOCKET", "").strip()
+    if not dbg_socket:
+        print("warning: AIEMCP_BACKEND=simulator but AEG_PS_IPC_DBG_SOCKET not set; "
+              "register reads will return None", file=sys.stderr)
+        return
+
+    base_s = os.environ.get("AEG_SIM_BASE_ADDR", "").strip()
+    col_shift_s = os.environ.get("AEG_SIM_COL_SHIFT", "").strip()
+    row_shift_s = os.environ.get("AEG_SIM_ROW_SHIFT", "").strip()
+    try:
+        base = int(base_s, 0) if base_s else 0
+        col_shift = int(col_shift_s) if col_shift_s else 25
+        row_shift = int(row_shift_s) if row_shift_s else 20
+    except ValueError:
+        print("warning: invalid AEG_SIM_* address params; using defaults",
+              file=sys.stderr)
+        base, col_shift, row_shift = 0, 25, 20
+
+    import types
+    sim_read = _make_sim_reg_read(dbg_socket, base, col_shift, row_shift)
+    gdb_instance._reg_read = types.MethodType(sim_read, gdb_instance)
+
+    def _blocked_passthrough(self_gdb, args):
+        cmd = " ".join(str(a) for a in args)
+        print(f"[simulator] passthrough '{cmd}' not supported via IPC; "
+              f"use decoded commands (dma, pc, event, channels, bd) instead.")
+
+    gdb_instance._passthrough = types.MethodType(_blocked_passthrough, gdb_instance)
 
 # ── strip ANSI color (aiediag disables color off-tty, but be defensive) ───────
 _ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
@@ -113,6 +206,10 @@ def _build_gdb():
         print("warning: could not resolve aie_version; falling back to 2ps",
               file=sys.stderr)
     gdb.aie_version = ver
+
+    # Patch for simulator IPC backend before returning.
+    if os.environ.get("AIEMCP_BACKEND", "").strip().lower() == "simulator":
+        _patch_gdb_for_simulator(gdb)
 
     return gdb
 
@@ -184,8 +281,11 @@ def _run(line):
 
 @mcp.tool()
 def aie_exec(cmd: str) -> dict:
-    """Run one aiegdb command line against the live AIE board and return its
+    """Run one aiegdb command line against the live AIE device and return its
     output plus the resulting scope.
+
+    Works for both hardware (via aiedbg/xsdb) and simulator (via IPC debug
+    socket). Check get_backend_status first to know which backend is active.
 
     The console is stateful and scoped: partition -> tile -> channel. Scope
     persists across calls, so descend with `target ...` first, then issue
@@ -202,8 +302,8 @@ def aie_exec(cmd: str) -> dict:
       pc                             core PC -> source line (linemap)
       event                          event-status regs (decoded)
       channels                       list this tile's DMA channels
-      reg read OFF | reg write OFF VAL | mem read ADDR LEN
-      scan dma|cores | tile list | show ...   (array-wide aiedbg passthrough)
+      reg read OFF | reg write OFF VAL | mem read ADDR LEN  [hardware only]
+      scan dma|cores | tile list | show ...   [hardware only, passthrough]
 
     Channel scope (direction/channel also auto-injected):
       dma status | status            decoded DMA status register
@@ -211,6 +311,10 @@ def aie_exec(cmd: str) -> dict:
       event                          per-channel DMA start/finish/error
       dma counter                    AIE perf counters (read-only)
       dma counter setup [finished|started]   (INTRUSIVE write)
+
+    Note: when backend is "simulator", raw passthrough commands (reg read,
+    mem read, scan) are not available — use decoded commands (dma, pc, event,
+    channels, bd) which read directly from the IPC debug socket.
 
     Example session:
       aie_exec("target tile 0 3")

@@ -79,8 +79,8 @@ host = f"{username}@{vek385ip}"
 
 # Configuration
 PALBOARD_SCRIPTS_DIR = f"/proj/xsjsswstaff/{username}/palboard_scripts"
-VEK385PDI = f"/home/{username}/aiehlc/vek385.pdi"
-# VEK385PDI = f"/home/{username}/aiehlc/new_vek385.pdi"
+# VEK385PDI = f"/home/{username}/aiehlc/vek385.pdi"
+VEK385PDI = f"/home/{username}/aiehlc/new_vek385.pdi"
 #XSDB_ALT_PATH = "/everest/set_vnc_bkup/vnc/t50/es1/tools/Labtools/9999.0/bin/xsdb"
 XSDB_ALT_PATH = "/proj/xbuilds/2025.2_daily_latest/installs/lin64/HEAD/Vitis/bin/xsdb"
 VITIS_SETTINGS = "/proj/xbuilds/2025.2_daily_latest/installs/lin64/HEAD/Vitis/settings64.sh"
