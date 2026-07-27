@@ -502,10 +502,9 @@ class AieGdb:
                         aiediag.SHIM_EVT_STATUS_REG1):
                 self._reg_read(pc, row, off)
         else:
-            regs4 = aiediag.read_event_status_4(
-                pc, row, aiediag.MEM_EVT_STATUS_REGS,
-                self.target, self.device, self.dry_run, sink=self._reg_trace)
-            if regs4 is not None:
+            regs4 = [self._reg_read(pc, row, off)
+                     for off in aiediag.MEM_EVT_STATUS_REGS]
+            if not all(v is None for v in regs4):
                 print(aiediag.format_core_mem_dma_events(pc, row, regs4))
 
     def _list_channels(self):
@@ -570,10 +569,19 @@ class AieGdb:
                   f"in provenance JSON")
             return
         bd_ids = [bd["bd_id"] for bd in ch.get("bd_chain", [])]
-        hw = aiediag.read_bd_hw_lengths(
-            self.phys_col, row, self.tile["type"], self.aie_version,
-            bd_ids, self.target, self.device, self.dry_run,
-            sink=self._reg_trace) if bd_ids else None
+        if bd_ids:
+            mask = aiediag.BD_LEN_MASK[aiediag._bd_type_key(
+                self.tile["type"], self.aie_version)]
+            hw = {}
+            for bd_id in bd_ids:
+                off = aiediag.bd_length_offset(
+                    self.tile["type"], self.aie_version, bd_id)
+                word0 = self._reg_read(self.phys_col, row, off)
+                hw[bd_id] = None if word0 is None else (word0 & mask) * 4
+            if all(v is None for v in hw.values()):
+                hw = None
+        else:
+            hw = None
         print(aiediag.format_bd_chain(ch, hw))
 
     def _channel_events(self):
@@ -583,9 +591,9 @@ class AieGdb:
         pc, row = self.phys_col, self.tile["row"]
         if ttype == "shim":
             shim_ev = self._load_shim_events()
-            bits = aiediag.read_shim_event_status(
-                pc, d, c, self.target, self.device, self.dry_run,
-                sink=self._reg_trace)
+            reg0 = self._reg_read(pc, 0, aiediag.SHIM_EVT_STATUS_REG0)
+            reg1 = self._reg_read(pc, 0, aiediag.SHIM_EVT_STATUS_REG1)
+            bits = aiediag.decode_shim_event_status(d, c, reg0, reg1)
             if bits:
                 print(aiediag.format_shim_event_status(pc, d, c, bits, shim_ev))
         else:
@@ -593,10 +601,9 @@ class AieGdb:
             if emap is None:
                 print(f"  no event map for {d}{c}")
                 return
-            regs4 = aiediag.read_event_status_4(
-                pc, row, aiediag.MEM_EVT_STATUS_REGS,
-                self.target, self.device, self.dry_run, sink=self._reg_trace)
-            if regs4 is None:
+            regs4 = [self._reg_read(pc, row, off)
+                     for off in aiediag.MEM_EVT_STATUS_REGS]
+            if all(v is None for v in regs4):
                 return
             started = aiediag._evt_active(emap["START_TASK"], regs4)
             finished_bd = aiediag._evt_active(emap["FINISHED_BD"], regs4)

@@ -216,6 +216,62 @@ def _build_gdb():
 
 _gdb = _build_gdb()
 _lock = threading.Lock()
+_current_backend = os.environ.get("AIEMCP_BACKEND", "hardware").strip().lower()
+
+
+def _read_backend_status():
+    """Read workdir/backend_status.json for live backend state.
+    Returns a dict or None if unavailable."""
+    json_dir = os.environ.get("AIEMCP_JSON_DIR", "").strip()
+    if not json_dir:
+        return None
+    path = os.path.join(json_dir, "backend_status.json")
+    try:
+        import json as _json
+        with open(path) as f:
+            return _json.load(f)
+    except (OSError, ValueError):
+        return None
+
+
+def _ensure_backend_current():
+    """Re-patch _gdb if backend_status.json shows a different backend than
+    what _gdb was built for. Called at the start of every _run()."""
+    global _current_backend
+    status = _read_backend_status()
+    if not status:
+        return
+    want = status.get("backend", "hardware").strip().lower()
+    if want == _current_backend:
+        return
+    # Backend changed — re-patch _gdb in place.
+    _current_backend = want
+    if want == "simulator":
+        dbg_socket = status.get("dbg_socket", "").strip()
+        if dbg_socket:
+            import os as _os
+            _os.environ["AEG_PS_IPC_DBG_SOCKET"] = dbg_socket
+            base_s = status.get("sim_base_addr", "")
+            col_s  = status.get("sim_col_shift", "")
+            row_s  = status.get("sim_row_shift", "")
+            if base_s: _os.environ["AEG_SIM_BASE_ADDR"] = str(base_s)
+            if col_s:  _os.environ["AEG_SIM_COL_SHIFT"] = str(col_s)
+            if row_s:  _os.environ["AEG_SIM_ROW_SHIFT"] = str(row_s)
+        _patch_gdb_for_simulator(_gdb)
+        print(f"[aiemcp] switched to simulator backend (socket={dbg_socket})",
+              file=sys.stderr)
+    else:
+        # Switching back to hardware — restore env-var target and rebuild gdb.
+        import types as _types
+        target = status.get("target", "").strip()
+        if target:
+            os.environ["AIEDBG_TARGET"] = target
+        # Remove IPC patches by restoring original methods from a fresh gdb.
+        fresh = _build_gdb()
+        _gdb._reg_read = fresh._reg_read
+        _gdb._passthrough = fresh._passthrough
+        print(f"[aiemcp] switched to hardware backend (target={target})",
+              file=sys.stderr)
 
 
 def _run(line):
@@ -227,6 +283,7 @@ def _run(line):
     *and* child-process output) and restore before returning. A lock serializes
     the fd swap because it must not interleave with other tool calls.
     """
+    _ensure_backend_current()
     with _lock:
         # Save the real stdio fds and the Python-level stream.
         saved_out_fd = os.dup(1)

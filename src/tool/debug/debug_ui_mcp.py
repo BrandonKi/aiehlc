@@ -227,6 +227,18 @@ def tile_info(col: int, row: int, section: str = "all") -> str:
     return "\n".join(lines)
 
 
+def _read_live_status() -> dict:
+    """Read backend_status.json from the debug server's workdir (if available)."""
+    json_dir = os.environ.get("DEBUGUI_JSON_DIR", "").strip()
+    if not json_dir:
+        return {}
+    try:
+        with open(os.path.join(json_dir, "backend_status.json")) as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return {}
+
+
 @mcp.tool()
 def get_backend_status() -> dict:
     """Return the currently active debug backend and its connection state.
@@ -252,28 +264,35 @@ def get_backend_status() -> dict:
     When backend is "hardware", use aie_exec / aie_scope to interact with the
     physical board via aiedbg. The target string identifies the xsdb endpoint.
     """
-    backend = os.environ.get("AIEMCP_BACKEND", "unknown").strip().lower()
-    dbg_socket = os.environ.get("AEG_PS_IPC_DBG_SOCKET", "").strip() or None
-    ipc_ready = backend == "simulator" and bool(dbg_socket)
-    target = os.environ.get("AIEDBG_TARGET", "").strip() or None
-    device = os.environ.get("AIEMCP_DEVICE", "").strip() or None
-    startcol = os.environ.get("AIEMCP_STARTCOL", "").strip() or None
-    aie_version = os.environ.get("AIEMCP_AIE_VERSION", "").strip() or None
+    # Prefer the live backend_status.json written by the debug server on every
+    # state change — this reflects current reality regardless of when this MCP
+    # process was spawned.  Fall back to env vars for the fields not in the file.
+    live = _read_live_status()
+    if not live:
+        live = {}
+
+    backend = live.get("backend") or os.environ.get("AIEMCP_BACKEND", "unknown").strip().lower()
+    dbg_socket = live.get("dbg_socket") or os.environ.get("AEG_PS_IPC_DBG_SOCKET", "").strip() or None
+    ipc_ready = bool(live.get("ipc_ready")) if "ipc_ready" in live else (backend == "simulator" and bool(dbg_socket))
+    target = live.get("target") or os.environ.get("AIEDBG_TARGET", "").strip() or None
+    device = live.get("device") or os.environ.get("AIEMCP_DEVICE", "").strip() or None
+    startcol = live.get("startcol") or os.environ.get("AIEMCP_STARTCOL", "").strip() or None
+    aie_version = live.get("aie_version") or os.environ.get("AIEMCP_AIE_VERSION", "").strip() or None
+    sim_log = live.get("sim_log") or ""
+    sim_applog = live.get("sim_applog") or ""
 
     if backend == "simulator":
         if ipc_ready:
-            note = ("Simulator is running. Live register reads are active via "
-                    "the IPC debug socket. Use aie_exec/aie_scope to read DMA, "
-                    "core, and event registers.")
+            note = ("Simulator is running and IPC debug socket is active. "
+                    "Live register reads are available via aie_exec/aie_scope.")
         else:
-            note = ("Simulator backend selected but IPC debug socket is not yet "
-                    "ready. Start the simulator from the Run button in the UI, "
-                    "then retry.")
+            note = ("Simulator backend selected but IPC debug socket not yet ready. "
+                    "Start the simulator from the Run button in the UI, then retry.")
     elif backend == "hardware":
         note = ("Hardware board backend. Live reads go through aiedbg/xsdb. "
                 "Use aie_exec/aie_scope to read DMA, core, and event registers.")
     else:
-        note = "Backend unknown — no debug_ui_config.json or server not started."
+        note = "Backend unknown — debug server may not be running."
 
     return {
         "backend": backend,
@@ -283,6 +302,8 @@ def get_backend_status() -> dict:
         "device": device,
         "startcol": startcol,
         "aie_version": aie_version,
+        "sim_log": sim_log,
+        "sim_applog": sim_applog,
         "note": note,
     }
 
@@ -464,6 +485,313 @@ def symbol_search(query: str, kinds: str = "") -> str:
         lines.append("  %-10s (%s,%s)  %-5s  %s  —  %s"
                      % (h["kind"], col_s, row_s, fi_s, h["label"], h["description"]))
     return "\n".join(lines)
+
+
+@mcp.tool()
+def get_design_overview() -> str:
+    """Return a high-level overview of the compiled AIE design: grid geometry,
+    all communication flows (producer→consumer), and the supply/demand balance
+    verdict for every flow.
+
+    Use this as the first call in any session to orient yourself before drilling
+    into tile_info or get_flow_detail. It is equivalent to reading the full
+    device map in the browser.
+
+    Returns structured text with three sections:
+      Grid      — tile geometry (columns, rows, shim/core row ranges, startcol)
+      Flows     — one line per comm_path: flow index, direction, producer GMIO,
+                  consumer tile(s), and any balance warning
+      Supply/demand — per-flow balanced/OVER-SUPPLY/UNDER-SUPPLY verdict
+    """
+    view = _load_view()
+    if view is None:
+        return ("error: schedule_view.json not found (looked in: %s)"
+                % ", ".join(_view_candidates()))
+
+    lines_out = []
+
+    # Grid geometry
+    grid = view.get("grid") or {}
+    lines_out.append("=== Grid geometry ===")
+    lines_out.append("  cols:     %s" % grid.get("cols"))
+    lines_out.append("  rows:     %s" % grid.get("rows"))
+    lines_out.append("  startcol: %s" % grid.get("startcol"))
+    shim = grid.get("shim_rows") or []
+    core = grid.get("core_rows") or []
+    if shim:
+        lines_out.append("  shim rows: %s" % shim)
+    if core:
+        lines_out.append("  core rows: %s" % core)
+
+    # Communication flows
+    comm_paths = view.get("comm_paths") or []
+    lines_out.append("")
+    lines_out.append("=== Communication flows (%d) ===" % len(comm_paths))
+    for p in comm_paths:
+        if not p:
+            continue
+        fi = p.get("flow_index")
+        direction = p.get("direction", "?")
+        stages = p.get("stages") or []
+        prod = next((s for s in stages if s.get("role") == "producer"), None)
+        cons = next((s for s in stages if s.get("role") == "consumer"), None)
+        prod_name = (prod or {}).get("gmio_name") or (prod or {}).get("config_ref") or "?"
+        cons_tile = ""
+        if cons:
+            ct = cons.get("tile") or {}
+            cons_tile = " tile(%s,%s)" % (ct.get("col", "?"), ct.get("row", "?"))
+        dma_tiles = p.get("dma_tiles") or []
+        if not cons_tile and dma_tiles:
+            cons_tile = " tiles(%s)" % ",".join("(%s,%s)" % (t[0], t[1]) for t in dma_tiles[:3])
+        lines_out.append("  f%-3s %-6s  %s → %s%s"
+                         % (fi, direction, prod_name, direction, cons_tile))
+
+    # Supply/demand summary
+    sd_list = view.get("supply_demand") or []
+    if sd_list:
+        lines_out.append("")
+        lines_out.append("=== Supply/demand balance ===")
+        for sd in sd_list:
+            if not sd:
+                continue
+            balanced = sd.get("balanced")
+            if balanced is False:
+                s, d = sd.get("supply_per_round"), sd.get("demand_per_round")
+                verdict = "OVER-SUPPLY" if (s or 0) > (d or 0) else "UNDER-SUPPLY"
+                lines_out.append("  f%s  %s  supply=%sB demand=%sB  [%s]"
+                                  % (sd.get("flow_index"), verdict, s, d, sd.get("note", "")))
+            else:
+                lines_out.append("  f%s  balanced  pattern=%s"
+                                  % (sd.get("flow_index"), sd.get("pattern")))
+
+    return "\n".join(lines_out)
+
+
+@mcp.tool()
+def get_flow_detail(flow_index: int) -> str:
+    """Return detailed routing and staging information for one communication flow.
+
+    This exposes what the browser shows in the net detail panel when you click
+    a flow arrow in the Device Map: producer stage, consumer stage, all hop
+    tiles, stream-switch connections, and BD contract strings.
+
+    Args:
+      flow_index: the f<N> index from tile_info, get_design_overview, or
+                  symbol_search (e.g. 0 for f0)
+
+    Returns a structured text block with producer, consumer, channel hops,
+    routing connections, and supply/demand detail for this specific flow.
+    """
+    view = _load_view()
+    if view is None:
+        return ("error: schedule_view.json not found (looked in: %s)"
+                % ", ".join(_view_candidates()))
+
+    comm_paths = view.get("comm_paths") or []
+    path = next((p for p in comm_paths
+                 if p and p.get("flow_index") == flow_index), None)
+    if path is None:
+        avail = [str(p["flow_index"]) for p in comm_paths if p and "flow_index" in p]
+        return ("error: flow_index %d not found. Available: %s"
+                % (flow_index, ", ".join(avail) or "none"))
+
+    out = ["=== Flow f%d  direction=%s ===" % (flow_index, path.get("direction", "?"))]
+
+    stages = path.get("stages") or []
+    for stage in stages:
+        role = stage.get("role", "?")
+        tile = stage.get("tile") or {}
+        gmio = stage.get("gmio_name") or stage.get("config_ref") or ""
+        contract = stage.get("contract") or ""
+        out.append("")
+        out.append("  [%s]  tile(%s,%s)%s%s"
+                   % (role, tile.get("col", "?"), tile.get("row", "?"),
+                      ("  gmio=" + gmio) if gmio else "",
+                      ("  contract=" + contract) if contract else ""))
+        hops = stage.get("hops") or []
+        for h in hops:
+            out.append("    hop: %s → %s%s"
+                       % (h.get("from", "?"), h.get("to", "?"),
+                          ("  [%s/%s]" % (h.get("hop_type"), h.get("shmem_kind"))
+                           if h.get("hop_type") else "")))
+
+    routing = path.get("routing_connections") or []
+    if routing:
+        out.append("")
+        out.append("  [stream-switch connections]")
+        for c in routing:
+            kind = c.get("kind", "?")
+            t = c.get("tile") or {}
+            if kind == "circuit_connect":
+                sl = c.get("slave") or {}
+                ms = c.get("master") or {}
+                out.append("    (%s,%s) %s/%s → %s/%s"
+                           % (t.get("col"), t.get("row"),
+                              sl.get("dir"), sl.get("idx"),
+                              ms.get("dir"), ms.get("idx")))
+            else:
+                out.append("    (%s,%s) %s" % (t.get("col"), t.get("row"), kind))
+
+    # Supply/demand for this flow
+    sd_list = view.get("supply_demand") or []
+    sd = next((s for s in sd_list if s and s.get("flow_index") == flow_index), None)
+    if sd:
+        out.append("")
+        out.append("  [supply/demand]")
+        out.append("    pattern=%s  supply=%sB/round  demand=%sB/round  balanced=%s"
+                   % (sd.get("pattern"), sd.get("supply_per_round"),
+                      sd.get("demand_per_round"), sd.get("balanced")))
+        if sd.get("note"):
+            out.append("    note: %s" % sd["note"])
+        for p in (sd.get("participants") or []):
+            loc = p.get("loc") or []
+            out.append("    (%s,%s) %s ch%s  bd_len=%s  fires=%s%s"
+                       % (loc[0] if len(loc) > 0 else "?",
+                          loc[1] if len(loc) > 1 else "?",
+                          p.get("io_direction"), p.get("channel"),
+                          p.get("bd_len"), p.get("fires"),
+                          "  [shim]" if p.get("is_shim") else ""))
+
+    return "\n".join(out)
+
+
+@mcp.tool()
+def get_sim_log(lines: int = 50) -> str:
+    """Return the last N lines of the simulator application log (ipc_app.log).
+
+    This is the stdout/stderr from the PS application running inside the AIE
+    simulator, equivalent to the simulator applog the browser tails in the Run
+    console. Use it to check for application output, errors, or OOB test results
+    when running in simulator mode.
+
+    For the board run log (hardware mode), use get_applog instead.
+
+    Args:
+      lines: number of lines to return from the end of the log (default: 50)
+    """
+    live = _read_live_status()
+    sim_applog = live.get("sim_applog") or os.environ.get("DEBUGUI_SIM_APPLOG", "").strip()
+    if not sim_applog:
+        return ("error: simulator applog path not set — start the debug server "
+                "with a simulator-capable config and activate the simulator")
+    if not os.path.isfile(sim_applog):
+        return "simulator applog not found at %s — start the simulator first" % sim_applog
+    try:
+        with open(sim_applog, "rb") as f:
+            raw = f.read()
+        text = raw.decode("utf-8", errors="replace")
+        tail = text.splitlines()
+        if len(tail) > lines:
+            tail = tail[-lines:]
+        return "\n".join(tail) if tail else "(simulator applog is empty)"
+    except OSError as e:
+        return "error reading simulator applog: %s" % e
+
+
+@mcp.tool()
+def get_applog(lines: int = 50) -> str:
+    """Return the last N lines of the application run log.
+
+    This is the same log the browser tails in the Run console panel. It contains
+    stdout/stderr from the application binary (simulator or hardware). Use it to
+    see what the running application printed, check for runtime errors, or confirm
+    that the application completed normally.
+
+    Args:
+      lines: number of lines to return from the end of the log (default: 50)
+
+    Returns the log tail as a string, or an error message if no log exists yet.
+    Logs are only present after a run has been started from the UI Run button.
+    """
+    live = _read_live_status()
+    # In simulator mode, the application log is ipc_app.log (sim_applog),
+    # not the hardware applog — use the live status to pick the right file.
+    backend = live.get("backend", "").strip().lower()
+    if backend == "simulator":
+        applog = live.get("sim_applog") or os.environ.get("DEBUGUI_SIM_APPLOG", "").strip()
+        source_note = "(simulator ipc_app.log)"
+    else:
+        applog = live.get("applog") or os.environ.get("DEBUGUI_APPLOG", "").strip()
+        source_note = "(hardware applog)"
+    if not applog:
+        return "error: applog path not set (start the debug server to configure it)"
+    if not os.path.isfile(applog):
+        return "applog not found at %s — start a run first" % applog
+    try:
+        with open(applog, "rb") as f:
+            raw = f.read()
+        text = raw.decode("utf-8", errors="replace")
+        tail = text.splitlines()
+        if len(tail) > lines:
+            tail = tail[-lines:]
+        result = "\n".join(tail) if tail else "(applog is empty)"
+        return "[source: %s path=%s]\n%s" % (source_note, applog, result)
+    except OSError as e:
+        return "error reading applog: %s" % e
+
+
+@mcp.tool()
+def get_ipc_log(lines: int = 100, side: str = "both") -> str:
+    """Return recent IPC transaction log entries from the simulator run.
+
+    The IPC logs record every request/response between the PS application
+    (ipc_app) and the AIE simulator over the Unix socket. Each row is a CSV
+    with columns: seq, ts_ns, side, cmd, arg1, arg2, status, value, note.
+
+    ts_ns is a CLOCK_MONOTONIC nanosecond timestamp — subtract the first row's
+    ts_ns to get elapsed time. The delta between a client row and its matching
+    server row shows the round-trip latency for that transaction.
+
+    Commands: WRITE32 / READ32 (register r/w), NPI_WRITE32 / NPI_READ32 (NPI
+    register r/w), WRITE_GM / READ_GM / ALLOC_GM / FREE_GM (global memory),
+    GRAPH_INIT (graph load + init sequence), START_PLIO, EXIT.
+
+    Use this to:
+    - Find the last completed transaction before a hang
+    - Measure per-transaction latency (ts_ns delta client→server)
+    - Identify which register or GM address a stall is waiting on
+    - Confirm GRAPH_INIT completed before DMA transactions start
+
+    Args:
+      lines: number of lines to return from the end (default: 100)
+      side:  "client", "server", or "both" (default: "both")
+    """
+    sim_dir = os.environ.get("DEBUGUI_SIM_APPLOG", "")
+    if sim_dir:
+        sim_dir = os.path.dirname(sim_dir)
+    if not sim_dir:
+        return "error: simulator not configured — start the debug server with a simulator config"
+
+    client_log = os.path.join(sim_dir, "ipc_client.log")
+    server_log = os.path.join(sim_dir, "ipc_server.log")
+
+    def _tail(path, n):
+        if not os.path.isfile(path):
+            return None, "(not found — run the simulator first)"
+        try:
+            with open(path, "rb") as f:
+                raw = f.read()
+            rows = raw.decode("utf-8", errors="replace").splitlines()
+            if len(rows) > n:
+                rows = rows[:1] + rows[-(n - 1):]  # keep header
+            return rows, None
+        except OSError as e:
+            return None, "error: %s" % e
+
+    parts = []
+    if side in ("client", "both"):
+        rows, err = _tail(client_log, lines)
+        if err:
+            parts.append("--- client IPC log ---\n" + err)
+        else:
+            parts.append("--- client IPC log (%s) ---\n%s" % (client_log, "\n".join(rows)))
+    if side in ("server", "both"):
+        rows, err = _tail(server_log, lines)
+        if err:
+            parts.append("--- server IPC log ---\n" + err)
+        else:
+            parts.append("--- server IPC log (%s) ---\n%s" % (server_log, "\n".join(rows)))
+    return "\n\n".join(parts) if parts else "(no logs found)"
 
 
 if __name__ == "__main__":

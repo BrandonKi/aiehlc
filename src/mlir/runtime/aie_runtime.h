@@ -72,17 +72,20 @@ XAie_DevInst *getOrCreateDeviceInstance(void);
  * on every compute tile at kernel launch, so a profiling host can read the
  * per-tile cycle budget after the run via __Runtime_core_perf_read_probe(). */
 #define AIE_DEBUG_FLAG_CORE_PERF_COUNTER (1 << 8)
+/* When set, enable informational runtime log output (AIEHLC_LOG).
+ * Usage: #pragma aie_debug_level(AIE_DEBUG_LOG) */
+#define AIE_DEBUG_LOG (1 << 9)
 #define AIE_DEBUG_HAS_FLAG(v, flag) (((v) & (flag)) != 0)
 extern int g_runtime_debug_level;
 
-/* Gate for high-volume informational runtime logs (per-BD / per-IO traces).
- * At debug level 0 the runtime stays quiet so it does not flood the (slow)
- * UART or pollute wall-clock profiling. Errors/failures stay unconditional.
- * Usage:  AIE_RT_LOG(printf("...", ...)); */
-#define AIE_RT_LOG_ENABLED() (AIE_DEBUG_LEVEL(g_runtime_debug_level) >= 1)
-#define AIE_RT_LOG(stmt)                                                                                                \
+/* Gate for informational runtime logs.
+ * Enable with: #pragma aie_debug_level(AIE_DEBUG_LOG)
+ * Errors/failures print unconditionally regardless of this flag.
+ * Usage:  AIEHLC_LOG(printf("...", args)); */
+#define AIEHLC_LOG_ENABLED() AIE_DEBUG_HAS_FLAG(g_runtime_debug_level, AIE_DEBUG_LOG)
+#define AIEHLC_LOG(stmt)                                                                                               \
     do {                                                                                                               \
-        if (AIE_RT_LOG_ENABLED()) {                                                                                    \
+        if (AIEHLC_LOG_ENABLED()) {                                                                                    \
             stmt;                                                                                                      \
         }                                                                                                              \
     } while (0)

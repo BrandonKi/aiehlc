@@ -2065,8 +2065,9 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
   #right { flex:1 1 0; min-width:200px; padding:16px; overflow:hidden;
            display:flex; flex-direction:column; }
   #panel { flex:1 1 0; overflow:auto; min-height:0; }
-  #rhsplitter { flex:0 0 6px; cursor:row-resize; background:#333; margin-top:8px;
-                border-top:1px solid #444; border-bottom:1px solid #444; }
+  #rhsplitter { display:none; flex:0 0 6px; cursor:row-resize; background:#333;
+                margin-top:8px; border-top:1px solid #444; border-bottom:1px solid #444; }
+  #right:has(#cmdconsole:not(.hide)) #rhsplitter { display:block; }
   #rhsplitter:hover, #rhsplitter.drag { background:#5a5a5a; }
   /* fixed default height + flex column so console output scrolls inside the
      frame instead of inflating it; drag #rhsplitter to resize. */
@@ -2331,38 +2332,52 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
   /* ID rules above (specificity 1,0,0) beat the base .hide (0,1,0); this
      ID-qualified rule (1,1,0) lets the tab switch actually hide a pane. */
   #conpane.hide, #llmpane.hide { display:none; }
-  /* LLM (embedded Claude Code) pane — mirrors #conterm/#conout/#conin. */
+  /* LLM (embedded Claude Code) pane */
   #llmterm { flex:1 1 0; display:flex; flex-direction:column; min-height:0;
              margin-top:6px; padding:6px; background:#111; border:1px solid #444;
              border-radius:4px; overflow:hidden; cursor:text; }
-  #llmout { flex:1 1 auto; min-height:0; overflow:auto; margin:0;
-            background:transparent; white-space:pre-wrap; word-break:break-word;
-            font-family:monospace; font-size:12px; line-height:1.4; }
-  /* LLM transcript syntax coloring (markers only). */
-  #llmout .llm-you       { color:#8ec; font-weight:bold; }
-  #llmout .llm-tool      { color:#7aa2f7; }
-  #llmout .llm-toolname  { color:#e0af68; font-weight:bold; }
-  #llmout .llm-toolresult{ color:#666; }
-  #llmout .llm-error     { color:#f7768e; font-weight:bold; }
-  #llmout .llm-file      { color:#9ece6a; }
-  #llmout .llm-line      { color:#e0af68; }
-  /* LLM markdown + fenced-code highlighting. */
-  #llmout .md-h        { color:#7dcfff; font-weight:bold; }
-  #llmout .md-bullet   { color:#7aa2f7; }
-  #llmout strong       { color:#c0caf5; font-weight:bold; }
-  #llmout .md-code     { background:#1b1b2b; color:#e0af68; padding:0 3px;
-                         border-radius:3px; }
-  #llmout .md-block    { background:#0d0d16; border:1px solid #2a2a3a;
-                         border-radius:4px; padding:6px 8px; margin:4px 0;
-                         overflow:auto; white-space:pre; }
-  #llmout .md-block code { background:none; padding:0; color:#c0caf5; }
-  #llmout .cm-keyword  { color:#bb9af7; }
-  #llmout .cm-string   { color:#9ece6a; }
-  #llmout .cm-comment  { color:#565f89; font-style:italic; }
-  #llmout .cm-number   { color:#ff9e64; }
-  #llminline { flex:0 0 auto; display:flex; align-items:flex-start; margin-top:6px;
-               border-top:1px solid #333; padding-top:6px; }
-  #llmprompt { color:#8ec; margin-right:6px; white-space:nowrap;
+  /* Scrolling message list */
+  #llmmsg { flex:1 1 0; min-height:0; overflow-y:auto; padding:2px 0; }
+  /* Per-message bubbles */
+  .llm-msg { margin:3px 0; padding:5px 8px; border-radius:3px;
+             font-family:monospace; font-size:12px; line-height:1.45;
+             white-space:pre-wrap; word-break:break-word; }
+  .llm-msg-you { background:#152015; border-left:2px solid #6ab; color:#cee; }
+  .llm-msg-ai  { background:transparent; color:#ccc; border-left:2px solid #333; }
+  .llm-msg-ctx { background:transparent; color:#555; font-style:italic;
+                 border-left:2px solid #2a2a2a; font-size:11px; }
+  /* Marker colors inside AI bubbles */
+  .llm-msg-ai .llm-you       { color:#8ec; font-weight:bold; }
+  .llm-msg-ai .llm-tool      { color:#7aa2f7; }
+  .llm-msg-ai .llm-toolname  { color:#e0af68; font-weight:bold; }
+  .llm-msg-ai .llm-toolresult{ color:#555; }
+  .llm-msg-ai .llm-error     { color:#f7768e; font-weight:bold; }
+  .llm-msg-ai .llm-file      { color:#9ece6a; }
+  .llm-msg-ai .llm-line      { color:#e0af68; }
+  /* Markdown inside AI bubbles */
+  .llm-msg-ai .md-h      { color:#7dcfff; font-weight:bold; display:block; margin-top:4px; }
+  .llm-msg-ai .md-bullet { color:#7aa2f7; }
+  .llm-msg-ai strong     { color:#c0caf5; font-weight:bold; }
+  .llm-msg-ai .md-code   { background:#1b1b2b; color:#e0af68; padding:0 3px; border-radius:3px; }
+  .llm-msg-ai .md-block  { background:#0d0d16; border:1px solid #2a2a3a; border-radius:3px;
+                            padding:5px 8px; margin:3px 0; overflow-x:auto; white-space:pre; }
+  .llm-msg-ai .md-block code { background:none; padding:0; color:#c0caf5; }
+  .llm-msg-ai .cm-keyword { color:#bb9af7; }
+  .llm-msg-ai .cm-string  { color:#9ece6a; }
+  .llm-msg-ai .cm-comment { color:#565f89; font-style:italic; }
+  .llm-msg-ai .cm-number  { color:#ff9e64; }
+  /* Thinking indicator */
+  #llmthink { padding:4px 8px 2px; }
+  .llm-dot  { display:inline-block; width:4px; height:4px; border-radius:50%;
+              background:#555; margin-right:3px;
+              animation:llmblink 1.1s ease-in-out infinite; }
+  .llm-dot:nth-child(2){ animation-delay:.18s; }
+  .llm-dot:nth-child(3){ animation-delay:.36s; }
+  @keyframes llmblink{ 0%,80%,100%{opacity:.15} 40%{opacity:.8} }
+  /* Input row */
+  #llminline { flex:0 0 auto; display:flex; align-items:flex-start; margin-top:5px;
+               border-top:1px solid #2a2a2a; padding-top:5px; }
+  #llmprompt { color:#6ab; margin-right:6px; white-space:nowrap;
                font-family:monospace; padding-top:2px; }
   #llmin { flex:1 1 auto; background:transparent; border:none; outline:none;
            color:#ddd; font-family:monospace; padding:0; resize:none;
@@ -2505,7 +2520,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
   <div id="panel" class="panel">
     <div class="placeholder">Click a tile or a net (in device map) to see details.</div>
   </div>
-  <div id="rhsplitter" class="hide" title="Drag to resize (panel / console)"></div>
+  <div id="rhsplitter" title="Drag to resize (panel / console)"></div>
   <div id="cmdconsole" class="hide">
     <div id="contabs">
       <span class="contab act" data-pane="conpane">aiegdb</span>
@@ -2531,9 +2546,10 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
       <div id="conhelp">Ask about this schedule, the applog, or the codebase.
         Tool calls appear as [tool: ...] markers. Streams live.</div>
       <div id="llmterm">
-        <div id="llmout">(LLM console &mdash; type a question and press Enter)</div>
+        <div id="llmmsg"></div>
+        <div id="llmthink" class="hide"><span class="llm-dot"></span><span class="llm-dot"></span><span class="llm-dot"></span></div>
         <div id="llminline"><span id="llmprompt">you&gt;</span><textarea id="llmin"
-          rows="1" placeholder="ask Claude Code (e.g. summarize this schedule), Enter to send, Shift+Enter for newline"></textarea>
+          rows="1" placeholder="ask about this design — Enter to send, Shift+Enter for newline"></textarea>
           <button id="llmsend">Send</button></div>
       </div>
       <div id="llmauth" class="hide">
@@ -3478,7 +3494,9 @@ function srPinTerm(raw){
   srSearchTerms.add(raw.trim());
   srRenderChips();
   srRenderResults();
-  buildDeviceMap(); // refresh LAYER 2.5 highlights
+  buildDeviceMap();
+  if(srSearchTerms.size>0)
+    llmPushCtx('[context] Search: pinned "'+[...srSearchTerms].join('", "')+'"');
 }
 
 function srRenderChips(){
@@ -3596,8 +3614,17 @@ function dmSelectNet(fi){
     c.classList.toggle('act',fi===-1||parseInt(c.dataset.fi)===fi);
   });
   buildDeviceMap();
-  if(fi===-1) renderNetDetail(null);
-  else renderNetDetail((DATA.comm_paths||[]).find(p=>p.flow_index===fi)||null);
+  if(fi===-1){ renderNetDetail(null); llmPushCtx(null); }
+  else {
+    const path=(DATA.comm_paths||[]).find(p=>p.flow_index===fi)||null;
+    renderNetDetail(path);
+    if(path){
+      const prod=path.producer?(path.producer.gmio_name||path.producer.logical_name||'?'):'?';
+      const cons=path.consumer?(path.consumer.gmio_name||path.consumer.logical_name||'?'):'?';
+      llmPushCtx('[context] Selected net/flow f'+fi+' — producer: '+prod+', consumer: '+cons
+        +(path.direction?' ('+path.direction+')':''));
+    }
+  }
 }
 
 function renderNetDetail(p){
@@ -4598,15 +4625,21 @@ function select(t, el, ch, badgeEl){
   setLLMContext(t, ch, codeFile);
 }
 
-// Prepare the pending LLM context string from the clicked tile/channel and its
-// code-piece file. Nothing is sent here; llmSend attaches it to the next user
-// message (deduped against the last attached context).
+// Set LLM context from anywhere; llmSend attaches it to the next message (deduped).
+function llmPushCtx(text){ LLM.ctx = text || null; }
+
+// Richer tile/channel context: include role, kernel, contract, port.
 function setLLMContext(t, ch, codeFile){
-  if (!codeFile){ LLM.ctx = null; return; }
-  const where = ch
-    ? 'tile ('+t.loc[0]+','+t.loc[1]+') channel '+ch.direction+ch.channel
-    : 'tile ('+t.loc[0]+','+t.loc[1]+')';
-  LLM.ctx = '[context] Currently inspecting '+where+'. The related code is '+codeFile;
+  const hl = (t && t.high_level) || {};
+  const loc = t ? 'tile ('+t.loc[0]+','+t.loc[1]+')' : '';
+  const parts = ['[context] Selected: '+loc
+    + (ch ? ' channel '+ch.direction+ch.channel : '')
+    + ' — type: '+(t&&t.type||'?')+', role: '+(hl.role||'?')];
+  if (hl.kernel) parts.push('kernel: '+hl.kernel);
+  if (ch && ch.contract) parts.push('contract: '+ch.contract);
+  if (ch && ch.kernel_port) parts.push('port: '+ch.kernel_port);
+  if (codeFile) parts.push('code: '+codeFile);
+  LLM.ctx = parts.join('; ');
 }
 
 // ─── aiegdb console (right-bottom, drives aiegdb.py --server) ─────────────────
@@ -4694,14 +4727,12 @@ document.getElementById('conreload').onclick = () => {
 };
 
 // ─── LLM console (embedded Claude Code, drives claude -p streaming) ───────────
-// The daemon runs one persistent `claude -p --output-format stream-json` process
-// in the repo root. llmSend writes one user turn; llmPoll tails the decoded
-// transcript buffer (reusing the applog-tail idiom) until the turn ends.
-// ctx: pending tile/file context prepared on the last tile/channel click.
-// ctxSent: the context string last attached to a message (for change-only dedup).
-const LLM = { off:0, poll:null, busy:false, text:'', ctx:null, ctxSent:null };
-// Escape HTML so model output (which may contain <, >, &, code) is inert before
-// we inject it as innerHTML for coloring.
+// One persistent `claude -p --output-format stream-json` process in the repo
+// root. Each user turn becomes a .llm-msg-you bubble; streamed reply tokens
+// accumulate into a .llm-msg-ai bubble via llmAppendToMsg.
+const LLM = { off:0, poll:null, busy:false, pendingId:null, ctx:null, ctxSent:null };
+let llmMessages = [];
+let llmMsgIdCtr = 0;
 function llmEscape(s){
   return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 }
@@ -4720,10 +4751,7 @@ function llmColorizeMarkers(s){
       + (line ? ':<span class="llm-line">' + line + '</span>' : ''));
   return s;
 }
-// Minimal offline highlighter for one fenced code block. `raw` is UNESCAPED
-// code; escape first, then one alternation regex colors comments/strings/
-// numbers/keywords. First-match-wins means a keyword inside a string or comment
-// is left alone (the string/comment alt starts earlier and consumes it).
+// Minimal offline highlighter for one fenced code block.
 const LLM_TOK = /(\/\*[\s\S]*?\*\/|\/\/[^\n]*|#\s[^\n]*)|("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')|\b(0x[0-9a-fA-F]+|\d+\.?\d*)\b|\b(if|else|elif|for|while|do|return|break|continue|switch|case|default|goto|int|float|double|char|bool|void|long|short|unsigned|signed|const|static|struct|class|public|private|protected|namespace|template|typename|typedef|enum|union|new|delete|sizeof|this|nullptr|true|false|NULL|auto|using|include|define|import|from|def|lambda|None|True|False|self|and|or|not|in|is|print|std)\b/g;
 function llmHighlightCode(raw){
   return llmEscape(raw.replace(/\n$/,'')).replace(LLM_TOK, (m,c,s,n,k) =>
@@ -4732,8 +4760,6 @@ function llmHighlightCode(raw){
     n ? '<span class="cm-number">'  + n + '</span>' :
     k ? '<span class="cm-keyword">' + k + '</span>' : m);
 }
-// Render one prose (non-code) segment: escape, apply light markdown (headings,
-// bullets, inline code, bold), then the marker colorizer.
 function llmProse(raw){
   let s = llmEscape(raw);
   s = s.replace(/^(#{1,6})\s+(.*)$/gm, (m,h,t) => '<span class="md-h">' + t + '</span>');
@@ -4742,28 +4768,54 @@ function llmProse(raw){
   s = s.replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>');
   return llmColorizeMarkers(s);
 }
-// Split the transcript on ``` fences: even segments are prose, odd are code
-// blocks (an unclosed trailing fence mid-stream is treated as code, so partial
-// /llm/poll chunks still render safely).
+// Split on ``` fences: even segments are prose, odd are code blocks.
+// Unclosed trailing fence mid-stream is treated as code for safe partial renders.
 function llmRenderText(raw){
   const parts = raw.split('```');
   let html = '';
   for (let i = 0; i < parts.length; i++){
     if (i % 2 === 0){ html += llmProse(parts[i]); continue; }
     const blk = parts[i], nl = blk.indexOf('\n');
-    const body = nl >= 0 ? blk.slice(nl + 1) : blk;   // drop optional ```lang line
+    const body = nl >= 0 ? blk.slice(nl + 1) : blk;
     html += '<pre class="md-block"><code>' + llmHighlightCode(body) + '</code></pre>';
   }
   return html;
 }
-function llmRender(){
-  const out = document.getElementById('llmout');
-  if (!out) return;
-  const atBottom = (out.scrollHeight - out.scrollTop - out.clientHeight) < 4;
-  out.innerHTML = llmRenderText(LLM.text);
-  if (atBottom) out.scrollTop = out.scrollHeight;
+
+// Append a new message bubble; returns its DOM id.
+function llmAddMsg(role, html){
+  const id = 'llmm' + (++llmMsgIdCtr);
+  const rec = {id, role, html, _raw:''};
+  llmMessages.push(rec);
+  const list = document.getElementById('llmmsg');
+  if (!list) return id;
+  const near = list.scrollHeight - list.scrollTop - list.clientHeight < 60;
+  const div = document.createElement('div');
+  div.id = id;
+  div.className = 'llm-msg llm-msg-' + role;
+  div.innerHTML = html;
+  list.appendChild(div);
+  if (near) list.scrollTop = list.scrollHeight;
+  return id;
 }
-function llmAppend(text){ LLM.text += text; llmRender(); }
+// Stream raw text into an existing AI bubble, re-rendering markdown each chunk.
+function llmAppendToMsg(id, rawChunk){
+  const rec = llmMessages.find(x => x.id === id);
+  if (!rec) return;
+  const list = document.getElementById('llmmsg');
+  const near = list ? (list.scrollHeight - list.scrollTop - list.clientHeight < 60) : false;
+  rec._raw += rawChunk;
+  rec.html = llmRenderText(rec._raw);
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.innerHTML = rec.html;
+  if (near && list) list.scrollTop = list.scrollHeight;
+}
+function llmShowThink(on){
+  const t = document.getElementById('llmthink');
+  if (t) t.classList.toggle('hide', !on);
+}
+
 function llmStopPoll(){ if (LLM.poll){ clearInterval(LLM.poll); LLM.poll = null; } }
 function llmPollOnce(){
   if (LLM.busy) return;
@@ -4771,49 +4823,53 @@ function llmPollOnce(){
   api('/llm/poll?offset=' + LLM.off).then(r => {
     if (r.auth){ llmLock(); return; }
     if (r.error){ llmStopPoll(); return; }
-    if (r.data) llmAppend(r.data);
+    if (r.data && LLM.pendingId){ llmShowThink(false); llmAppendToMsg(LLM.pendingId, r.data); }
     if (r.next != null) LLM.off = r.next;
-    if (r.active === false) llmStopPoll();   // turn finished
-  }).catch(() => { llmStopPoll(); llmAppend('\n[daemon offline (static mode)]\n'); })
+    if (r.active === false){ llmStopPoll(); LLM.pendingId = null; llmShowThink(false); }
+  }).catch(() => { llmStopPoll(); llmShowThink(false); })
     .finally(() => { LLM.busy = false; });
 }
 function llmSend(prompt){
   prompt = (prompt || '').trim();
   if (!prompt) return;
-  // Attach the prepared tile/file context ONLY when it changed since the last
-  // attach (first click, or a different tile/channel). Unchanged context is not
-  // re-sent, so repeat messages about the same selection stay clean.
+  llmStopPoll();
   let toSend = prompt;
   if (LLM.ctx && LLM.ctx !== LLM.ctxSent){
     toSend = LLM.ctx + '\n' + prompt;
     LLM.ctxSent = LLM.ctx;
-    llmAppend((LLM.text.endsWith('\n') || LLM.text === '' ? '' : '\n')
-              + LLM.ctx + '\n');
+    llmAddMsg('ctx', llmEscape(LLM.ctx));
   }
-  llmAppend((LLM.text.endsWith('\n') || LLM.text === '' ? '' : '\n')
-            + 'you> ' + prompt + '\n');
+  llmAddMsg('you', llmEscape(prompt));
+  const aiId = llmAddMsg('ai', '');
+  LLM.pendingId = aiId;
+  llmShowThink(true);
   api('/llm', {method:'POST', headers:{'Content-Type':'application/json'},
                body: JSON.stringify({prompt:toSend})})
     .then(r => {
       if (r.auth){ llmLock(); return; }
-      if (!r.ok){ llmAppend('\n[llm error: ' + (r.error || 'unknown') + ']\n'); return; }
+      if (!r.ok){ llmShowThink(false);
+        llmAppendToMsg(aiId, '[llm error: ' + (r.error || 'unknown') + ']'); return; }
       if (r.offset != null) LLM.off = r.offset;
       llmStopPoll();
       llmPollOnce();
       LLM.poll = setInterval(llmPollOnce, 700);
     })
-    .catch(() => llmAppend('\n[daemon offline: LLM tab needs schedule_debug_server]\n'));
+    .catch(() => { llmShowThink(false);
+      llmAppendToMsg(aiId, '[daemon offline: LLM tab needs schedule_debug_server]'); });
 }
 function llmReset(){
   llmStopPoll();
   api('/llm/reset', {method:'POST', headers:{'Content-Type':'application/json'}, body:'{}'})
     .then(r => {
       if (r && r.auth){ llmLock(); return; }
-      // New chat: forget which context was attached so it re-attaches next send.
-      LLM.ctxSent = null;
-      LLM.off = 0; LLM.text = '(new chat \u2014 context reset)\n'; llmRender();
+      LLM.ctxSent = null; LLM.off = 0; LLM.pendingId = null;
+      llmMessages = [];
+      const list = document.getElementById('llmmsg');
+      if (list) list.innerHTML = '';
+      llmShowThink(false);
+      llmAddMsg('ctx', 'new chat \u2014 context reset');
     })
-    .catch(() => llmAppend('\n[daemon offline: cannot reset]\n'));
+    .catch(() => { llmAddMsg('ctx', '[daemon offline: cannot reset]'); });
 }
 // ── LLM password modal ──────────────────────────────────────────────────────
 function llmAuthShow(){ const m=document.getElementById('llmauth');
@@ -4822,11 +4878,10 @@ function llmAuthShow(){ const m=document.getElementById('llmauth');
 function llmAuthHide(){ const m=document.getElementById('llmauth');
   if (m) m.classList.add('hide');
   const e=document.getElementById('llmautherr'); if (e) e.textContent=''; }
-// Lock the LLM tab: drop the (bad/absent) token, stop polling, show the modal.
 function llmLock(){
   sessionStorage.removeItem('LLM_AUTH');
   llmStopPoll();
-  llmAppend('\n[locked: enter password]\n');
+  llmAddMsg('ctx', '[locked: enter password]');
   llmAuthShow();
 }
 // Ask the daemon whether auth is required; prompt if so and no token stored yet.
@@ -4840,7 +4895,6 @@ function llmCheckAuth(){
   const snd = document.getElementById('llmsend');
   const rst = document.getElementById('llmreset');
   const term = document.getElementById('llmterm');
-  // Auto-grow the textarea to fit its content (capped by CSS max-height).
   function autoGrow(){
     if (!inp) return;
     inp.style.height = 'auto';
@@ -4852,7 +4906,6 @@ function llmCheckAuth(){
     if (v){ llmSend(v); inp.value=''; autoGrow(); }
   }
   if (inp) inp.addEventListener('keydown', e => {
-    // Enter sends; Shift+Enter inserts a newline (default textarea behavior).
     if (e.key === 'Enter' && !e.shiftKey){ e.preventDefault(); submitLLM(); }
   });
   if (inp) inp.addEventListener('input', autoGrow);
@@ -4863,8 +4916,6 @@ function llmCheckAuth(){
     if (sel && sel.toString()) return;
     if (inp) inp.focus();
   };
-  // Password modal: store the entered value as the session token, then hide.
-  // Validation is implicit on the next /llm call (a 401 re-locks).
   const authin = document.getElementById('llmauthin');
   const authok = document.getElementById('llmauthok');
   const doUnlock = () => {
@@ -4878,7 +4929,6 @@ function llmCheckAuth(){
   if (authin) authin.addEventListener('keydown', e => {
     if (e.key === 'Enter') doUnlock();
   });
-  // Prompt on first load if the daemon requires a password.
   llmCheckAuth();
 })();
 // Console tab switching: toggle .hide on panes + .act on the tabs.
@@ -5056,7 +5106,11 @@ function updateDeviceUI(){
   // the test step so the user explicitly enables Run/Stop for it.
   if (testconn) testconn.textContent = (dev === 'simulator') ? 'Activate' : 'Test connect';
   setConnStatus(has ? 'click "Test connect" to enable live features' : '');
-  setConnHint(false);                            // clear stale failure hint
+  setConnHint(false);
+  if(deviceSel&&has){
+    const opt=deviceSel.options[deviceSel.selectedIndex];
+    llmPushCtx('[context] Device selected: '+(opt?opt.text:dev));
+  }
 }
 if (deviceSel) deviceSel.onchange = updateDeviceUI;
 // Apply a successful connection: unlock Run test / Force stop / overlay and
@@ -5082,6 +5136,8 @@ function applyConnected(r){
     .then(sr => {
       if (sr && sr.ok){
         setConnStatus('connected \u2014 ' + (sr.target || ((r && r.detail) || 'ok')));
+        llmPushCtx('[context] Connected to '+(LIVE.host||LIVE.device)
+          +' \u2014 AIEDBG_TARGET: '+(sr.target||'unknown'));
         conSend('', false);   // spawn aiegdb with the new target; shows scope
       } else {
         setConnStatus('target switch failed: ' + ((sr && sr.detail) || 'unknown'));
@@ -5195,10 +5251,13 @@ function testConnect(){
       if (ss && ss.ipc_ready){
         applyConnected({detail: 'simulator IPC ready'});
       } else {
-        // Not ready yet — still unlock the board controls so Run sim works.
+        // Not ready yet — still unlock all live controls so Run sim works and
+        // the overlay checkbox is available once the sim is running.
         LIVE.connected = true;
         if (runbtn) runbtn.disabled = false;
         if (stopbtn) stopbtn.disabled = true;
+        if (liveToggle){ liveToggle.disabled = false;
+          liveToggle.closest('label').classList.remove('disabled'); }
         const box = document.getElementById('cmdconsole');
         if (box) box.classList.remove('hide');
         const rsp = document.getElementById('rhsplitter');
@@ -5208,6 +5267,8 @@ function testConnect(){
     }).catch(() => {
       LIVE.connected = true;
       if (runbtn) runbtn.disabled = false;
+      if (liveToggle){ liveToggle.disabled = false;
+        liveToggle.closest('label').classList.remove('disabled'); }
       setConnStatus('simulator activated (daemon offline)');
     });
     return;
@@ -5300,6 +5361,7 @@ document.getElementById('runbtn').onclick = () => {
           if (runbtn) runbtn.disabled = false; if (stopbtn) stopbtn.disabled = true; return; }
         con.textContent = '[simulator started \u2192 ' + (r.sim_log||'ipc_sim.log') + ']\n'
           + '[waiting for IPC debug socket\u2026]\n';
+        llmPushCtx('[context] Simulator run started');
         SIM.ipcReady = false;
         if (SIM.timer) clearInterval(SIM.timer);
         SIM.timer = setInterval(pollSimLog, 1000);
@@ -5322,6 +5384,7 @@ document.getElementById('runbtn').onclick = () => {
       // Run didn't actually start → re-enable debug (no pollLog will run).
       if (r.error){ con.textContent = 'run error: ' + r.error; setDebugEnabled(true); return; }
       con.textContent = '[run ' + r.run_id + ' started \u2192 ' + (r.applog||'applog') + ']\n';
+      llmPushCtx('[context] Hardware run '+r.run_id+' started on '+dev);
       if (LIVE.conTimer) clearInterval(LIVE.conTimer);
       LIVE.conTimer = setInterval(pollLog, 1000);
     })
@@ -5418,6 +5481,8 @@ function pollSimLog(){
     if (r.ipc_ready && !SIM.ipcReady){
       SIM.ipcReady = true;
       LIVE.device = 'simulator'; LIVE.host = '';
+      if (liveToggle){ liveToggle.disabled = false;
+        liveToggle.closest('label').classList.remove('disabled'); }
       setConnStatus('simulator IPC ready \u2014 live grid reads active');
     }
     setStatus('sim: ' + (r.running ? 'running' : 'stopped'));
@@ -5437,89 +5502,76 @@ api('/devices').then(r => {
     deviceSel.appendChild(opt);
   });
 }).catch(() => {});
-// Draggable splitter: resize left/right panes by dragging (default 50/50).
-(function(){
-  const sp = document.getElementById('splitter');
-  const left = document.getElementById('left');
-  if (!sp || !left) return;
-  let dragging = false;
-  sp.addEventListener('mousedown', e => {
-    dragging = true;
+// Splitter helper: pointer-capture drag with anchor-relative sizing.
+// onStart(e) → opaque state recorded at pointerdown.
+// onMove(e, state) → applies the drag delta using that state.
+function _makeSplitter(spId, bodyCls, onStart, onMove){
+  const sp = document.getElementById(spId);
+  if (!sp) return;
+  let state = null;
+  sp.addEventListener('pointerdown', e => {
+    if (e.button !== 0) return;
+    sp.setPointerCapture(e.pointerId);
     sp.classList.add('drag');
-    document.body.classList.add('resizing');
+    document.body.classList.add(bodyCls);
+    state = onStart(e);
     e.preventDefault();
   });
-  document.addEventListener('mousemove', e => {
-    if (!dragging) return;
-    // Clamp so neither pane collapses below its min-width.
-    const min = 200, max = window.innerWidth - 200 - sp.offsetWidth;
-    let w = Math.max(min, Math.min(max, e.clientX));
-    left.style.flex = '0 0 ' + w + 'px';
+  sp.addEventListener('pointermove', e => {
+    if (!sp.hasPointerCapture(e.pointerId)) return;
+    onMove(e, state);
   });
-  document.addEventListener('mouseup', () => {
-    if (!dragging) return;
-    dragging = false;
+  const _end = e => {
+    if (!sp.hasPointerCapture(e.pointerId)) return;
+    sp.releasePointerCapture(e.pointerId);
     sp.classList.remove('drag');
-    document.body.classList.remove('resizing');
-  });
-})();
+    document.body.classList.remove(bodyCls);
+    state = null;
+  };
+  sp.addEventListener('pointerup', _end);
+  sp.addEventListener('pointercancel', _end);
+}
 
-// Draggable horizontal splitter: resize the top-left / bottom-left regions.
+// Left/right pane splitter.
 (function(){
-  const sp = document.getElementById('lhsplitter');
-  const top = document.getElementById('lefttop');
   const left = document.getElementById('left');
-  if (!sp || !top || !left) return;
-  let dragging = false;
-  sp.addEventListener('mousedown', e => {
-    dragging = true;
-    sp.classList.add('drag');
-    document.body.classList.add('vresizing');
-    e.preventDefault();
-  });
-  document.addEventListener('mousemove', e => {
-    if (!dragging) return;
-    // Clamp so neither region collapses below a usable height.
-    const rect = left.getBoundingClientRect();
-    const min = 80, max = rect.height - 80 - sp.offsetHeight;
-    let h = Math.max(min, Math.min(max, e.clientY - rect.top));
-    top.style.flex = '0 0 ' + h + 'px';
-  });
-  document.addEventListener('mouseup', () => {
-    if (!dragging) return;
-    dragging = false;
-    sp.classList.remove('drag');
-    document.body.classList.remove('vresizing');
-  });
+  const sp   = document.getElementById('splitter');
+  if (!left || !sp) return;
+  _makeSplitter('splitter', 'resizing',
+    e => ({ x: e.clientX, w: left.getBoundingClientRect().width }),
+    (e, s) => {
+      const min = 200, max = window.innerWidth - 200 - sp.offsetWidth;
+      left.style.flex = '0 0 ' + Math.max(min, Math.min(max, s.w + e.clientX - s.x)) + 'px';
+    });
 })();
 
-// Draggable splitter for the right pane: resize the command-console frame.
+// Top/bottom left-pane splitter.
 (function(){
-  const sp = document.getElementById('rhsplitter');
-  const con = document.getElementById('cmdconsole');
+  const top  = document.getElementById('lefttop');
+  const left = document.getElementById('left');
+  const sp   = document.getElementById('lhsplitter');
+  if (!top || !left || !sp) return;
+  _makeSplitter('lhsplitter', 'vresizing',
+    e => ({ y: e.clientY, h: top.getBoundingClientRect().height }),
+    (e, s) => {
+      const rect = left.getBoundingClientRect();
+      const min = 80, max = rect.height - 80 - sp.offsetHeight;
+      top.style.flex = '0 0 ' + Math.max(min, Math.min(max, s.h + e.clientY - s.y)) + 'px';
+    });
+})();
+
+// Panel/console right-pane splitter.
+// Dragging up (negative dy) grows the console; dragging down shrinks it.
+(function(){
+  const con   = document.getElementById('cmdconsole');
   const right = document.getElementById('right');
-  if (!sp || !con || !right) return;
-  let dragging = false;
-  sp.addEventListener('mousedown', e => {
-    dragging = true;
-    sp.classList.add('drag');
-    document.body.classList.add('vresizing');
-    e.preventDefault();
-  });
-  document.addEventListener('mousemove', e => {
-    if (!dragging) return;
-    // Console height = distance from cursor to the bottom of the right pane.
-    const rect = right.getBoundingClientRect();
-    const min = 80, max = rect.height - 120;
-    let h = Math.max(min, Math.min(max, rect.bottom - e.clientY));
-    con.style.flex = '0 0 ' + h + 'px';
-  });
-  document.addEventListener('mouseup', () => {
-    if (!dragging) return;
-    dragging = false;
-    sp.classList.remove('drag');
-    document.body.classList.remove('vresizing');
-  });
+  if (!con || !right) return;
+  _makeSplitter('rhsplitter', 'vresizing',
+    e => ({ y: e.clientY, h: con.getBoundingClientRect().height }),
+    (e, s) => {
+      const min = 80, max = right.getBoundingClientRect().height - 120;
+      con.style.flex = '0 0 ' + Math.max(min, Math.min(max, s.h - (e.clientY - s.y))) + 'px';
+    });
 })();
 
 // Served over HTTP by the daemon: leave live controls gated on device choice
@@ -5561,7 +5613,7 @@ function probeLLM(){
     const tab = document.querySelector('#contabs .contab[data-pane="llmpane"]');
     if (tab) tab.click();
     // Show any transcript already buffered (e.g. after a page reload).
-    if (r.data){ LLM.text = r.data; llmRender(); }
+    if (r.data){ llmAddMsg('ai', llmRenderText(r.data)); }
     if (r.next != null) LLM.off = r.next;
   }).catch(() => {});   // no daemon → stay static
 }

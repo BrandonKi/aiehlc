@@ -70,24 +70,23 @@ extern void __Runtime_wait_io_iters(unsigned long long *iters);
 //   win_a: A[M,K] -> d1=TILE_M rows, d2=KCHUNK K-elements, uint32, row-major
 //   win_b: B[N,K] -> d1=TILE_N N-elements, d2=KCHUNK K-elements, uint32, col-major
 //   win_c: C[M,N] -> d1=TILE_M rows, d2=TILE_N cols, uint32
-constexpr aie::GemmSpace RowBA = {
-    .policy = {.map = {.act = aie::Pattern::Broadcast, .layout = aie::Layout::Row},
-               .mat = {.pad = aie::PadMaterialize::DDR, .im2col = aie::Im2col::None},
-               .sched = {.pp_depth = 2, .l1_budget = aie::Bytes{4096}}},
-    .d1 = {.tile_size = TILE_M, .stride = TILE_M, .fullsize = M, .pad_hi = 0, .pad_lo = 0},
-    .d2 = {.tile_size = KCHUNK, .stride = KCHUNK, .fullsize = K, .pad_hi = 0, .pad_lo = 0}};
+constexpr aie::GemmSpace RowBA = {.policy = {.map = {.act = aie::Pattern::Broadcast, .layout = aie::Layout::Row},
+                                             .mat = {.pad = aie::PadMaterialize::DDR, .im2col = aie::Im2col::None},
+                                             .sched = {.pp_depth = 2, .l1_budget = aie::Bytes{4096}}},
+                                  .d1 = {.fullsize = M, .tile_size = TILE_M, .stride = TILE_M},
+                                  .d2 = {.fullsize = K, .tile_size = KCHUNK, .stride = KCHUNK}};
 // Col-major B (same as aiehlc baseline ColBB): d1=TILE_N N-tiles, d2=KCHUNK K-chunks
 constexpr aie::GemmSpace ColBB = {.policy = {.map = {.wgt = aie::Pattern::Broadcast, .layout = aie::Layout::Col},
                                              .mat = {.pad = aie::PadMaterialize::DDR, .im2col = aie::Im2col::None},
                                              .sched = {.pp_depth = 2, .l1_budget = aie::Bytes{4096}}},
-                                  .d1 = {.tile_size = TILE_N, .stride = TILE_N, .fullsize = N},
-                                  .d2 = {.tile_size = KCHUNK, .stride = KCHUNK, .fullsize = K}};
+                                  .d1 = {.fullsize = N, .tile_size = TILE_N, .stride = TILE_N},
+                                  .d2 = {.fullsize = K, .tile_size = KCHUNK, .stride = KCHUNK}};
 constexpr aie::GemmSpace LtoR_Merge = {
     .policy = {.map = {.layout = aie::Layout::Row, .merge_order = aie::Flow::LeftToRight},
                .mat = {.pad = aie::PadMaterialize::DDR, .im2col = aie::Im2col::None},
                .sched = {.pp_depth = 2, .l1_budget = aie::Bytes{4096}}},
-    .d1 = {.tile_size = TILE_M, .stride = TILE_M, .fullsize = M},
-    .d2 = {.tile_size = TILE_N, .stride = TILE_N, .fullsize = N}};
+    .d1 = {.fullsize = M, .tile_size = TILE_M, .stride = TILE_M},
+    .d2 = {.fullsize = N, .tile_size = TILE_N, .stride = TILE_N}};
 
 // ─── KERNEL: per-tile uint32 GEMM — OOB mmul_gemm.h port (exp60) ─────────────
 //
@@ -256,7 +255,7 @@ int main() {
     unsigned long long pc_init0 = __ps_pmccntr();
     aieSetDevice(0);
     aieArray device;
-    aieMesh mesh = device.partition({0, 3, 0, 5}, HW_ROWS, HW_COLS);
+    aieMesh mesh = device.partition({0, 3, 0, 6}, HW_ROWS, HW_COLS);
     unsigned long long pc_init1 = __ps_pmccntr();
 
     unsigned long long pc_setup0 = __ps_pmccntr();

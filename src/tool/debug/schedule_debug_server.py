@@ -298,6 +298,11 @@ class DebugState:
         self._llm_buf = ""             # decoded transcript (browser tails this)
         self._llm_active = False       # True while a turn is being generated
         self._llm_lock = threading.Lock()
+        self._llm_log_dir = self.workdir  # dir where per-session logs are written
+        self._llm_log_fh = None          # open file handle for the current session log
+        self._llm_log_in_asst = False    # True after first text delta of a turn
+        self._llm_system_prompt_text = None  # prepended to first user turn
+        self._llm_first_turn = True      # True until first message is sent
 
         # Path to the auto-generated MCP config handed to the claude subprocess
         # via --mcp-config (written lazily by _write_mcp_config; cleaned up on
@@ -546,9 +551,8 @@ class DebugState:
                                 self._sim_ipc_ready = True
                             print(f"[sim] IPC debug socket ready → {dbg_path}",
                                   flush=True)
-                            # Invalidate the MCP config so the next LLM call
-                            # gets a fresh config with the IPC socket path.
                             self._invalidate_mcp_config()
+                            self._write_backend_status()
                             break
                 except OSError:
                     pass
@@ -562,9 +566,8 @@ class DebugState:
             if self._sim_run_id == run_id:
                 self._sim_ipc_ready = False
                 self._sim_dbg_socket = None
-        # Invalidate MCP config so the next LLM call no longer advertises an IPC
-        # socket that no longer exists.
         self._invalidate_mcp_config()
+        self._write_backend_status()
 
     def start_sim(self):
         """Spawn runsim_ipc.sh <sim_example_dir>, stream output to sim_log,
@@ -595,6 +598,12 @@ class DebugState:
             self._sim_run_id += 1
             run_id = self._sim_run_id
             cmd = ["/usr/bin/env", "bash", self.sim_script, self.sim_example_dir]
+            # Truncate the PS app log so the new run starts clean.
+            if self.sim_applog:
+                try:
+                    open(self.sim_applog, "w").close()
+                except OSError:
+                    pass
             try:
                 fh = open(self.sim_log, "w")
             except OSError as e:
@@ -1018,6 +1027,10 @@ class DebugState:
                         pass
                 self._gdb_proc = None
         self._invalidate_mcp_config()
+        # Reset the LLM subprocess so the next claude -p spawn picks up the new
+        # MCP config (which embeds AIEDBG_TARGET for the just-selected board).
+        if self.llm_enabled:
+            self.llm_reset()
         return {"ok": True, "target": self.target}
 
     # ---- Claude Code (LLM) streaming subprocess --------------------------
@@ -1030,10 +1043,25 @@ class DebugState:
         the browser must supply X-LLM-Auth to use the LLM endpoints."""
         return bool(self.llm_enabled and self.llm_password)
 
+    def _llm_log_write(self, text):
+        """Write text to the session log only (not the browser buffer). Caller holds lock."""
+        if self._llm_log_fh:
+            try:
+                self._llm_log_fh.write(text)
+                self._llm_log_fh.flush()
+            except OSError:
+                pass
+
     def _llm_append(self, text):
-        """Thread-safe append of decoded text to the transcript buffer."""
+        """Thread-safe append of decoded text to the transcript buffer and log."""
         with self._llm_lock:
             self._llm_buf += text
+            if self._llm_log_fh:
+                try:
+                    self._llm_log_fh.write(text)
+                    self._llm_log_fh.flush()
+                except OSError:
+                    pass
 
     def _invalidate_mcp_config(self):
         """Delete the cached MCP config file so the next LLM call rewrites it.
@@ -1049,6 +1077,42 @@ class DebugState:
                 os.unlink(old_cfg)
             except OSError:
                 pass
+
+    def _write_backend_status(self):
+        """Write workdir/backend_status.json with live backend state.
+
+        Called whenever backend changes (sim IPC ready/gone). The debugui MCP
+        tool reads this file instead of frozen env vars, so get_backend_status()
+        always reflects current state regardless of when the LLM was spawned.
+        """
+        with self._sim_lock:
+            sim_ready = self._sim_ipc_ready
+            dbg_socket = self._sim_dbg_socket
+        backend = "simulator" if sim_ready else "hardware"
+        addr_params = self._sim_addr_params  # (base, col_shift, row_shift) or None
+        data = {
+            "backend": backend,
+            "ipc_ready": sim_ready,
+            "dbg_socket": dbg_socket or "",
+            "target": self.target or "",
+            "device": self.device or "",
+            "startcol": self.startcol,
+            "aie_version": str(self.aie_version),
+            "sim_log": self.sim_log or "",
+            "sim_applog": self.sim_applog or "",
+            "applog": self.applog,
+            "sim_base_addr": str(addr_params[0]) if addr_params else "",
+            "sim_col_shift": str(addr_params[1]) if addr_params else "",
+            "sim_row_shift": str(addr_params[2]) if addr_params else "",
+        }
+        path = os.path.join(self.workdir, "backend_status.json")
+        try:
+            tmp = path + ".tmp"
+            with open(tmp, "w") as f:
+                json.dump(data, f, indent=2)
+            os.replace(tmp, path)
+        except OSError as e:
+            print(f"warning: could not write backend_status.json: {e}", file=sys.stderr)
 
     def _write_mcp_config(self):
         """Write a temp .mcp.json registering the MCP servers the LLM tab uses,
@@ -1111,6 +1175,8 @@ class DebugState:
             "AIEMCP_JSON_DIR": self.workdir,
             "AIEMCP_BACKEND": want_backend,
             "AIEDBG_TARGET": self.target or "",
+            "DEBUGUI_APPLOG": self.applog,
+            "DEBUGUI_SIM_APPLOG": self.sim_applog or "",
         }
         if sim_ready and dbg_socket:
             debugui_env["AEG_PS_IPC_DBG_SOCKET"] = dbg_socket
@@ -1185,6 +1251,270 @@ class DebugState:
         return ok, ("scope tool responded" if ok else
                     "claude ran but aie_scope output not detected")
 
+    def _llm_system_prompt(self):
+        """Build the system prompt describing the debug UI context and available tools."""
+        target_str = self.target or "not connected"
+        backend_str = "hardware" if self.target else "simulator"
+        sim_avail = bool(self.sim_script)
+
+        # Summarise the schedule if loaded.
+        view = None
+        view_path = os.path.join(self.workdir, "schedule_view.json")
+        if os.path.isfile(view_path):
+            try:
+                with open(view_path) as f:
+                    view = json.load(f)
+            except (OSError, ValueError):
+                view = None
+
+        grid_summary = ""
+        if view:
+            grid = view.get("grid") or {}
+            n_flows = len(view.get("comm_paths") or [])
+            n_tiles = len(view.get("tiles") or [])
+            grid_summary = (
+                f"\nThe loaded design has {n_tiles} tiles "
+                f"({grid.get('cols')} cols × {grid.get('rows')} rows, "
+                f"startcol={grid.get('startcol')}), {n_flows} communication flows."
+            )
+
+        return f"""\
+You are an embedded AIE (AI Engine) debug assistant running inside the naiebaremetal \
+debug UI — a browser-based schedule viewer and live debug tool for AMD Versal AIE designs.
+
+## Your primary purpose: live AIE debugging
+
+Your job is to help diagnose real failures and performance problems in AIE designs \
+running on hardware or the simulator. This means actively reading live register state, \
+not just describing the static schedule.
+
+When a user reports a hang, incorrect output, DMA stall, lock contention, core fault, \
+or unexpected behaviour, your default response is to **go read the hardware**: use \
+`aie_exec` to check DMA status, BD descriptors, lock state, core PC, and event \
+registers on the relevant tiles. Cross-reference what the live registers say against \
+what the compiled schedule expects, and tell the user concisely what is wrong and why.
+
+Typical debug scenarios you should handle proactively:
+- **DMA stall / hang**: check `dma status` on producer and consumer tiles; read BDs \
+  to find the stalled descriptor; check lock state; identify whether it is a supply \
+  or demand problem.
+- **Wrong output / data corruption**: check BD address and length against the schedule; \
+  verify byte counters with `dma counter`; check for wrap/offset errors.
+- **Core fault / PC stuck**: read `pc` and `event` on the core tile; compare PC to \
+  known kernel addresses via `symbol_search`.
+- **IPC / stream deadlock**: trace the flow with `get_flow_detail`, then walk each hop \
+  checking DMA enables and BD queue depth.
+- **Performance**: use BD counters and the supply/demand verdict from `tile_info` to \
+  identify the bottleneck stage.
+
+Always prefer concrete register evidence over speculation. If you are not connected \
+to hardware or the simulator, say so and explain what you would check once connected.
+
+## Your role (overview)
+Help the user understand their compiled AIE design, interpret DMA schedule data, \
+diagnose performance issues (supply/demand imbalance, BD chain misconfiguration), \
+and control live hardware or simulator sessions. You have direct access to the compiled \
+schedule and live register state via MCP tools.
+
+## The debug UI — what the user sees
+
+The browser is divided into two halves:
+
+**Left panel — AIE tile grid (Schedule View)**
+A grid of clickable tiles representing the AIE array. Each cell shows:
+- Tile type (shim / mem tile / core)
+- DMA channel badges (click to select a specific channel)
+- Colour coding: contract balance status (green=OK, amber/red=imbalance)
+Clicking a tile or channel badge opens its detail panel (right side) and \
+pre-loads context for your next message.
+
+**Right panel — tile detail**
+Shows three sections (High / Middle / Low) for the selected tile:
+- High: role, kernel name, transfer summary, supply/demand verdict, channel↔kernel arg map
+- Middle: dfschedule IR slice
+- Low: attributed host.cc source lines
+
+**Right panel — Device Map tab**
+An SVG map showing the physical AIE array and communication paths (flows). \
+Each coloured arc or arrow is one DMA flow (f0, f1, …). Clicking a flow arc \
+highlights all tiles it touches and opens a net detail panel. \
+The "All nets / f0 / f1 …" chip buttons filter which flows are highlighted.
+
+**Bottom-right pane — three tabs**
+
+1. **aiegdb** — interactive AIE debug console. Type commands like `dma status`, \
+`bd 0`, `pc`, `event`, `target tile 4 3`, `target channel S2MM 0`. \
+Use `help` for the full command reference.
+
+2. **LLM (this chat)** — you. The user can ask questions; clicking a tile or \
+flow first automatically prepends context to the next message you receive.
+
+3. **Search** — symbol search across the compiled design. Type any kernel name, \
+window, net ID, buffer symbol, BD length, flow index, or GMIO name. \
+Matching tiles and flows are highlighted on the grid.
+
+**Top-right — Run controls**
+- Device selector: choose "Simulator" or a hardware board (e.g. VEK385 portobello13)
+- Board hostname field (hardware only)
+- "Test connect" / "Activate" — probe the JTAG or IPC connection; \
+  must succeed before Run/overlay are enabled
+- "Run test" — flash BOOT.BIN (hardware) or start the simulator binary; \
+  streams stdout to the Run console below
+- "Live status overlay" — when checked, polls DMA/core/event registers \
+  every 2 s and overlays colour on the grid tiles
+
+**Current session state**
+- Working directory: {self.workdir}{grid_summary}
+- Debug target: {target_str}
+- Backend: {backend_str}{"  (simulator available)" if sim_avail else ""}
+
+## MCP tools available to you
+
+### Static schedule tools (debugui server)
+- `get_design_overview()` — grid geometry, all flows, supply/demand summary. \
+  **Call this first** in any new session.
+- `tile_info(col, row, section)` — full tile detail (high/mid/low). \
+  section: "hi" | "mid" | "lo" | "all"
+- `tile_list()` — list all tiles with type and role
+- `get_flow_detail(flow_index)` — producer/consumer stages, hop routing, \
+  stream-switch connections for one flow
+- `symbol_search(query, kinds)` — find kernels, windows, buffers, nets, \
+  flows, GMIOs by substring. kinds: kernel,window,buffer,contract,bd_len,net,flow,gmio,port
+- `get_backend_status()` — current backend, AIEDBG_TARGET, IPC readiness
+- `get_applog(lines)` — last N lines of the hardware run log
+- `get_sim_log(lines)` — last N lines of the simulator application log (ipc_app.log)
+- `get_ipc_log(lines, side)` — recent IPC transaction CSV log; side="client"|"server"|"both"
+
+### Live register tools (aiegdb server — hardware or simulator IPC)
+- `aie_scope()` — show current scope (partition/tile/channel)
+- `aie_exec(cmd)` — run one aiegdb command. Key commands:
+    dma status         — DMA channel enable/disable, BD queue state
+    bd <id>            — BD descriptor detail (addr, len, lock, next_bd)
+    dma counter        — DMA MM2S/S2MM byte counters
+    pc                 — core program counter
+    event              — core event status
+    target tile C R    — navigate to tile (C, R)
+    target channel DIR N — navigate to DMA channel
+    up / top           — navigate to parent scope
+- `aie_commands()` — list commands valid at current scope
+- `aie_help()` — full aiegdb command reference
+
+## PS process and simulator debugging
+
+The simulator run has two processes:
+- **ipc_app** (PS client): `{self.sim_example_dir + "/ipc/ipc_app" if self.sim_example_dir else "<sim_example_dir>/ipc/ipc_app"}` \
+  Drives graph init, GMIO transfers, and result checks. \
+  stdout/stderr → `get_sim_log()` (tails `ipc_app.log`).
+- **aiesimulator** (server): Synopsys AIE functional simulator. \
+  stdout → `ipc_sim.log` (shown in the Run console). \
+  Receives `WRITE32`/`READ32`/`WRITE_GM` etc. from ipc_app over a Unix socket.
+
+### Finding what the simulator run is currently doing
+
+To check whether the simulator is still running and what it last did:
+1. Call `get_sim_log(lines=20)` — last 20 lines of `ipc_app.log` (PS app output).
+2. Call `get_ipc_log(lines=20)` — last 20 IPC transactions; the final client entry \
+   is the transaction ipc_app is currently blocked waiting for a response to.
+3. The simulator PID file is at: \
+   `{self.sim_example_dir + "/ipc_sim.pid" if self.sim_example_dir else "<sim_example_dir>/ipc_sim.pid"}`
+
+### Inspecting what the PS process is doing (hung/stalled)
+
+When ipc_app appears hung, read its kernel wait state from /proc \
+(use `aie_exec` with a bash command, or the aiegdb console Bash tab):
+
+```bash
+# Simulator PID:
+cat {self.sim_example_dir + "/ipc_sim.pid" if self.sim_example_dir else "<sim_example_dir>/ipc_sim.pid"}
+
+# ipc_app PID (find via socket or binary name):
+pgrep -f ipc_app
+
+# What syscall is the main thread blocking on?
+cat /proc/<ipc_app_pid>/wchan
+
+# All threads:
+for tid in $(ls /proc/<ipc_app_pid>/task/); do echo "=== tid $tid ==="; cat /proc/<ipc_app_pid>/task/$tid/wchan; echo; done
+
+# Stack trace (if perf_event_paranoid allows):
+cat /proc/<ipc_app_pid>/task/<tid>/stack
+```
+
+Common wchan values:
+- `unix_stream_data_wait` — blocked in `recv()` waiting for simulator ack (normal mid-transaction)
+- `futex_wait_queue_me` — waiting on a mutex/condvar (normal for idle sim threads)
+- `ep_poll` — epoll_wait (normal for sim's socket-dispatch thread)
+- `0` — thread running or runnable
+
+### IPC transaction log
+
+Every run writes timestamped CSV logs:
+- `{self.sim_example_dir + "/ipc_client.log" if self.sim_example_dir else "ipc_client.log"}` — transactions from ipc_app
+- `{self.sim_example_dir + "/ipc_server.log" if self.sim_example_dir else "ipc_server.log"}` — same transactions as dispatched by simulator
+
+CSV columns: `seq, ts_ns, side, cmd, arg1, arg2, status, value, note`
+
+`ts_ns` is CLOCK_MONOTONIC nanoseconds. Delta between client and server rows = round-trip latency.
+
+To find a hang:
+1. Call `get_ipc_log(lines=20)` — last client entry is what ipc_app is blocked on.
+2. If server log has matching seq with OK but client doesn't → response in flight or socket broken.
+3. If neither has it → simulator hasn't dispatched it yet (SystemC scheduling lag).
+
+Key IPC commands:
+- `GRAPH_INIT` — loads AIE ELFs + runs graph init (BD programming). Must finish before GMIO.
+- `WRITE_GM` / `READ_GM` — GMIO data transfer. arg1=AIE addr, arg2=byte count.
+- `WRITE32` / `READ32` — single AIE register r/w (high-frequency during graph init).
+- `START_PLIO` — starts PLIO streams after graph init.
+- `EXIT` — ipc_app teardown; sim shuts down after ack.
+
+### addr2line for ipc_app
+
+The binary `{self.sim_example_dir + "/ipc/ipc_app" if self.sim_example_dir else "<sim_example_dir>/ipc/ipc_app"}` \
+has DWARF debug symbols. Map an address to source:
+
+```bash
+addr2line -e {self.sim_example_dir + "/ipc/ipc_app" if self.sim_example_dir else "<sim_example_dir>/ipc/ipc_app"} -f -p 0x<addr>
+```
+
+PS app source: `{self.sim_example_dir + "/src/graph.cpp" if self.sim_example_dir else "example/*/src/graph.cpp"}` \
+IPC backend: `src/ipc/aeg_ps_ipc_backend.cpp` — `do_transaction()` is the central send/recv loop.
+
+## Suggested workflow
+
+1. Call `get_design_overview()` to orient yourself.
+2. When the user clicks a tile, you receive `[context] Selected: tile (C,R) …` — \
+   call `tile_info(C, R)` for the full detail.
+3. When the user clicks a flow, you receive `[context] Selected net/flow fN …` — \
+   call `get_flow_detail(N)` for the routing detail.
+4. For live AIE state, check `get_backend_status()` first; if connected, use `aie_exec` \
+   commands to read DMA/core registers.
+5. If the user has just run and wants to check results, call `get_applog()` or \
+   `get_sim_log()` depending on the backend.
+6. For a hang or stall, call `get_ipc_log()` to find the last IPC transaction, \
+   then use `/proc/<pid>/wchan` inspection via `aie_exec` Bash or the aiegdb console \
+   to confirm what each process is waiting on.
+"""
+
+    def _llm_backend_context(self):
+        """Return a [context] line describing live backend state for injection into
+        every LLM message. Reads backend_status.json so it reflects current state."""
+        path = os.path.join(self.workdir, "backend_status.json")
+        try:
+            with open(path) as f:
+                s = json.load(f)
+        except (OSError, ValueError):
+            return ""
+        backend = s.get("backend", "unknown")
+        ipc_ready = s.get("ipc_ready", False)
+        target = s.get("target", "")
+        if backend == "simulator":
+            state = "IPC ready — live register reads active" if ipc_ready else "IPC not ready — simulator not started yet"
+            return f"[context] Backend: simulator ({state})"
+        elif backend == "hardware":
+            return f"[context] Backend: hardware, target={target or 'unknown'}"
+        return f"[context] Backend: {backend}"
+
     def _llm_spawn(self):
         """Spawn the persistent claude streaming subprocess + reader thread.
         Caller holds self._llm_lock is NOT required (we lock internally)."""
@@ -1204,7 +1534,14 @@ class DebugState:
                     "mcp__aiegdb__aie_commands", "mcp__aiegdb__aie_help",
                     "mcp__debugui__tile_info", "mcp__debugui__tile_list",
                     "mcp__debugui__get_backend_status",
-                    "mcp__debugui__symbol_search"]
+                    "mcp__debugui__symbol_search",
+                    "mcp__debugui__get_design_overview",
+                    "mcp__debugui__get_flow_detail",
+                    "mcp__debugui__get_sim_log",
+                    "mcp__debugui__get_applog",
+                    "mcp__debugui__get_ipc_log"]
+        self._llm_system_prompt_text = self._llm_system_prompt()
+        self._llm_first_turn = True
         if self.claude_model:
             cmd += ["--model", self.claude_model]
         self._llm_proc = subprocess.Popen(
@@ -1212,6 +1549,48 @@ class DebugState:
             stdin=subprocess.PIPE, stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT, text=True, bufsize=1)
         proc = self._llm_proc
+
+        # Open a new per-session transcript log with a timestamp in the filename.
+        try:
+            import datetime
+            ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            log_path = os.path.join(self._llm_log_dir, f"llm_{ts}.log")
+            if self._llm_log_fh:
+                try:
+                    self._llm_log_fh.close()
+                except OSError:
+                    pass
+            self._llm_log_fh = open(log_path, "w", encoding="utf-8")
+            ts_pretty = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            fh = self._llm_log_fh
+            fh.write(f"[session start {ts_pretty}  workdir={self.workdir}]\n")
+            fh.write(f"model: {self.claude_model or '(default)'}\n")
+            fh.write(f"target: {self.target or '(none)'}\n\n")
+            # Log the MCP config: server names and allowed tools.
+            allowed_tools = [
+                "mcp__aiegdb__aie_exec", "mcp__aiegdb__aie_scope",
+                "mcp__aiegdb__aie_commands", "mcp__aiegdb__aie_help",
+                "mcp__debugui__tile_info", "mcp__debugui__tile_list",
+                "mcp__debugui__get_backend_status", "mcp__debugui__symbol_search",
+                "mcp__debugui__get_design_overview", "mcp__debugui__get_flow_detail",
+                "mcp__debugui__get_sim_log", "mcp__debugui__get_applog",
+                "mcp__debugui__get_ipc_log",
+            ]
+            fh.write("=== MCP SERVERS ===\n")
+            fh.write("  aiegdb   (aiemcp.py)      — live DMA/core/reg reads\n")
+            fh.write("  debugui  (debug_ui_mcp.py) — schedule/flow/tile/log queries\n\n")
+            fh.write("=== ALLOWED TOOLS ===\n")
+            for tool in allowed_tools:
+                fh.write(f"  {tool}\n")
+            fh.write("\n")
+            if self._llm_system_prompt_text:
+                fh.write("=== SYSTEM PROMPT ===\n")
+                fh.write(self._llm_system_prompt_text.strip())
+                fh.write("\n\n")
+            fh.flush()
+        except OSError as e:
+            print(f"warning: cannot open LLM transcript log: {e}", file=sys.stderr)
+            self._llm_log_fh = None
 
         def _reader():
             for line in proc.stdout:
@@ -1222,7 +1601,10 @@ class DebugState:
                     obj = json.loads(line)
                 except (json.JSONDecodeError, ValueError):
                     continue  # skip non-JSON banner/log lines
-                self._llm_handle_event(obj)
+                try:
+                    self._llm_handle_event(obj)
+                except Exception as e:
+                    print(f"warning: _llm_handle_event error: {e}", file=sys.stderr)
             # stdout closed → process exited; end any in-flight turn.
             with self._llm_lock:
                 self._llm_active = False
@@ -1244,7 +1626,19 @@ class DebugState:
             if ev.get("type") == "content_block_delta":
                 delta = ev.get("delta", {}) or {}
                 if delta.get("type") == "text_delta":
-                    self._llm_append(delta.get("text", ""))
+                    text = delta.get("text", "")
+                    if text:
+                        with self._llm_lock:
+                            if not self._llm_log_in_asst:
+                                self._llm_log_in_asst = True
+                                self._llm_log_write("\n=== ASSISTANT ===\n")
+                            self._llm_buf += text
+                            if self._llm_log_fh:
+                                try:
+                                    self._llm_log_fh.write(text)
+                                    self._llm_log_fh.flush()
+                                except OSError:
+                                    pass
             return
         if t == "assistant":
             # Emit tool_use markers only (text already streamed via deltas).
@@ -1259,6 +1653,13 @@ class DebugState:
                         compact = str(inp)
                     if len(compact) > 200:
                         compact = compact[:197] + "..."
+                    try:
+                        full_json = json.dumps(inp, indent=2)
+                    except (TypeError, ValueError):
+                        full_json = compact
+                    with self._llm_lock:
+                        self._llm_log_write(f"\n=== TOOL CALL: {name} ===\n")
+                        self._llm_log_write(full_json + "\n")
                     self._llm_append(f"\n[tool: {name} {compact}]\n")
             return
         if t == "user":
@@ -1268,11 +1669,25 @@ class DebugState:
             if isinstance(content, list):
                 for blk in content:
                     if isinstance(blk, dict) and blk.get("type") == "tool_result":
+                        result_content = blk.get("content", "")
+                        if isinstance(result_content, list):
+                            # content blocks: extract text parts
+                            result_text = "\n".join(
+                                c.get("text", "") for c in result_content
+                                if isinstance(c, dict) and c.get("type") == "text"
+                            )
+                        else:
+                            result_text = str(result_content) if result_content else ""
+                        with self._llm_lock:
+                            self._llm_log_write("\n=== TOOL RESULT ===\n")
+                            if result_text:
+                                self._llm_log_write(result_text + "\n")
                         self._llm_append("\n[tool result]\n")
             return
         if t == "result":
             with self._llm_lock:
                 self._llm_active = False
+                self._llm_log_in_asst = False
             return
 
     def llm_send(self, prompt):
@@ -1290,14 +1705,43 @@ class DebugState:
             dead = self._llm_proc is None or self._llm_proc.poll() is not None
         if dead:
             self._llm_spawn()
+        with self._llm_lock:
+            is_first = self._llm_first_turn
+            sys_text = self._llm_system_prompt_text if is_first else None
+            self._llm_first_turn = False
+        # Inject live backend state as a [context] line so the LLM always knows
+        # what is currently running, regardless of when it was spawned.
+        backend_ctx = self._llm_backend_context()
+        prompt_with_ctx = (backend_ctx + "\n" + prompt) if backend_ctx else prompt
+        if sys_text:
+            full_text = sys_text + "\n\n---\n\n" + prompt_with_ctx
+        else:
+            full_text = prompt_with_ctx
         line = json.dumps({
             "type": "user",
             "message": {"role": "user",
-                        "content": [{"type": "text", "text": prompt}]},
+                        "content": [{"type": "text", "text": full_text}]},
         })
         with self._llm_lock:
             offset = len(self._llm_buf)
             self._llm_active = True
+            self._llm_log_in_asst = False
+            # Split context prefix (lines starting with "[context]") from real user text.
+            lines = prompt_with_ctx.splitlines()
+            ctx_lines = []
+            user_lines = []
+            ctx_done = False
+            for ln in lines:
+                if not ctx_done and ln.startswith("[context]"):
+                    ctx_lines.append(ln)
+                else:
+                    ctx_done = True
+                    user_lines.append(ln)
+            if ctx_lines:
+                self._llm_log_write("\n=== CONTEXT (auto) ===\n")
+                self._llm_log_write("\n".join(ctx_lines) + "\n")
+            self._llm_log_write("\n=== USER ===\n")
+            self._llm_log_write("\n".join(user_lines) + "\n")
         try:
             self._llm_proc.stdin.write(line + "\n")
             self._llm_proc.stdin.flush()
@@ -1334,6 +1778,16 @@ class DebugState:
             self._llm_proc = None
             self._llm_buf = ""
             self._llm_active = False
+            self._llm_log_in_asst = False
+            self._llm_first_turn = True
+            old_fh = self._llm_log_fh
+            self._llm_log_fh = None
+        if old_fh:
+            try:
+                old_fh.write("\n[session end]\n")
+                old_fh.close()
+            except OSError:
+                pass
         if self.llm_enabled:
             self._llm_spawn()
         return {"ok": True}
@@ -2223,6 +2677,7 @@ def main():
                       "MCP server; the chat still works but AIE debug tools "
                       "may be unavailable.", file=sys.stderr)
     st = Handler.state
+    st._write_backend_status()
     if st.sim_script:
         print(f"  sim:        {st.sim_script}")
         print(f"  sim-dir:    {st.sim_example_dir or 'NOT SET'}")

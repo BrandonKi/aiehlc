@@ -27,25 +27,30 @@ CLEAN_BUILD_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
     # source aiehlc.sh --use-llvm-aie --platform baremetal --aie-version 2 --runtime-source-file ./example/perf/perf.cpp && \
     # source ${CLEAN_BUILD_DIR}/script/aiehlc.sh --aie-version 2 --runtime-source-file ${CLEAN_BUILD_DIR}/example/multi/memtile_test.cpp && \
     # cp ./thirdparty/alib/aie-rt/driver/src/libxaiengine.so.3 /home/$USER/vek280/new_libxaiengine.so.3 && \
+    # --- sim targets ---
     # source script/aiehlc.sh --platform sim --aie-version 5 --sim-tiles 4:4 --runtime-source-file ./example/tileprogram/ccode/simple.cc && \
     # source script/aiehlc.sh --platform sim --aie-version 5 --sim-tiles 4:4 --runtime-source-file ./example/tileprogram/ccode/simplematmul2.cc && \
     # source script/aiehlc.sh --platform sim --aie-version 5 --sim-tiles "0:3,0:4,0:5,0:6,1:3,1:4,1:5,1:6,2:3,2:4,2:5,2:6,3:3,3:4,3:5,3:6" --runtime-source-file ./example/tileprogram/ccode/simplematmul2.cc && \
-    source script/aiehlc.sh --platform sim --aie-version 5 --sim-tiles 4:2 --runtime-source-file ./tutorial/example.cpp && \
+    # source script/aiehlc.sh --platform sim --aie-version 5 --sim-tiles 4:2 --runtime-source-file ./tutorial/example.cpp && \
     # source script/aiehlc.sh --platform sim --aie-version 5 --sim-tiles 0:3 --runtime-source-file ./example/tileprogram/ccode/simplematmul2.cc && \
-    # source script/aiehlc.sh --platform baremetal --aie-version 5 --runtime-source-file ./example/tileprogram/ccode/simplematmul2.cc && \
-    # 2x2 mesh, partition {3,4,0,5}: compute tiles at abs rows 3-4, cols 3-4
     # source script/aiehlc.sh --platform sim --aie-version 5 --sim-tiles 3:3,4:3,3:4,4:4 --runtime-source-file ./example/tileprogram/ccode/simplematmul2_sim.cc && \
     # source script/aiehlc.sh --platform sim --aie-version 2 --sim-tiles 4:4 --runtime-source-file ./example/perf/aieml_perf.cc && \
-    # source script/aiehlc.sh --platform baremetal --aie-version 2 --runtime-source-file ./example/perf/aieml_perf.cc && \
     # source script/aiehlc.sh --platform sim --aie-version 5 --sim-tiles 4:4 --runtime-source-file ./example/perf/aieml_perf.cc && \
-    # source script/aiehlc.sh --platform baremetal --aie-version 5 --runtime-source-file ./example/perf/aieml_perf.cc && \
     # source script/aiehlc.sh --platform sim --aie-version 5 --sim-tiles 4:2 --runtime-source-file ./tutorial/example.cpp && \
+    # source script/aiehlc.sh --platform sim --aie-version 2 --sim-tiles 4:4 --runtime-source-file ./example/multi/multi_kernel.cc && \
+    # --- baremetal targets ---
+    source script/aiehlc.sh --platform baremetal --aie-version 5 --runtime-source-file ./example/tileprogram/ccode/simplematmul2.cc && \
+    # source script/aiehlc.sh --platform baremetal --aie-version 5 --runtime-source-file ./example/tileprogram/ccode/simplematmul2_prof.cc && \
+    # source script/aiehlc.sh --platform baremetal --aie-version 5 --runtime-source-file ./example/tileprogram/ccode/simplematmul2_oob_compare.cc && \
+    # source script/aiehlc.sh --platform baremetal --aie-version 2 --runtime-source-file ./example/perf/aieml_perf.cc && \
+    # source script/aiehlc.sh --platform baremetal --aie-version 5 --runtime-source-file ./example/perf/aieml_perf.cc && \
     # source script/aiehlc.sh --platform baremetal --aie-version 5 --runtime-source-file ./tutorial/example.cpp && \
-    # source script/aiehlc.sh --platform sim --aie-version 2 --sim-tiles 4:4 --runtime-source-file ./example/multi/multi_kernel.cc
     # source script/aiehlc.sh --platform baremetal --aie-version 2 --runtime-source-file ./example/multi/multi_kernel.cc && \
-    cp ${CLEAN_BUILD_DIR}/aout/main.elf /home/$USER/vek280/mk.elf
+    # --- ACTIVE: 1x1 debug GEMM (deadlock isolation) ---
+    # source script/aiehlc.sh --platform baremetal --aie-version 5 --runtime-source-file ./example/tileprogram/ccode/simplematmul2_1x1.cc && \
+    cp ${CLEAN_BUILD_DIR}/aout/main.elf /home/$USER/aiehlc/main.elf
 ) 2>&1 | tee build_log.txt
 
-# python3 ./script/test/appvek385.py -y  -nonreboot > ./applogvek 2>&1
+# python3 ./script/test/appvek385.py -y -nonreboot > ./applogvek 2>&1
 
 

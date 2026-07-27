@@ -289,6 +289,18 @@ Used only for `routing.cc` generation (stream switch configuration C code).
 - `ConnectStreamSingleSwitchPort` → `XAie_StrmConnCctEnable`
 - `ConnectStreamPktSwitchPort` → `XAie_StrmPktSwSlaveSlotEnable` + `XAie_StrmPktSwMstrPortEnable`
 
+**RoutingProvenanceMapPass**: routinghw → `routingprovenancemap.json`
+- Runs **after `RoutingHWVerifyPass`, before `RoutingHWLowerPass`** (while
+  `routinghw.*` ops still exist — lowering turns them into `emitc.call`).
+- Emits a physical routing provenance map: `routing_groups[]` (one per
+  `routing.RoutingCreate`, tagged by `memo`/`scf_idx`), each with the group's
+  `tiles[]` (resolved `col,row,type` + shim `ioid`/`dma_direction`/`channel_used`)
+  and an ordered `connections[]` capturing every stream-switch program
+  (`circuit_connect`, `packet_connect` with pktid/pkttype/preserve_header,
+  `shim_ext_to_aie`/`shim_aie_to_ext`). Complements `dmaphopprovenacemap.json`
+  (logical hops) and `dfscheduleprovenancemap.json` (DMA BD/lock schedule).
+  See `docs/plans/2026-07-21-routing-provenance-map-design.md`.
+
 ### 3.11 Utility Passes
 
 | Pass | Purpose |
