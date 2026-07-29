@@ -2004,20 +2004,26 @@ void __Runtime_move_data_from_tile(XAie_RoutingInstance *routing, XAie_LocType s
 
 /* ===========================================================================
  * Core-module cycle-budget performance counters (probe tile, single tile).
- * Counters (CORE_MOD):
- *   0: active cycles      start=ACTIVE_CORE  stop=DISABLED_CORE
- *   1: vector instr count start=INSTR_VECTOR_CORE stop=INSTR_VECTOR_CORE
- *   2: stream stall cycles start=STREAM_STALL_CORE stop=STREAM_STALL_CORE
- *   3: lock stall cycles   start=LOCK_STALL_CORE   stop=LOCK_STALL_CORE
+ * All four use the SELF-EVENT form (start==stop==level-event), which makes each
+ * counter accumulate the number of clock cycles that event condition is asserted
+ * over the WHOLE kernel run (the counter never latches a stop and free-runs). This
+ * keeps all four in the same unit (cycles) so budget = active + stalls and
+ * vec_util = vec_instr/active are meaningful.
+ *   0: active cycles       start=stop=ACTIVE_CORE        (cycles core is executing)
+ *   1: vector instr cycles start=stop=INSTR_VECTOR_CORE  (cycles issuing a vector instr)
+ *   2: stream stall cycles start=stop=STREAM_STALL_CORE
+ *   3: lock stall cycles   start=stop=LOCK_STALL_CORE
+ * NOTE: counter 0 previously used stop=DISABLED_CORE (a *span* start->first-disable),
+ * which truncated to the first active window (~592K cyc) and produced vec_util >> 100%.
  * =========================================================================== */
 
 AieRC __Runtime_core_perf_setup(XAie_DevInst *dev, XAie_LocType tile) {
     AieRC rc;
-    /* Counter 0: active cycles — count from ACTIVE to DISABLED */
+    /* Counter 0: active cycles — self-event, count every cycle the core is ACTIVE */
     rc = XAie_PerfCounterSet(dev, tile, XAIE_CORE_MOD, 0, 0);
     if (rc != XAIE_OK)
         return rc;
-    rc = XAie_PerfCounterControlSet(dev, tile, XAIE_CORE_MOD, 0, XAIE_EVENT_ACTIVE_CORE, XAIE_EVENT_DISABLED_CORE);
+    rc = XAie_PerfCounterControlSet(dev, tile, XAIE_CORE_MOD, 0, XAIE_EVENT_ACTIVE_CORE, XAIE_EVENT_ACTIVE_CORE);
     if (rc != XAIE_OK)
         return rc;
     /* Counter 1: vector instructions — self-counting */

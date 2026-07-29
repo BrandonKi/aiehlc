@@ -6,8 +6,8 @@ export USERNAME=bkirinci
 # export PALIP=172.19.240.161
 # export BOARDNAME=vek385-27
 # export VEK385IP=crimini2
-export VEK385IP=portobello13
-# export VEK385IP=crimini5
+# export VEK385IP=portobello13
+export VEK385IP=crimini5
 # export VEK385IP=crimini4
 # export VEK385IP=gomphus8
 

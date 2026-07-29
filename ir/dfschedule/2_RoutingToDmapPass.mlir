@@ -1,4 +1,4 @@
-module attributes {codegen.headers = ["stdint.h", "stdio.h", "custom_lib.h"], routing.effective_k = 64 : i64, routing.full_k = 256 : i64, routing.fullconnect_auto = 1 : i64, routing.k_rounds = 4 : i64, routing.m_rounds = 4 : i64, routing.n_rounds = 4 : i64, routing.pp_depth_map = {tensor_0 = 2 : i32, tensor_1 = 2 : i32, tensor_2 = 2 : i32}, routing.tile_cols = 64 : i64, routing.tile_m = 16 : i64, routing.tile_n = 16 : i64, routing.tile_rows = 64 : i64} {
+module attributes {codegen.headers = ["stdint.h", "stdio.h", "custom_lib.h"], routing.effective_k = 64 : i64, routing.full_k = 256 : i64, routing.fullconnect_auto = 1 : i64, routing.k_rounds = 4 : i64, routing.m_rounds = 1 : i64, routing.n_rounds = 1 : i64, routing.pp_depth_map = {tensor_0 = 2 : i32, tensor_1 = 2 : i32, tensor_2 = 2 : i32}, routing.tile_cols = 64 : i64, routing.tile_m = 64 : i64, routing.tile_n = 64 : i64, routing.tile_rows = 64 : i64} {
   func.func @main(%arg0: memref<256x256xi8>, %arg1: memref<256x256xi8>, %arg2: memref<256x256xi8>) {
     %c3_i32 = arith.constant 3 : i32
     %c2_i32 = arith.constant 2 : i32

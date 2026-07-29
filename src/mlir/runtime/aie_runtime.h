@@ -414,10 +414,12 @@ void __Runtime_perfcnt_read_mm2s_bd_finished_partition(XAie_DevInst *dev, uint8_
 // ---------------------------------------------------------------------------
 // Core-module performance counters (cycle-budget profiling), mirroring the
 // AEG OOB profiling probe. Uses CORE_MOD counters 0..3 on a single core tile:
-//   0: active cycles      (ACTIVE_CORE   start -> DISABLED_CORE stop)
-//   1: vector instr count (INSTR_VECTOR_CORE self-counting)
-//   2: stream stall cycles(STREAM_STALL_CORE start -> ACTIVE_CORE stop)
-//   3: lock stall cycles  (LOCK_STALL_CORE  start -> ACTIVE_CORE stop)
+// All self-counting (start==stop==level-event) so all four are in cycles over the
+// full run (budget = active+stalls; vec_util = vec_instr/active is meaningful):
+//   0: active cycles       (ACTIVE_CORE self-counting)
+//   1: vector instr cycles (INSTR_VECTOR_CORE self-counting)
+//   2: stream stall cycles (STREAM_STALL_CORE self-counting)
+//   3: lock stall cycles   (LOCK_STALL_CORE self-counting)
 // Arm on a tile (resets the 4 counters to 0 and configures their events).
 AieRC __Runtime_core_perf_setup(XAie_DevInst *dev, XAie_LocType tile);
 // Read the 4 core-module counters from a tile (any out-param may be NULL).
