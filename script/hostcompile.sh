@@ -264,7 +264,7 @@ if [ -d "${XAIE_INCLUDE}" ]; then
 fi
 # User headers are copied to worklocal/ by aiehlc alongside host.cc
 INCLUDE_OPTS="${INCLUDE_OPTS} -I${WORKLOCAL_DIR}"
-DEFS="-DAIE_GEN=${aie_version}"
+DEFS="-DAIE_GEN=${aie_version} ${EXTRA_DEFS:-}"
 
 mkdir -p "${BUILD_DIR}"
 cd "${BUILD_DIR}"

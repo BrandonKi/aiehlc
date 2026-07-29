@@ -1547,6 +1547,55 @@ struct_kernel_group __Runtime_load_kernel_group(XAie_DevInst *dev, XAie_LocType 
 
 /** Array-based variant: copies caller-provided tile array into the static buffer
  *  and loads the kernel ELF into each core tile. Supports up to MAX_KERNEL_TILES. */
+/* [bss-skip] Load only PT_LOAD segments that carry file bytes (.text/.data),
+ * skipping pure-.bss segments (p_filesz==0). For this GEMM the .bss holds the
+ * six ping-pong window buffers (each its own filesz=0 LOAD segment at
+ * 0x78000..0x7d000) which are DMA-filled before the core reads them, and the
+ * int32 accumulator is a stack local the kernel zeroes explicitly. The driver's
+ * default XAie_LoadElfMem() -> XAIE_LOAD_ELF_ALL block-writes zeros across the
+ * whole .bss on every tile, which is pure kernel-load overhead here. Gated by
+ * the AIEHLC_SKIP_BSS env var so it is opt-in and easy to A/B.
+ * WARNING: only safe when no global is read before being written. If a kernel
+ * relies on zero-initialized .bss globals, leave AIEHLC_SKIP_BSS unset. */
+#if !defined(__AIESIM__)
+static AieRC __Runtime_load_elf_mem_skip_bss(XAie_DevInst *dev, XAie_LocType loc, const unsigned char *elfmem) {
+    const Elf32_Ehdr *ehdr = (const Elf32_Ehdr *)elfmem;
+    u32 skipped = 0, loaded = 0;
+    for (u32 ph = 0; ph < ehdr->e_phnum; ph++) {
+        const Elf32_Phdr *phdr = (const Elf32_Phdr *)(elfmem + ehdr->e_phoff + (u64)ph * sizeof(Elf32_Phdr));
+        if (phdr->p_type != (u32)PT_LOAD)
+            continue;
+        if (phdr->p_filesz == 0U) { /* pure .bss segment -> DMA-filled, skip zero-init */
+            skipped++;
+            continue;
+        }
+        AieRC rc = XAie_LoadElfSection(dev, loc, elfmem + phdr->p_offset, phdr);
+        if (rc != XAIE_OK)
+            return rc;
+        loaded++;
+    }
+    AIEHLC_LOG(printf("[aie_runtime] skip-bss load: %u segs loaded, %u bss segs skipped\n", loaded, skipped));
+    return XAIE_OK;
+}
+#endif
+
+/* Returns 1 to skip .bss zero-init on kernel load, else 0.
+ * Compile-time -DAIEHLC_SKIP_BSS_DEFAULT=1 wins (needed on baremetal newlib
+ * where getenv() always returns NULL); otherwise fall back to the env var so
+ * a Linux host can A/B without a rebuild. */
+static int __Runtime_skip_bss_enabled(void) {
+#if defined(AIEHLC_SKIP_BSS_DEFAULT)
+    return (AIEHLC_SKIP_BSS_DEFAULT);
+#else
+    static int s_skip_bss = -1;
+    if (s_skip_bss < 0) {
+        const char *e = getenv("AIEHLC_SKIP_BSS");
+        s_skip_bss = (e && e[0] && e[0] != '0') ? 1 : 0;
+    }
+    return s_skip_bss;
+#endif
+}
+
 struct_kernel_group __Runtime_load_kernel_group_nt(XAie_DevInst *dev, XAie_LocType *tiles, int n) {
     unsigned long long __t0 = __rt_pmccntr(); /* [exp45] kernel-load phase (ELF -> program memory) */
     /* [exp15] gate hot-path log: this runs inside the profiled launch window; an
@@ -1580,7 +1629,14 @@ struct_kernel_group __Runtime_load_kernel_group_nt(XAie_DevInst *dev, XAie_LocTy
         g_kl_rst_cyc += (__rt_pmccntr() - __kr0);
         g_kl_rst_n++;
         unsigned long long __ke0 = __rt_pmccntr(); /* [exp51] ELF write to program memory */
+#if !defined(__AIESIM__)
+        if (__Runtime_skip_bss_enabled())
+            __Runtime_load_elf_mem_skip_bss(dev, s_kernel_tiles[i], s_active_kernel_elf);
+        else
+            XAie_LoadElfMem(dev, s_kernel_tiles[i], s_active_kernel_elf);
+#else
         XAie_LoadElfMem(dev, s_kernel_tiles[i], s_active_kernel_elf);
+#endif
         g_kl_elf_cyc += (__rt_pmccntr() - __ke0);
         g_kl_elf_n++;
         unsigned long long __ku0 = __rt_pmccntr(); /* [exp51] core unreset */
