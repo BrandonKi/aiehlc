@@ -146,6 +146,15 @@ echo ""
 
 export AIE_WORK_DIR="${WORK_DIR}"
 
+DBG_DIR="${AIEHLC_DBG_DIR:-${CONFIG_DIR:-${WORK_DIR}}/dbg}"
+mkdir -p "${DBG_DIR}"
+rm -f "${DBG_DIR}"/*.sock.dbg 2>/dev/null || true
+export AIEHLC_DBG_DIR="${DBG_DIR}"
+export AIEHLC_DBG_HOLD_SEC="${AIEHLC_DBG_HOLD_SEC:-600}"
+export AIEHLC_DBG_ALLOW_WRITE="${AIEHLC_DBG_ALLOW_WRITE:-0}"
+export AIE_SYNC_READ="${AIE_SYNC_READ:-1}"
+echo "  Debug socket dir: ${AIEHLC_DBG_DIR} (idle-timeout=${AIEHLC_DBG_HOLD_SEC}s, writes=${AIEHLC_DBG_ALLOW_WRITE})"
+
 if [ ! -x "${REPO_ROOT}/aiehlc_aiesimulator" ]; then
     bash "${SIM_DIR}/gen_aiesimulator.sh" "${REPO_ROOT}/aiehlc_aiesimulator"
 fi

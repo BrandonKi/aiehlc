@@ -153,6 +153,7 @@ Read the matching skill when the task fits:
 | XAie driver internals | aiedriverkb |
 | Live HW DMA stall debug | aiehwdmadebug |
 | Sim PS.so load segfault | aiesimloaddebug |
+| aiesim live debug register socket | aiesim-debug-socket |
 | HW performance counters | aiehwprofile |
 | Raw-XAie sim debug bundle | raw-xaie-sim-debug-bundle |
 | Sim build/run separation | sim-build-run-separation |

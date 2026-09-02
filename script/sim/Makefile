@@ -111,6 +111,7 @@ LDFLAGS = \
     -stdlib=libstdc++ \
     -Wl,-rpath,$(GCC_BASE)/lib \
     -shared \
+    -pthread \
     -Wl,--as-needed \
     -L$(VITIS_LIB) \
     -L$(SYSTEMC_LIB) \
@@ -125,6 +126,7 @@ TOOL_PREFIX := aarch64-none-elf-
 
 WRAPPER_OBJ  := $(BUILD_DIR)/aiehlc_ps_wrapper.o
 IOUTILS_OBJ  := $(BUILD_DIR)/ioutils.o
+DBGSRV_OBJ   := $(BUILD_DIR)/aiehlc_dbg_server.o
 RUNTIME_OBJS := \
     $(BUILD_DIR)/aie_runtime.o \
     $(BUILD_DIR)/aie_runtime_debug.o \
@@ -137,7 +139,7 @@ ifneq ($(strip $(_FIRST_KERNEL)),)
   KERNEL_ELF_INIT_OBJ := $(BUILD_DIR)/kernel_elf_init.o
 endif
 
-OUR_OBJS := $(WRAPPER_OBJ) $(IOUTILS_OBJ) $(RUNTIME_OBJS) $(ROUTING_OBJ) $(KERNEL_ELF_INIT_OBJ)
+OUR_OBJS := $(WRAPPER_OBJ) $(IOUTILS_OBJ) $(DBGSRV_OBJ) $(RUNTIME_OBJS) $(ROUTING_OBJ) $(KERNEL_ELF_INIT_OBJ)
 
 .DEFAULT_GOAL := all
 .PHONY: all clean info stub_all_tiles build_stub
@@ -173,6 +175,10 @@ $(WRAPPER_OBJ): $(SIM_SRC)/aiehlc_ps_wrapper.cpp $(SIM_SRC)/ioutils.h $(abspath 
 
 $(IOUTILS_OBJ): $(SIM_SRC)/ioutils.cpp $(SIM_SRC)/ioutils.h | $(BUILD_DIR)
 	@echo "[compile] ioutils.cpp"
+	$(VITIS_CLANG) $(CXXFLAGS) -c $< -o $@
+
+$(DBGSRV_OBJ): $(SIM_SRC)/aiehlc_dbg_server.cpp $(SIM_SRC)/aiehlc_dbg_server.h $(SIM_SRC)/aiehlc_dbg_protocol.h | $(BUILD_DIR)
+	@echo "[compile] aiehlc_dbg_server.cpp"
 	$(VITIS_CLANG) $(CXXFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/aie_runtime.o: $(RUNTIME_SRC)/aie_runtime.c | $(BUILD_DIR)
