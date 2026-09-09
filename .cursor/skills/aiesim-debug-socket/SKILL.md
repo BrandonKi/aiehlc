@@ -31,6 +31,32 @@ aiedbg's `sim_ipc_read32` drains either backend unchanged.
   callbacks, runs the `debug_action` drain thread and the end-of-app hold.
 - `script/sim/dbg_probe.py` — standalone verifier (PING/READ32/WRITE32).
 
+## Reuse the connection: one per scan, not one per register
+
+`client_thread` loops on `recv_all`, so **a single connection carries any number
+of requests**. Clients must hold one open for the duration of a scan. aiedbg's
+one-shot `sim_ipc_read32` opens and closes a socket per 32-bit register; a
+Switch scan is ~228 registers per tile over the whole grid rectangle, so one
+press of Scan cost the simulator thousands of accept/thread-spawn/close cycles
+and the run died partway through (symptom: the tail of the array reads
+`unreachable`, then `ECONNREFUSED` on a `*.sock.dbg` that is still on disk).
+`SimIpcConn` in `schedule_debug_server.py` is the reusing client — 2000 reads,
+1 accept. Reads through it are serialized by a lock, because responses carry no
+request id and two threads sharing a connection would take each other's values.
+
+Two server-side rules that follow from it:
+
+- `accept_thread` must not exit on a transient `accept()` error. It used to
+  `break` on any failure, which retired the listener for the rest of the run
+  while the socket file stayed on disk — every later connect got
+  `ECONNREFUSED` from something that still looked alive. Retry on `EINTR`,
+  `ECONNABORTED`, `EMFILE`, `ENFILE`, `ENOBUFS`, `ENOMEM`.
+- `client_thread` must wait on the work item with a **timed** wait re-checked
+  against `g_stop`. An unbounded `cv.wait` parks the thread and its fd forever
+  once the SystemC side stops draining (i.e. after the hold ends and
+  `sc_start()` unwinds), which is how the process reaches fd exhaustion with no
+  diagnostic.
+
 ## The one hard constraint: SystemC thread affinity
 
 SystemC is **not thread-safe**. A foreign POSIX (socket) thread must never call
@@ -42,15 +68,45 @@ SystemC is **not thread-safe**. A foreign POSIX (socket) thread must never call
 3. The AXI initiator socket utils are shared between the app thread and the
    drain thread, so `read32/write32/read128/write128` take `m_axi_lock`
    (`sc_mutex`) around `b_transport`.
+4. **The wake is part of "SystemC state".** `sc_event::notify()` is NOT
+   thread-safe — see below.
 
-### Why pure time-polling does not work
+### Why pure time-polling does not work, and how to wake safely
 
 After the graph finishes, `aie2pssimmsm` quiesces the AIE array clock, so a
 `wait(N, SC_NS)` timed wait stops resuming and a poll-only drain never runs —
-reads hang. The socket thread therefore wakes the SystemC side with an
-`sc_event` (`m_dbg_wake`, `PSDbgWake` -> `notify(1, SC_NS)`, same trick the AEG
-server uses). `debug_action` waits on that event with a timed backstop:
-`wait(poll_ns, SC_NS, m_dbg_wake)`.
+reads hang. The socket thread must therefore wake the SystemC side.
+
+It must NOT do that by calling `m_dbg_wake.notify()` directly. The kernel's
+event queues take no lock, so a notify from a foreign POSIX thread races
+`sc_simcontext::simulate()` mutating the same queue. It survives light traffic
+and corrupts the queue under a scan (thousands of wakes in seconds). Signature:
+
+```
+[AIESIMULATOR ERROR] Segmentation fault detected.
+#2 libsystemc.so(_ZN7sc_core8sc_event7triggerEv+0x3c)
+#3 libsystemc.so(_ZN7sc_core13sc_simcontext8simulateERKNS_7sc_timeE+0x911)
+```
+
+i.e. the kernel tripping over an entry the socket thread edited. The run's own
+output looks healthy right up to the crash — all iterations PASS, the hold line
+prints, then it dies mid-scan and the UI reports "simulator stopped answering
+during the scan (after tile (C,R))". **A partway-through-a-scan death is this
+bug, not fd exhaustion** — that one gives `ECONNREFUSED` on a live socket file.
+
+`async_request_update()` is the only entry point into the kernel that is legal
+from a foreign thread. `DbgWakeChannel` (an `sc_prim_channel` in
+`aiehlc_ps_wrapper.cpp`, constructed during elaboration) implements it:
+`wake_async()` sets the pending flag from the socket thread, the kernel calls
+`update()` on its own thread at the next delta, and only there does it
+`m_dbg_wake.notify(SC_ZERO_TIME)`. `debug_action` still waits on the event with
+a timed backstop: `wait(poll_ns, SC_NS, m_dbg_wake)`, and the hold loop's
+`wait(1, SC_MS)` keeps timed activity pending so an async update is always
+drained promptly. `g_dbg_wake_chan` is nulled after `aiehlc_dbg_stop()` so a
+late socket thread cannot reach a kernel that is unwinding.
+
+Do not "simplify" this back to a direct notify because another IPC server
+appears to get away with it.
 
 ### Keeping the simulator alive past app completion (the hold)
 
@@ -96,6 +152,21 @@ watcher is started for both kinds; the three live gates (`/grid`, `/cmd`,
 `/aiegdb`) block aiesim only when `not _sim_ipc_ready`; `_devices_for_ui` sets
 `live_reads` for aiesim. Contract also noted in `adapters/aiehlc.py` and
 `docs/debug-ui/bundle-contract.md`.
+
+**Three front-ends must follow the socket, not just one.** Each caches the
+backend differently, so each needs its own hook:
+
+| front-end | how it picks the backend | what makes it follow |
+|---|---|---|
+| DMA/Cores/Events/Switch scans | `sim_ipc_reg_read` on the daemon itself | nothing — always current |
+| LLM tab / `aie_exec` (`aiemcp.py`) | re-reads `backend_status.json` per call | `_ensure_backend_current` |
+| Tools → aiegdb console | env of a long-lived `aiegdb.py --server` subprocess | `_gdb_spawn` sets `AEG_PS_IPC_DBG_SOCKET` + `AEG_SIM_*` and withholds `--target`; `_backend_changed` → `_gdb_drop` kills it on every flip |
+
+The transport itself (`patch_gdb_for_simulator`, `sim_ipc_read32`) lives in
+`aiegdb.py` so the console and the MCP server share one copy. It was originally
+private to `aiemcp.py`, which is why the console kept dialling JTAG and printing
+`ConnectionRefusedError` while the sim held the array — if you add a fourth
+front-end, wire it to the same helper.
 
 ## Verify
 
