@@ -92,10 +92,8 @@ private:
 
     sc_event transRspAvail;
     sc_mutex m_axi_lock;
-    // Notified by the socket thread when a debug request is queued, so the
-    // SystemC side wakes immediately instead of waiting for a simulated-time
-    // tick that never comes once the array clock quiesces at graph end.
     sc_event m_dbg_wake;
+    class DbgWakeChannel *m_dbg_wake_chan;
 
     void aximm_transaction(
         xtlm::xtlm_aximm_initiator_rd_socket_util& rd_util,
@@ -125,17 +123,21 @@ PSIP_aiehlc* PSIP_aiehlc::psObj = nullptr;
 
 static std::atomic<bool> g_dbg_thread_stop{false};
 
-// The socket thread wakes the SystemC drain via this event. It points at the
-// PSIP instance's m_dbg_wake, notified with a delta so it fires even while the
-// AIE array clock is stopped.
-static sc_event *g_dbg_wake_ev = nullptr;
+class DbgWakeChannel : public sc_core::sc_prim_channel {
+public:
+    DbgWakeChannel(const char *nm, sc_event &ev) : sc_core::sc_prim_channel(nm), m_ev(ev) {}
+    void wake_async() { async_request_update(); }
+protected:
+    void update() override { m_ev.notify(SC_ZERO_TIME); }
+private:
+    sc_event &m_ev;
+};
 
-// C hook handed to the debug server; runs on the socket (POSIX) thread. Uses a
-// small timed notify (as the AEG IPC server does) rather than a delta notify,
-// so the wake is honoured even when issued outside an active delta cycle.
+static std::atomic<DbgWakeChannel *> g_dbg_wake_chan{nullptr};
+
 static void PSDbgWake() {
-    if (g_dbg_wake_ev)
-        g_dbg_wake_ev->notify(1, SC_NS);
+    if (DbgWakeChannel *c = g_dbg_wake_chan.load())
+        c->wake_async();
 }
 
 PSIP_aiehlc::PSIP_aiehlc(sc_module_name nm)
@@ -153,7 +155,8 @@ PSIP_aiehlc::PSIP_aiehlc(sc_module_name nm)
     PS_AxiMM_Rd_Util->rd_socket.bind(PS_AxiMM_Rd);
     PS_AxiMM_Wr_Util->wr_socket.bind(PS_AxiMM_Wr);
 
-    g_dbg_wake_ev = &m_dbg_wake;
+    m_dbg_wake_chan = new DbgWakeChannel("dbg_wake_chan", m_dbg_wake);
+    g_dbg_wake_chan.store(m_dbg_wake_chan);
 
     SC_THREAD(main_action);
 
@@ -390,6 +393,7 @@ void PSIP_aiehlc::main_action() {
     }
 
     aiehlc_dbg_stop();
+    g_dbg_wake_chan.store(nullptr);
     g_dbg_thread_stop.store(true);
     m_dbg_wake.notify(SC_ZERO_TIME);
 

@@ -5,6 +5,8 @@
 #include "aiehlc_dbg_protocol.h"
 
 #include <atomic>
+#include <cerrno>
+#include <chrono>
 #include <condition_variable>
 #include <cstdio>
 #include <cstdlib>
@@ -136,7 +138,13 @@ void client_thread(int client_fd) {
         auto item = enqueue(req);
         {
             std::unique_lock<std::mutex> lk(item->mtx);
-            item->cv.wait(lk, [&item] { return item->ready; });
+            while (!item->ready) {
+                if (g_stop.load())
+                    break;
+                item->cv.wait_for(lk, std::chrono::milliseconds(200));
+            }
+            if (!item->ready)
+                break;
         }
         if (send_all(client_fd, &item->resp, sizeof(item->resp)) != 0)
             break;
@@ -147,8 +155,17 @@ void client_thread(int client_fd) {
 void accept_thread() {
     while (!g_stop.load()) {
         int client_fd = ::accept(g_listen_fd, nullptr, nullptr);
-        if (client_fd < 0)
+        if (client_fd < 0) {
+            if (errno == EINTR || errno == ECONNABORTED)
+                continue;
+            if (errno == EMFILE || errno == ENFILE || errno == ENOBUFS || errno == ENOMEM) {
+                if (dbg_verbose())
+                    std::fprintf(stderr, "[aiehlc_dbg] accept(): %s; retrying\n", std::strerror(errno));
+                std::this_thread::sleep_for(std::chrono::milliseconds(20));
+                continue;
+            }
             break;
+        }
         std::thread(client_thread, client_fd).detach();
     }
 }

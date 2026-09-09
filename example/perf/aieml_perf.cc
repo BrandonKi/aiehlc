@@ -73,7 +73,13 @@
 // _ch form only pins the trace stream channel away from this tile's data DMA. Set
 // to 0 to fully compile out trace setup/read and isolate whether the hang is
 // trace-induced; set to 1 to re-enable.
+#ifndef TRACE_ENABLE
+#ifndef __AIESIM__
 #define TRACE_ENABLE 1
+#else
+#define TRACE_ENABLE 0
+#endif
+#endif
 
 // Host<->AIE time-sync instrumentation. Emits a machine-readable [TIMESYNC]
 // block (host anchors, per-tile AIE-timer anchors, host phase events, raw trace
