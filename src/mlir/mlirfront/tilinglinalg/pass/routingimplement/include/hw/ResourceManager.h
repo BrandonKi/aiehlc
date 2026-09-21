@@ -136,6 +136,7 @@ public:
   std::optional<int> allocate(IOType io, int portidx, PortDirection dir, int ioId);
   std::optional<int> occupyport(IOType io, PortDirection dir, int ioId);
   bool releaseByIo(IOType io, int portidx, PortDirection dir, int ioId);
+  bool reservePortNumber(PortDirection dir, PortRole role, int portNum, int ownerId);
 
   const DirBank &bank(PortDirection d) const { return banks_.at(d); }
   ::TileType type() const { return type_; }
@@ -583,11 +584,12 @@ public:
   // source of truth. Idempotent. Always called once after ResourceMgr::init.
   void reserveControlPlaneResources(rt_res_gen gen);
 
-  // Reserved-resource accessors for routing/scheduling to consult (the data-
-  // plane slot/arbiter picking wiring is a follow-up).
+  // Reserved-resource accessors for routing/scheduling.
   uint32_t reservedArbiterMask() const { return reservedArbiterMask_; }
   // bit i => slot i is reserved on (port,is_master) by the control plane.
   int reservedSlotMask(uint8_t port, uint8_t is_master) const;
+  std::optional<int> dataPlanePktArbiter() const;
+  std::optional<int> dataPlanePktSlaveSlot(PortDirection port) const;
 
   // Partition bounds accessors
   int partitionStartCol() const { return partitionStartCol_; }

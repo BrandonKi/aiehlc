@@ -2,19 +2,19 @@
  * Copyright (C) 2025 Advanced Micro Devices, Inc. All Rights Reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
- * AIE Programming Model — Matrix Multiplication (Parameterized Kernel API)
+ * AIE Programming Model — Matrix Multiplication (control-packet variant)
+ *
+ * Identical to simplematmul2.cc except lock init, kernel ELF load, and core
+ * launch use the reserved row-control fabric.
  */
 #include "simplematmul.h"
+void __Runtime_ctrl_pmap_enable(int on);
 // #pragma aie_debug_level(2 | AIE_DEBUG_FLAG_DISABLE_PARTITIONTEARDOWN)
 #pragma aie_debug_level(0 | AIE_DEBUG_FLAG_DISABLE_PARTITIONTEARDOWN)
-// Declarative per-tile core trace: mesh/partition-relative (col,row) of the
-// compute tile to trace. Repeatable; supports ranges e.g. #pragma aie_trace(1:2, 3).
-// #pragma aie_trace((0, 3), (PARAMETER, "win_a"))
-// #pragma CONTROL_PLAN_GROUP_REG_WRITE  // enable use control pla nto gorup send config op
-// #pragma control_plan_op_control_packet // enable control plan #1. reserve stream switch routing to cooperate with ir
-// #2. call control plan init in platform init
-// Trace off so this baseline is configured identically to
-// simplematmul_ctrl_pkt.cc for the mmio-vs-control-packet comparison.
+#pragma CONTROL_PLAN_GROUP_REG_WRITE
+#pragma control_plan_op_control_packet
+// Trace is disabled: the trace stream route claims (0,3) SOUTH master and
+// (0,2) NORTH slave, which the control-plane return spine (VRET) already owns.
 // #pragma aie_trace((0, 3), (STREAM, "s2mm", 1)))
 // Composition-based spatial spaces: a generic SpatialPolicy composed with a
 // PER-PORT 2D iteration space. Each port describes its OWN matrix via d1/d2:
@@ -324,7 +324,8 @@ __global__ void mul2(aie::port<input_window_int8 *, RowBA> win_a, aie::port<inpu
 
 // HOST
 int main() {
-    printf("=== Matrix Multiply with Data Caching on AIE %dx%d Mesh ===\n", HW_ROWS, HW_COLS);
+    __Runtime_ctrl_pmap_enable(1);
+    printf("=== Matrix Multiply CTRL-PKT %dx%d Mesh ===\n", HW_ROWS, HW_COLS);
     printf("    C[%dx%d] = A[%dx%d] * B^T[%dx%d], int8\n", M, N, M, K, K, N);
     __ps_pmccntr_enable();
     // --- Device + mesh ---
@@ -365,7 +366,7 @@ int main() {
         __Runtime_phase_cycles(ph, phc);
         __Runtime_wait_io_cycles(&wio, &wion);
         __Runtime_kload_split_cycles(&kelf, &kelfn, &krst, &krstn);
-        printf("[PERF] variant=mmio kload=%llu elf=%llu rst=%llu bdcfg=%llu coreen=%llu startio=%llu wait_io=%llu\n",
+        printf("[PERF] variant=ctrl_pkt kload=%llu elf=%llu rst=%llu bdcfg=%llu coreen=%llu startio=%llu wait_io=%llu\n",
                ph[0], kelf, krst, ph[1], ph[2], ph[3], wio);
     }
     // stlkernel<<mesh>>>(A, B, C);

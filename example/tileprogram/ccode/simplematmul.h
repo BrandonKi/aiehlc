@@ -75,6 +75,10 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+void __Runtime_phase_cycles(unsigned long long *cyc, unsigned int *calls);
+void __Runtime_wait_io_cycles(unsigned long long *cycles, unsigned int *calls);
+void __Runtime_kload_split_cycles(unsigned long long *elf_cyc, unsigned int *elf_n, unsigned long long *rst_cyc,
+                                  unsigned int *rst_n);
 // GEMM dimensions (user-specified, overridable via -D)
 #ifndef M
 #define M 256 // 4096

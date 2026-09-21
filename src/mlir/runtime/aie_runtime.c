@@ -3524,6 +3524,40 @@ AieRC __Runtime_ctrl_push(const __Runtime_CtrlInstance *inst, uint32_t *buf, uin
     return XAIE_OK;
 }
 
+static AieRC rt_ctrl_mm2s_wait_below(XAie_DevInst *dev, uint8_t shim_col, int32_t channel, uint8_t below) {
+    XAie_LocType loc = XAie_TileLoc(shim_col, 0U);
+    uint8_t pending = 0xFFU;
+    for (uint32_t iter = 0U; iter < 100000U; iter++) {
+        AieRC rc = XAie_DmaGetPendingBdCount(dev, loc, (uint8_t)channel, DMA_MM2S, &pending);
+        if (rc != XAIE_OK)
+            return rc;
+        if (pending < below)
+            return XAIE_OK;
+    }
+    printf("[aie_runtime] ctrl MM2S TIMEOUT shim(%u,0) ch=%d pending=%u below=%u\n", (unsigned)shim_col, channel,
+           (unsigned)pending, (unsigned)below);
+    return XAIE_ERR;
+}
+
+static AieRC rt_ctrl_mm2s_wait(XAie_DevInst *dev, uint8_t shim_col, int32_t channel) {
+    XAie_LocType loc = XAie_TileLoc(shim_col, 0U);
+    uint32_t status = 0U;
+    for (uint32_t spin = 0U; spin < 1000000U; spin++) {
+        AieRC rc = XAie_DmaGetChannelStatus(dev, loc, (uint8_t)channel, DMA_MM2S, &status);
+        if (rc != XAIE_OK)
+            return rc;
+        uint32_t queued = (status & AIERT_DMA_TASK_Q_SIZE_MASK) >> AIERT_DMA_TASK_Q_SIZE_LSB;
+        if ((status & AIERT_DMA_CHANNEL_RUNNING_MASK) == 0U && queued == 0U)
+            return XAIE_OK;
+    }
+    printf("[aie_runtime] ctrl MM2S idle TIMEOUT shim(%u,0) ch=%d status=0x%08x running=%u queued=%u cur_bd=%u\n",
+           (unsigned)shim_col, channel, (unsigned)status,
+           (unsigned)((status & AIERT_DMA_CHANNEL_RUNNING_MASK) != 0U),
+           (unsigned)((status & AIERT_DMA_TASK_Q_SIZE_MASK) >> AIERT_DMA_TASK_Q_SIZE_LSB),
+           (unsigned)((status & AIERT_DMA_CUR_BD_MASK) >> AIERT_DMA_CUR_BD_LSB));
+    return XAIE_ERR;
+}
+
 /* ===========================================================================
  * Self-contained control-packet send with routing + TCT return.
  *
@@ -4075,12 +4109,60 @@ static AieRC rt_ctrl_row_shim_return_route(const __Runtime_CtrlRowFabric *f, int
     return XAIE_OK;
 }
 
-/* One-shot row-control fabric init: record the device, spine column, control
- * stream id, and shim S2MM response channel, then plan + emit every EAST chain
- * in @rows. The spine + per-tile port book start empty and are grown by the
- * planner. @rows may be given in any row order (bottom-up preferred); the static
- * planner computes the top row so its return head omits the idle RET_NORTH slot.
- * Each chain head must sit on the spine column (col_lo == shim_col). */
+/* Number of NORTH master ports on a shim stream switch (0-5). */
+#define RT_CTRL_SHIM_NORTH_MSTRS 6U
+
+/* Park the data-plane vertical climbs on the spine shim for the duration of the
+ * control phase.
+ *
+ * The control entry drops the shim MM2S onto SOUTH mux port 3/7 -- the SAME slave
+ * port the data plane already circuit-routes to its own NORTH master. A circuit
+ * slave feeding two masters is a legal multicast, so every control packet would
+ * ALSO be replicated into the data-plane climb, where it lands on a core-tile DMA
+ * whose BDs and locks are not configured yet. That branch never drains, the shim
+ * MM2S backpressures, and the very first control push times out.
+ *
+ * Control sends only happen during load/launch, strictly before any data DMA, so
+ * the two uses are disjoint in time: disable every NORTH master on the spine shim
+ * here and restore them in __Runtime_ctrl_plan_release once the control phase is
+ * over.
+ *
+ * XAie_StrmConnCctDisable rewrites the master config register with enable=0, so
+ * the data-plane master is parked whatever slave it was sourced from -- the slave
+ * argument only matters for the slave-side disable it also performs. Passing the
+ * control entry's own SOUTH mux port keeps that side effect on a port the caller
+ * re-enables immediately afterwards. Must therefore run BEFORE the entry is
+ * programmed. Idempotent, so it is safe on every send. */
+static void rt_ctrl_shim_park_data_masters(const __Runtime_CtrlRowFabric *f, uint8_t fport) {
+    XAie_LocType shim = XAie_TileLoc(f->shim_col, 0U);
+    for (uint8_t m = 0U; m < RT_CTRL_SHIM_NORTH_MSTRS; m++)
+        (void)XAie_StrmConnCctDisable(f->dev, shim, SOUTH, fport, NORTH, m);
+}
+
+/* End of the control phase: cut the control entry off the shim MM2S mux and give
+ * the data plane its stream switches back.
+ *
+ * The forward entry (SOUTH mux -> NORTH VFWD) must go first: once routing() puts
+ * the data-plane climb back on the same slave port, leaving VFWD enabled would
+ * mirror every data beat into the control spine, where the CTRL slaves would
+ * backpressure the data path -- the same multicast hazard in reverse.
+ *
+ * routing() is pure stream-switch configuration and is idempotent, so re-running
+ * it restores exactly what rt_ctrl_shim_park_data_masters disabled without the
+ * runtime having to read the switch config back. Locks, DMA BDs, and core state
+ * are untouched. The upper-spine hops (SOUTH VFWD -> NORTH VFWD) are left in
+ * place; nothing drives them once the shim entry is cut. */
+AieRC __Runtime_ctrl_plan_release(__Runtime_CtrlRowFabric *f, int32_t mm2s_ch) {
+    if (!f || !f->dev)
+        return XAIE_INVALID_ARGS;
+    XAie_LocType shim = XAie_TileLoc(f->shim_col, 0U);
+    (void)XAie_StrmConnCctDisable(f->dev, shim, SOUTH, rt_shim_mm2s_port(mm2s_ch), NORTH, RT_CTRL_VFWD);
+    routing(f->dev);
+    AIEHLC_LOG(printf("[aie_runtime] ctrl_plan_release: shim(%u,0) VFWD cut, data-plane routing restored\n",
+                      (unsigned)f->shim_col););
+    return XAIE_OK;
+}
+
 AieRC __Runtime_ctrl_plan_init(__Runtime_CtrlRowFabric *f, XAie_DevInst *dev, uint8_t shim_col, int32_t resp_s2mm_ch,
                                uint8_t ctrl_id, const __Runtime_CtrlRowChain *rows, uint8_t nrows) {
     if (!f || !dev)
@@ -4093,6 +4175,11 @@ AieRC __Runtime_ctrl_plan_init(__Runtime_CtrlRowFabric *f, XAie_DevInst *dev, ui
     f->ret_vc = 0U;
     f->resp_s2mm_ch = resp_s2mm_ch;
     AieRC rc = rt_ctrl_plan_add_rows(f, rows, nrows);
+    AIEHLC_LOG(printf("[aie_runtime] ctrl_plan_init shim_col=%u ctrl_id=%u resp_s2mm_ch=%d nrows=%u add_rows_rc=%d\n",
+                      (unsigned)shim_col, (unsigned)ctrl_id, (int)resp_s2mm_ch, (unsigned)nrows, (int)rc););
+    if (rc != XAIE_OK)
+        printf("[aie_runtime] ctrl_plan_init ERROR rc=%d (shim_col=%u nrows=%u)\n", (int)rc, (unsigned)shim_col,
+               (unsigned)nrows);
     if (rc != XAIE_OK)
         return rc;
     /* Program the shim return leg now (row 0) so the return spine reaches the
@@ -4123,6 +4210,9 @@ AieRC __Runtime_ctrl_row_close(__Runtime_CtrlRowFabric *f) {
 static AieRC rt_ctrl_row_shim_entry(const __Runtime_CtrlRowFabric *f, int32_t mm2s_ch) {
     XAie_LocType shim = XAie_TileLoc(f->shim_col, 0U);
     uint8_t fport = rt_shim_mm2s_port(mm2s_ch);
+    /* Take the data-plane climbs off this mux port first, else the control stream
+     * is multicast into an unarmed data path and the push backpressures. */
+    rt_ctrl_shim_park_data_masters(f, fport);
     AieRC rc = XAie_EnableShimDmaToAieStrmPort(f->dev, shim, fport);
     if (rc != XAIE_OK) {
         printf("[aie_runtime] ctrl_row: shim entry EnableShimDmaToAieStrmPort (%u,0) port=%u rc=%d\n",
@@ -4137,6 +4227,8 @@ static AieRC rt_ctrl_row_shim_entry(const __Runtime_CtrlRowFabric *f, int32_t mm
     }
     rt_pmap_port(f->shim_col, 0, "SOUTH", fport, "fwd", "slave", f->ctrl_id, "circuit", -1);
     rt_pmap_port(f->shim_col, 0, "NORTH", RT_CTRL_VFWD, "fwd", "master", f->ctrl_id, "circuit", -1);
+    AIEHLC_LOG(printf("[aie_runtime] ctrl_row shim entry OK (%u,0) SOUTH%u->NORTH%u\n", (unsigned)f->shim_col,
+                      (unsigned)fport, (unsigned)RT_CTRL_VFWD););
     return rc;
 }
 
@@ -4185,6 +4277,8 @@ AieRC __Runtime_ctrl_row_broadcast_write(__Runtime_CtrlRowFabric *f, uint32_t ti
         .resp_words = 0U,
     };
     rc = __Runtime_ctrl_push(&inst, pkt, pw, /*block=*/0, log);
+    if (rc == XAIE_OK)
+        rc = rt_ctrl_mm2s_wait(f->dev, f->shim_col, mm2s_ch);
     __Runtime_free_buffer(f->dev, pkt);
     return rc;
 }
@@ -4694,10 +4788,17 @@ static uint8_t rt_ctrl_row_return_poll(const __Runtime_CtrlRowFabric *f, int32_t
     XAie_LocType shim = XAie_TileLoc(f->shim_col, 0U);
     uint8_t pending = (uint8_t)npkt;
     for (uint32_t spin = 0U; spin < 200000U; spin++) {
-        (void)XAie_DmaGetPendingBdCount(f->dev, shim, (uint8_t)s2mm_ch, DMA_S2MM, &pending);
+        AieRC rc = XAie_DmaGetPendingBdCount(f->dev, shim, (uint8_t)s2mm_ch, DMA_S2MM, &pending);
+        if (rc != XAIE_OK) {
+            printf("[aie_runtime] ctrl_row_return poll ERROR ch=%d rc=%d expected=%d\n", s2mm_ch, (int)rc, npkt);
+            return 0xFFU;
+        }
         if (pending == 0U)
             break;
     }
+    if (pending != 0U)
+        printf("[aie_runtime] ctrl_row_return poll TIMEOUT ch=%d pending=%u expected=%d\n", s2mm_ch,
+               (unsigned)pending, npkt);
     __Runtime_sync_for_cpu(f->dev, token, (size_t)npkt * pkt_words * sizeof(uint32_t));
     return pending;
 }
@@ -4808,7 +4909,10 @@ AieRC __Runtime_ctrl_row_write_ack(__Runtime_CtrlRowFabric *f, uint8_t row, uint
         return rc;
     uint8_t sid = (uint8_t)(((uint8_t)ACR_CLASS_WHOLE_ROW << 2) | (rowidx & 0x3U)); /* id[4]=0 whole-row */
     uint32_t cap = nwords * 2U + 8U;
-    uint32_t *pkt = (uint32_t *)__Runtime_alloc_buffer(f->dev, (size_t)cap * sizeof(uint32_t));
+    uint32_t total = (uint32_t)ncols;
+    uint32_t token_off = (cap + 3U) & ~3U;
+    uint32_t *pkt =
+        (uint32_t *)__Runtime_alloc_buffer(f->dev, (size_t)(token_off + total) * sizeof(uint32_t));
     if (!pkt) {
         printf("[aie_runtime] ctrl_row_write_ack ERROR: request buffer alloc failed\n");
         return XAIE_ERR;
@@ -4821,17 +4925,12 @@ AieRC __Runtime_ctrl_row_write_ack(__Runtime_CtrlRowFabric *f, uint8_t row, uint
         return XAIE_ERR;
     }
     __Runtime_sync_for_dev(f->dev, pkt, (size_t)pw * sizeof(uint32_t));
-    uint32_t total = per_pkt * (uint32_t)ncols;
-    uint32_t *token = (uint32_t *)__Runtime_alloc_buffer(f->dev, (size_t)total * sizeof(uint32_t));
-    if (!token) {
-        __Runtime_free_buffer(f->dev, pkt);
-        return XAIE_ERR;
-    }
+    total = per_pkt * (uint32_t)ncols;
+    uint32_t *token = pkt + token_off;
     for (uint32_t i = 0U; i < total; i++)
         token[i] = 0U;
     rc = rt_ctrl_row_shim_return(f, f->resp_s2mm_ch, bd_id + 1, ncols, per_pkt, token);
     if (rc != XAIE_OK) {
-        __Runtime_free_buffer(f->dev, token);
         __Runtime_free_buffer(f->dev, pkt);
         return rc;
     }
@@ -4849,7 +4948,6 @@ AieRC __Runtime_ctrl_row_write_ack(__Runtime_CtrlRowFabric *f, uint8_t row, uint
     };
     rc = __Runtime_ctrl_push(&inst, pkt, pw, /*block=*/0, /*log=*/0);
     if (rc != XAIE_OK) {
-        __Runtime_free_buffer(f->dev, token);
         __Runtime_free_buffer(f->dev, pkt);
         return rc;
     }
@@ -4859,9 +4957,34 @@ AieRC __Runtime_ctrl_row_write_ack(__Runtime_CtrlRowFabric *f, uint8_t row, uint
                (unsigned)row);
     AIEHLC_LOG(printf("[aie_runtime] ctrl_row_write_ack row=%u addr=0x%x nwords=%u acks=%d drained=%d\n", (unsigned)row,
                       tile_addr, nwords, ncols, ncols - (int)pending););
-    __Runtime_free_buffer(f->dev, token);
     __Runtime_free_buffer(f->dev, pkt);
     return (pending == 0U) ? XAIE_OK : XAIE_ERR;
+}
+
+int __Runtime_ctrl_row_single_tile_write_ack_verify(void *dev, uint8_t shim_col, uint8_t row,
+                                                    uint32_t tile_addr, uint32_t value, uint8_t ctrl_id,
+                                                    int32_t bd_id, int32_t mm2s_ch, int32_t s2mm_ch,
+                                                    uint32_t *readback) {
+    if (!dev || !readback)
+        return (int)XAIE_INVALID_ARGS;
+    *readback = 0U;
+    XAie_DevInst *inst = (XAie_DevInst *)dev;
+
+    __Runtime_CtrlRowFabric fabric;
+    __Runtime_CtrlRowChain chain = {row, shim_col, shim_col};
+    AieRC rc = __Runtime_ctrl_plan_init(&fabric, inst, shim_col, s2mm_ch, ctrl_id, &chain, 1U);
+    if (rc != XAIE_OK)
+        return (int)rc;
+
+    rc = __Runtime_ctrl_row_write_ack(&fabric, row, tile_addr, &value, 1U, bd_id, mm2s_ch);
+    if (rc == XAIE_OK)
+        rc = XAie_DataMemBlockRead(inst, XAie_TileLoc(shim_col, row), tile_addr, readback, sizeof(*readback));
+    AieRC close_rc = __Runtime_ctrl_row_close(&fabric);
+    if (rc != XAIE_OK)
+        return (int)rc;
+    if (close_rc != XAIE_OK)
+        return (int)close_rc;
+    return (*readback == value) ? 0 : (int)XAIE_ERR;
 }
 
 /**
@@ -5387,6 +5510,395 @@ struct_kernel_group __Runtime_load_kernel_group_16t(XAie_DevInst *dev, XAie_LocT
     return __Runtime_load_kernel_group_nt(dev, arr, n);
 }
 
+#define RT_CTRL_ELF_CHUNK_WORDS 4U
+#define RT_CTRL_ELF_SKIP_ADDR 0xFFFFFFFFU
+#define RT_CTRL_ELF_ACK_WAVE 3U
+#define RT_CTRL_ELF_PKT_STRIDE 8U
+#define RT_CTRL_ELF_RET_BD 12
+#define RT_CTRL_ELF_NBD 4U    /* shim MM2S BD ids cycled while streaming the ELF */
+#define RT_CTRL_ELF_QDEPTH 3U /* block once this many transfers are outstanding */
+
+static AieRC rt_ctrl_elf_target(XAie_DevInst *dev, XAie_LocType loc, uint32_t paddr, uint32_t *tile_addr) {
+    const XAie_CoreMod *core = dev->DevProp.DevMod[XAIEGBL_TILE_TYPE_AIETILE].CoreMod;
+    if (paddr < core->ProgMemSize) {
+        *tile_addr = core->ProgMemHostOffset + paddr;
+        return XAIE_OK;
+    }
+    if (paddr < core->DataMemAddr || paddr >= core->DataMemAddr + core->DataMemSize * 4U)
+        return XAIE_INVALID_ELF;
+    uint8_t dir = (uint8_t)(paddr / core->DataMemSize);
+    uint8_t parity = core->IsCheckerBoard ? (uint8_t)(loc.Row & 1U) : 1U;
+    XAie_LocType target = loc;
+    if (dir == 4U)
+        target.Row--;
+    else if (dir == 5U && parity)
+        target.Col--;
+    else if (dir == 6U)
+        target.Row++;
+    else if (dir == 7U && !parity)
+        target.Col++;
+    else if (dir < 4U || dir > 7U)
+        return XAIE_INVALID_ELF;
+    if (target.Col != loc.Col || target.Row != loc.Row) {
+        *tile_addr = RT_CTRL_ELF_SKIP_ADDR;
+        return XAIE_OK;
+    }
+    *tile_addr = paddr & (core->DataMemSize - 1U);
+    return XAIE_OK;
+}
+
+static AieRC rt_ctrl_bcast_push(__Runtime_CtrlRowFabric *fab, uint32_t *pkt, uint32_t nwords, int32_t bd_id,
+                                int32_t mm2s_ch) {
+    if (!nwords)
+        return XAIE_OK;
+    AieRC rc = rt_ctrl_row_shim_entry(fab, mm2s_ch);
+    if (rc != XAIE_OK)
+        return rc;
+    const __Runtime_CtrlRowChain *last = &fab->rows[fab->nrows - 1U];
+    __Runtime_sync_for_dev(fab->dev, pkt, (size_t)nwords * sizeof(uint32_t));
+    __Runtime_CtrlInstance inst = {
+        .dev = fab->dev,
+        .shim_col = fab->shim_col,
+        .dest_col = last->col_lo,
+        .dest_row = last->row,
+        .stream_id = (uint8_t)ACR_ID_BCAST,
+        .bd_id = bd_id,
+        .mm2s_ch = mm2s_ch,
+        .s2mm_ch = 0,
+        .token = NULL,
+        .resp_words = 0U,
+    };
+    rc = __Runtime_ctrl_push(&inst, pkt, nwords, /*block=*/0, /*log=*/0);
+    if (rc == XAIE_OK)
+        rc = rt_ctrl_mm2s_wait(fab->dev, fab->shim_col, mm2s_ch);
+    return rc;
+}
+
+static uint32_t rt_ctrl_elf_count_pkts(XAie_DevInst *dev, const uint8_t *elf, XAie_LocType loc) {
+    const Elf32_Ehdr *ehdr = (const Elf32_Ehdr *)elf;
+    uint32_t npkt = 0U;
+    for (uint32_t i = 0U; i < ehdr->e_phnum; i++) {
+        const Elf32_Phdr *phdr = (const Elf32_Phdr *)(elf + ehdr->e_phoff + (uint64_t)i * ehdr->e_phentsize);
+        if (phdr->p_type != (uint32_t)PT_LOAD || phdr->p_filesz == 0U)
+            continue;
+        uint32_t tile_addr = 0U;
+        if (rt_ctrl_elf_target(dev, loc, phdr->p_paddr, &tile_addr) != XAIE_OK ||
+            tile_addr == RT_CTRL_ELF_SKIP_ADDR)
+            continue;
+        npkt += (phdr->p_filesz + (uint32_t)sizeof(uint32_t) * RT_CTRL_ELF_CHUNK_WORDS - 1U) /
+                ((uint32_t)sizeof(uint32_t) * RT_CTRL_ELF_CHUNK_WORDS);
+    }
+    return npkt;
+}
+
+/* Word length of one encoded control-packet access: stream header + control
+ * header + its data beats. The beat count lives in the control header ([21:20],
+ * stored as beats-1), so each access is self-describing and the push loop needs
+ * no side table of lengths. */
+static uint32_t rt_ctrl_elf_pkt_len(const uint32_t *acc) { return 2U + (((acc[1] >> 20) & 0x3U) + 1U); }
+
+/* Encode every ELF PT_LOAD chunk as a SELF-CONTAINED broadcast control packet,
+ * one per RT_CTRL_ELF_PKT_STRIDE-word slot.
+ *
+ * Each access keeps its own stream packet header. Concatenating the accesses
+ * into one header-less run instead (and shipping them under a single DMA BD)
+ * gives the fabric one TLAST for the whole ELF: the CTRL endpoint sees a single
+ * oversized packet, never completes it, and the shim MM2S wedges on the very
+ * first push. The fixed slot stride lets rt_ctrl_elf_dma hand each access to its
+ * own BD, so every access gets the TLAST the packet fabric expects. */
+static AieRC rt_ctrl_elf_fill(XAie_DevInst *dev, const uint8_t *elf, XAie_LocType loc, uint32_t *pkt, uint32_t max_acc,
+                              uint32_t *nacc_out, uint32_t *last_addr_out, uint32_t *last_value_out) {
+    const Elf32_Ehdr *ehdr = (const Elf32_Ehdr *)elf;
+    uint32_t acc = 0U;
+    uint32_t last_addr = 0U;
+    uint32_t last_value = 0U;
+    for (uint32_t i = 0U; i < ehdr->e_phnum; i++) {
+        const Elf32_Phdr *phdr = (const Elf32_Phdr *)(elf + ehdr->e_phoff + (uint64_t)i * ehdr->e_phentsize);
+        if (phdr->p_type != (uint32_t)PT_LOAD || phdr->p_filesz == 0U)
+            continue;
+        uint32_t tile_addr = 0U;
+        AieRC rc = rt_ctrl_elf_target(dev, loc, phdr->p_paddr, &tile_addr);
+        if (rc != XAIE_OK)
+            return rc;
+        if (tile_addr == RT_CTRL_ELF_SKIP_ADDR)
+            continue;
+        uint32_t byte_off = 0U;
+        while (byte_off < phdr->p_filesz) {
+            uint32_t words[RT_CTRL_ELF_CHUNK_WORDS];
+            uint32_t chunk_bytes = phdr->p_filesz - byte_off;
+            if (chunk_bytes > sizeof(words))
+                chunk_bytes = sizeof(words);
+            uint32_t nwords = (chunk_bytes + 3U) / 4U;
+            memset(words, 0, sizeof(words));
+            memcpy(words, elf + phdr->p_offset + byte_off, chunk_bytes);
+            if (acc >= max_acc)
+                return XAIE_ERR;
+            uint32_t *slot = pkt + (size_t)acc * RT_CTRL_ELF_PKT_STRIDE;
+            uint32_t got = __Runtime_ctrl_pktize_write(slot, RT_CTRL_ELF_PKT_STRIDE, (uint8_t)ACR_ID_BCAST,
+                                                       tile_addr + byte_off, words, nwords, 0, 0U, NULL);
+            if (got == 0U)
+                return XAIE_ERR;
+            acc++;
+            last_addr = tile_addr + byte_off + (nwords - 1U) * sizeof(uint32_t);
+            last_value = words[nwords - 1U];
+            byte_off += chunk_bytes;
+        }
+    }
+    *nacc_out = acc;
+    *last_addr_out = last_addr;
+    *last_value_out = last_value;
+    return XAIE_OK;
+}
+
+static AieRC rt_ctrl_elf_ack_drain(__Runtime_CtrlRowFabric *fab, uint32_t *token, int nacks) {
+    int remaining = nacks;
+    int wave_idx = 0;
+    while (remaining > 0) {
+        int wave = remaining > RT_CTRL_ELF_ACK_WAVE ? RT_CTRL_ELF_ACK_WAVE : remaining;
+        if (wave_idx > 0) {
+            AieRC rc = rt_ctrl_row_shim_return(fab, fab->resp_s2mm_ch, RT_CTRL_ELF_RET_BD, wave, 1U, token);
+            if (rc != XAIE_OK)
+                return rc;
+        }
+        uint8_t pending = rt_ctrl_row_return_poll(fab, fab->resp_s2mm_ch, wave, 1U, token);
+        AIEHLC_LOG(
+            printf("[aie_runtime] ctrl_elf ack wave=%d count=%d pending=%u\n", wave_idx, wave, (unsigned)pending););
+        if (pending != 0U) {
+            printf("[aie_runtime] ctrl_elf ack TIMEOUT wave=%d count=%d pending=%u\n", wave_idx, wave,
+                   (unsigned)pending);
+            return XAIE_ERR;
+        }
+        remaining -= wave;
+        wave_idx++;
+    }
+    return XAIE_OK;
+}
+
+static void rt_ctrl_elf_timeout_dump(__Runtime_CtrlRowFabric *fab, const uint32_t *pkt, uint32_t nwords) {
+    uint32_t dump_words = nwords < 24U ? nwords : 24U;
+    printf("[aie_runtime] ctrl_elf tx first_words:");
+    for (uint32_t i = 0U; i < dump_words; i++)
+        printf(" %u:%08x", (unsigned)i, (unsigned)pkt[i]);
+    printf("\n");
+    static const uint32_t addrs[] = {0x20000U, 0x20004U, 0x20008U, 0x2000CU,
+                                     0x20010U, 0x20014U, 0x20018U, 0x2001CU,
+                                     0x20020U, 0x20024U, 0x20028U, 0x2002CU};
+    for (uint8_t ri = 0U; ri < fab->nrows; ri++) {
+        const __Runtime_CtrlRowChain *row = &fab->rows[ri];
+        uint8_t cols[2] = {row->col_lo, row->col_hi};
+        for (uint8_t ci = 0U; ci < 2U; ci++) {
+            if (ci == 1U && cols[ci] == cols[0])
+                continue;
+            printf("[aie_runtime] ctrl_elf pmem tile(%u,%u):", (unsigned)cols[ci], (unsigned)row->row);
+            uint64_t base = XAie_GetTileAddr(fab->dev, row->row, cols[ci]);
+            for (uint32_t ai = 0U; ai < sizeof(addrs) / sizeof(addrs[0]); ai++) {
+                uint32_t value = 0xDEADBEEFU;
+                AieRC rc = XAie_Read32(fab->dev, base + addrs[ai], &value);
+                printf(" %05x=%08x/%d", (unsigned)addrs[ai], (unsigned)value, (int)rc);
+            }
+            printf("\n");
+        }
+    }
+}
+
+static AieRC rt_ctrl_elf_dma(__Runtime_CtrlRowFabric *fab, uint32_t *pkt, uint32_t nacc, uint32_t *ack,
+                             uint32_t ack_words, uint32_t *token, int nacks, int32_t bd_id, int32_t mm2s_ch) {
+    AieRC rc = rt_ctrl_row_shim_entry(fab, mm2s_ch);
+    if (rc != XAIE_OK)
+        return rc;
+    int wave = nacks > RT_CTRL_ELF_ACK_WAVE ? RT_CTRL_ELF_ACK_WAVE : nacks;
+    const __Runtime_CtrlRowChain *last = &fab->rows[fab->nrows - 1U];
+    __Runtime_CtrlInstance inst = {
+        .dev = fab->dev,
+        .shim_col = fab->shim_col,
+        .dest_col = last->col_lo,
+        .dest_row = last->row,
+        .stream_id = (uint8_t)ACR_ID_BCAST,
+        .bd_id = bd_id,
+        .mm2s_ch = mm2s_ch,
+        .s2mm_ch = fab->resp_s2mm_ch,
+        .token = token,
+        .resp_words = (uint32_t)wave,
+    };
+    AIEHLC_LOG(printf("[aie_runtime] ctrl_elf_dma per-packet accesses=%u first=[%08x %08x]\n", (unsigned)nacc,
+                      (unsigned)pkt[0], (unsigned)pkt[1]););
+    /* One BD per access: the packet fabric delimits control packets by TLAST, so
+     * each access must be its own shim MM2S transfer.
+     *
+     * Draining the channel fully between accesses is correct but costs ~1.1M
+     * cycles per access -- almost all of it spent spinning on the channel-status
+     * register, not programming the BD. Instead keep a few transfers in flight:
+     * cycle RT_CTRL_ELF_NBD distinct BD ids and only block when the task queue is
+     * near full. Since the queue retires in issue order, holding pending below
+     * RT_CTRL_ELF_QDEPTH with RT_CTRL_ELF_NBD ids guarantees the id being reused
+     * has already retired. The depth stays under the shim's 4-deep queue: the
+     * driver reports an invalid TaskQSize of 5 (4 queued + 1 active) when it
+     * wedges. The ELF phase's only S2MM BD is RT_CTRL_ELF_RET_BD (12), so these
+     * MM2S ids cannot collide with an ack BD. */
+    for (uint32_t i = 0U; i < nacc; i++) {
+        uint32_t *slot = pkt + (size_t)i * RT_CTRL_ELF_PKT_STRIDE;
+        rc = rt_ctrl_mm2s_wait_below(fab->dev, fab->shim_col, mm2s_ch, RT_CTRL_ELF_QDEPTH);
+        if (rc != XAIE_OK) {
+            printf("[aie_runtime] ctrl_elf_dma stalled on access %u/%u\n", (unsigned)i, (unsigned)nacc);
+            rt_ctrl_elf_timeout_dump(fab, slot, rt_ctrl_elf_pkt_len(slot));
+            return rc;
+        }
+        inst.bd_id = bd_id + (int32_t)(i % RT_CTRL_ELF_NBD);
+        rc = __Runtime_ctrl_push(&inst, slot, rt_ctrl_elf_pkt_len(slot), /*block=*/0, /*log=*/0);
+        if (rc != XAIE_OK)
+            return rc;
+    }
+    inst.bd_id = bd_id;
+    rc = rt_ctrl_mm2s_wait(fab->dev, fab->shim_col, mm2s_ch);
+    if (rc != XAIE_OK) {
+        printf("[aie_runtime] ctrl_elf_dma stalled draining %u accesses\n", (unsigned)nacc);
+        rt_ctrl_elf_timeout_dump(fab, pkt, rt_ctrl_elf_pkt_len(pkt));
+        return rc;
+    }
+    AIEHLC_LOG(printf("[aie_runtime] ctrl_elf_dma per-packet complete accesses=%u\n", (unsigned)nacc););
+    rc = rt_ctrl_row_shim_return(fab, fab->resp_s2mm_ch, RT_CTRL_ELF_RET_BD, wave, 1U, token);
+    if (rc != XAIE_OK)
+        return rc;
+    inst.stream_id = (uint8_t)(((uint8_t)ACR_CLASS_WHOLE_ROW << 2) | ((fab->nrows - 1U) & 0x3U));
+    inst.dest_row = last->row;
+    AIEHLC_LOG(printf("[aie_runtime] ctrl_elf_dma final ack row=%u sid=%u words=%u acks=%d\n", (unsigned)last->row,
+                      (unsigned)inst.stream_id, (unsigned)ack_words, nacks););
+    /* log=0: the log path dumps ctrl_push + 7 ctrl_path diagnostic lines to the
+     * UART, which costs ~100M cycles -- an order of magnitude more than the whole
+     * ELF transfer. rt_ctrl_mm2s_wait below is the real completion barrier. */
+    rc = __Runtime_ctrl_push(&inst, ack, ack_words, /*block=*/0, /*log=*/0);
+    if (rc != XAIE_OK)
+        return rc;
+    rc = rt_ctrl_mm2s_wait(fab->dev, fab->shim_col, mm2s_ch);
+    if (rc != XAIE_OK)
+        return rc;
+    return rt_ctrl_elf_ack_drain(fab, token, nacks);
+}
+
+static AieRC rt_ctrl_load_elf(__Runtime_CtrlRowFabric *fab, const uint8_t *elf, int32_t bd_id, int32_t mm2s_ch) {
+    if (!fab || !fab->dev || !elf || fab->nrows == 0U)
+        return XAIE_INVALID_ARGS;
+    XAie_LocType loc = XAie_TileLoc(fab->rows[0].col_lo, fab->rows[0].row);
+    uint32_t npkt_cap = rt_ctrl_elf_count_pkts(fab->dev, elf, loc);
+    if (npkt_cap == 0U)
+        return XAIE_OK;
+    const __Runtime_CtrlRowChain *last = &fab->rows[fab->nrows - 1U];
+    int nacks = (int)last->col_hi - (int)last->col_lo + 1;
+    int wave = nacks > RT_CTRL_ELF_ACK_WAVE ? RT_CTRL_ELF_ACK_WAVE : nacks;
+    uint32_t data_cap = npkt_cap * RT_CTRL_ELF_PKT_STRIDE;
+    uint32_t ack_off = (data_cap + 3U) & ~3U;
+    uint32_t token_off = ack_off + 4U;
+    uint32_t *pkt = (uint32_t *)__Runtime_alloc_buffer(
+        fab->dev, (size_t)(token_off + (uint32_t)wave * 4U) * sizeof(uint32_t));
+    if (!pkt)
+        return XAIE_ERR;
+    uint32_t nacc = 0U, last_addr = 0U, last_value = 0U;
+    AieRC rc = rt_ctrl_elf_fill(fab->dev, elf, loc, pkt, npkt_cap, &nacc, &last_addr, &last_value);
+    uint32_t *ack = pkt + ack_off;
+    uint8_t sid = (uint8_t)(((uint8_t)ACR_CLASS_WHOLE_ROW << 2) | ((fab->nrows - 1U) & 0x3U));
+    uint32_t ack_words = __Runtime_ctrl_pktize_write(ack, 4U, sid, last_addr, &last_value, 1U, 1, 0U, NULL);
+    AIEHLC_LOG(printf("[aie_runtime] ctrl_elf pktize rc=%d cap=%u accesses=%u final_addr=0x%x ack_words=%u acks=%d\n",
+                      (int)rc, (unsigned)npkt_cap, (unsigned)nacc, (unsigned)last_addr, (unsigned)ack_words, nacks););
+    if (rc == XAIE_OK && nacc > 0U && ack_words > 0U) {
+        __Runtime_sync_for_dev(fab->dev, pkt, (size_t)(ack_off + ack_words) * sizeof(uint32_t));
+        rc = rt_ctrl_elf_dma(fab, pkt, nacc, ack, ack_words, pkt + token_off, nacks, bd_id, mm2s_ch);
+    } else if (rc == XAIE_OK) {
+        rc = XAIE_ERR;
+    }
+    __Runtime_free_buffer(fab->dev, pkt);
+    return rc;
+}
+
+static AieRC rt_ctrl_kernel_state_write(__Runtime_CtrlRowFabric *fab, uint32_t value, int32_t bd_id,
+                                        int32_t mm2s_ch) {
+    const XAie_CoreMod *core = fab->dev->DevProp.DevMod[XAIEGBL_TILE_TYPE_AIETILE].CoreMod;
+    return __Runtime_ctrl_row_broadcast_write(fab, core->CoreCtrl->RegOff, &value, 1U, bd_id, mm2s_ch, 0);
+}
+
+static int rt_ctrl_kernel_tiles_match(const __Runtime_CtrlRowFabric *fab, const XAie_LocType *tiles, int n) {
+    int fabric_tiles = 0;
+    for (uint8_t ri = 0U; ri < fab->nrows; ri++)
+        fabric_tiles += (int)fab->rows[ri].col_hi - (int)fab->rows[ri].col_lo + 1;
+    if (fabric_tiles != n)
+        return 0;
+    for (int i = 0; i < n; i++) {
+        int found = 0;
+        for (uint8_t ri = 0U; ri < fab->nrows; ri++) {
+            const __Runtime_CtrlRowChain *r = &fab->rows[ri];
+            if (tiles[i].Row == r->row && tiles[i].Col >= r->col_lo && tiles[i].Col <= r->col_hi) {
+                found = 1;
+                break;
+            }
+        }
+        if (!found)
+            return 0;
+    }
+    return 1;
+}
+
+static struct_kernel_group rt_ctrl_load_kernel_group_nt(XAie_DevInst *dev, __Runtime_CtrlRowFabric *fab,
+                                                         XAie_LocType *tiles, int n, int32_t bd_id,
+                                                         int32_t mm2s_ch) {
+    unsigned long long __kl_t0 = RT_PROF_TIC();
+    struct_kernel_group kg = {.tiles = s_kernel_tiles, .num_tiles = 0U, .elf_buffers = NULL};
+    if (!dev || !fab || fab->dev != dev || !s_active_kernel_elf || n <= 0 || n > MAX_KERNEL_TILES ||
+        !rt_ctrl_kernel_tiles_match(fab, tiles, n)) {
+        printf("[aie_runtime] ctrl kernel load ERROR: invalid fabric, ELF, or tile coverage\n");
+        return kg;
+    }
+    for (int i = 0; i < n; i++)
+        s_kernel_tiles[i] = tiles[i];
+    for (int i = 0; i < n; i++) {
+        unsigned long long __kr0 = RT_PROF_TIC();
+        AieRC rc = XAie_CoreDisable(dev, tiles[i]);
+        if (rc == XAIE_OK)
+            rc = XAie_CoreReset(dev, tiles[i]);
+        if (rc == XAIE_OK)
+            rc = XAie_CoreUnreset(dev, tiles[i]);
+        RT_PROF_ADD(g_kl_rst_cyc, g_kl_rst_n, __kr0);
+        if (rc != XAIE_OK) {
+            printf("[aie_runtime] ctrl kernel load ERROR: prepare tile(%u,%u) rc=%d\n", (unsigned)tiles[i].Col,
+                   (unsigned)tiles[i].Row, (int)rc);
+            return kg;
+        }
+    }
+    unsigned long long __ke0 = RT_PROF_TIC();
+    AieRC rc = rt_ctrl_load_elf(fab, s_active_kernel_elf, bd_id, mm2s_ch);
+    RT_PROF_ADD(g_kl_elf_cyc, g_kl_elf_n, __ke0);
+    if (rc != XAIE_OK) {
+        printf("[aie_runtime] ctrl kernel load ERROR: rc=%d\n", (int)rc);
+        return kg;
+    }
+    kg.num_tiles = (uint32_t)n;
+    AIEHLC_LOG(printf("[aie_runtime] ctrl kernel load PASS: tiles=%d rows=%u\n", n, (unsigned)fab->nrows););
+    RT_PROF_PHASE(PH_KLOAD, __kl_t0);
+    return kg;
+}
+
+struct_kernel_group __Runtime_load_kernel_group_4t_ctrl(XAie_DevInst *dev, __Runtime_CtrlRowFabric *fab,
+                                                        XAie_LocType t0, XAie_LocType t1, XAie_LocType t2,
+                                                        XAie_LocType t3, int n, int32_t bd_id, int32_t mm2s_ch) {
+    XAie_LocType tiles[] = {t0, t1, t2, t3};
+    return rt_ctrl_load_kernel_group_nt(dev, fab, tiles, n, bd_id, mm2s_ch);
+}
+
+struct_kernel_group __Runtime_load_kernel_group_8t_ctrl(
+    XAie_DevInst *dev, __Runtime_CtrlRowFabric *fab, XAie_LocType t0, XAie_LocType t1, XAie_LocType t2,
+    XAie_LocType t3, XAie_LocType t4, XAie_LocType t5, XAie_LocType t6, XAie_LocType t7, int n, int32_t bd_id,
+    int32_t mm2s_ch) {
+    XAie_LocType tiles[] = {t0, t1, t2, t3, t4, t5, t6, t7};
+    return rt_ctrl_load_kernel_group_nt(dev, fab, tiles, n, bd_id, mm2s_ch);
+}
+
+struct_kernel_group __Runtime_load_kernel_group_16t_ctrl(
+    XAie_DevInst *dev, __Runtime_CtrlRowFabric *fab, XAie_LocType t0, XAie_LocType t1, XAie_LocType t2,
+    XAie_LocType t3, XAie_LocType t4, XAie_LocType t5, XAie_LocType t6, XAie_LocType t7, XAie_LocType t8,
+    XAie_LocType t9, XAie_LocType t10, XAie_LocType t11, XAie_LocType t12, XAie_LocType t13, XAie_LocType t14,
+    XAie_LocType t15, int n, int32_t bd_id, int32_t mm2s_ch) {
+    XAie_LocType tiles[] = {t0, t1, t2, t3, t4, t5, t6, t7, t8, t9, t10, t11, t12, t13, t14, t15};
+    return rt_ctrl_load_kernel_group_nt(dev, fab, tiles, n, bd_id, mm2s_ch);
+}
+
 /**
  * Enable AIE cores using transaction batching.
  * Reference: aeg_runtime_api.cpp graph_api::run() lines 176-181
@@ -5410,14 +5922,7 @@ void __Runtime_core_run(XAie_DevInst *dev, XAie_LocType *tiles, uint32_t num_til
  * Launch kernel group (start cores)
  * Reference: aeg_runtime_api.cpp graph_api::run()
  */
-struct_event __Runtime_launch_kernel_group(XAie_DevInst *dev, struct_kernel_group kg) {
-    struct_event evt;
-    evt.tiles = kg.tiles;
-    evt.num_tiles = kg.num_tiles;
-    evt.timeout_us = 100000;
-
-    AIEHLC_LOG(printf("[aie_runtime] launch_kernel_group num_tiles=%u\n", (unsigned)kg.num_tiles););
-
+static void rt_kernel_profile_setup(XAie_DevInst *dev, struct_kernel_group kg) {
 #if AIEHLC_PROFILING
     if (AIE_DEBUG_HAS_FLAG(g_runtime_debug_level, AIE_DEBUG_FLAG_MM2SBDFINISH_COUNTER)) {
         for (uint32_t i = 0; i < kg.num_tiles; i++) {
@@ -5441,12 +5946,53 @@ struct_event __Runtime_launch_kernel_group(XAie_DevInst *dev, struct_kernel_grou
             }
         }
     }
+#else
+    (void)dev;
+    (void)kg;
 #endif
+}
+
+struct_event __Runtime_launch_kernel_group(XAie_DevInst *dev, struct_kernel_group kg) {
+    struct_event evt;
+    evt.tiles = kg.tiles;
+    evt.num_tiles = kg.num_tiles;
+    evt.timeout_us = 100000;
+
+    AIEHLC_LOG(printf("[aie_runtime] launch_kernel_group num_tiles=%u\n", (unsigned)kg.num_tiles););
+    rt_kernel_profile_setup(dev, kg);
 
     unsigned long long __ce_t0 = RT_PROF_TIC();
     __Runtime_core_run(dev, kg.tiles, kg.num_tiles);
     RT_PROF_PHASE(PH_COREEN, __ce_t0);
 
+    return evt;
+}
+
+struct_event __Runtime_launch_kernel_group_ctrl(XAie_DevInst *dev, __Runtime_CtrlRowFabric *fab,
+                                                struct_kernel_group kg, int32_t bd_id, int32_t mm2s_ch) {
+    struct_event evt = {.tiles = kg.tiles, .num_tiles = kg.num_tiles, .timeout_us = 100000U};
+    if (!dev || !fab || fab->dev != dev || kg.num_tiles == 0U ||
+        !rt_ctrl_kernel_tiles_match(fab, kg.tiles, (int)kg.num_tiles)) {
+        printf("[aie_runtime] ctrl kernel launch ERROR: invalid fabric or tile coverage (num_tiles=%u)\n",
+               (unsigned)(kg.num_tiles));
+        evt.num_tiles = 0U;
+        return evt;
+    }
+    rt_kernel_profile_setup(dev, kg);
+    const XAie_CoreMod *core = dev->DevProp.DevMod[XAIEGBL_TILE_TYPE_AIETILE].CoreMod;
+    uint32_t enable = core->CoreCtrl->CtrlEn.Mask;
+    unsigned long long t0 = RT_PROF_TIC();
+    AieRC rc = rt_ctrl_kernel_state_write(fab, enable, bd_id, mm2s_ch);
+    RT_PROF_PHASE(PH_COREEN, t0);
+    if (rc != XAIE_OK) {
+        printf("[aie_runtime] ctrl kernel launch ERROR: rc=%d\n", (int)rc);
+        evt.num_tiles = 0U;
+    } else {
+        AIEHLC_LOG(printf("[aie_runtime] ctrl kernel launch PASS: tiles=%u\n", (unsigned)kg.num_tiles););
+    }
+    /* Core enable is the last control-packet send of the load/launch phase, so
+     * hand the spine shim back to the data plane before any DMA starts. */
+    (void)__Runtime_ctrl_plan_release(fab, mm2s_ch);
     return evt;
 }
 

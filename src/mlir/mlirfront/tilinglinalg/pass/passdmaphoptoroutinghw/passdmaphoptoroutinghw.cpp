@@ -33,6 +33,16 @@ namespace {
 
 int ioIdx = 0;
 
+static routinghw::pktslot::PktSlotAttrValues<ConversionPatternRewriter>
+makeDataPlanePktSlotAttrs(ConversionPatternRewriter &rewriter, RoutingTopology &router, PortDirection receivePort) {
+    auto rm = router.getRM();
+    auto arbiter = rm->dataPlanePktArbiter();
+    auto slot = rm->dataPlanePktSlaveSlot(receivePort);
+    if (!arbiter || !slot)
+        llvm::report_fatal_error("No packet-switch resources remain after control-plane reservation");
+    return routinghw::pktslot::makePktSlotAttrs(rewriter, *slot, *arbiter);
+}
+
 // Info about a consumer/producer op, captured before erasure
 struct DmaPortInfo {
     std::string portSymName; // 'from' (consumer) or 'tp' (producer) port symbol
@@ -290,7 +300,8 @@ std::optional<TileListPktRoutingNode> GatherPktRoutingPathCreate(Operation* op,
         // For output gather flows, preserve packet headers when OOO is enabled
         // so shim S2MM DMA can do OOO BD dispatch based on packet_id.
         bool preserveHdr = true;
-        auto pktSlot = routinghw::pktslot::makePktSlotAttrs(rewriter);
+        auto pktSlot =
+            makeDataPlanePktSlotAttrs(rewriter, router_, value.SlaveReceiveForwardDirection);
         rewriter.create<routinghw::ConnectStreamPktSwitchPort>(
             op->getLoc(), // Operation location
             output,
@@ -594,7 +605,7 @@ void ParseTheCCTRoutingPath(Operation *op, std::optional<TileListPktRoutingNode>
                 // preserve headers so shim S2MM DMA can read packet_id for
                 // OOO BD dispatch.
                 bool preserveHdrTransition = true;
-                auto pktSlot = routinghw::pktslot::makePktSlotAttrs(rewriter);
+                auto pktSlot = makeDataPlanePktSlotAttrs(rewriter, router_, PortDirection::NONE);
                 rewriter.create<routinghw::ConnectStreamPktSwitchPort>(
                     loc, // Operation location
                     output,

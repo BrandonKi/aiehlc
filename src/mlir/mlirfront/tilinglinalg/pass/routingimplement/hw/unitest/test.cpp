@@ -10,6 +10,16 @@
 
 int main()
 {
+    ResourceMgr conflicting(makeResource("Gen2"));
+    assert(conflicting.allocatePktId(7) == 1);
+    bool collisionDetected = false;
+    try {
+        conflicting.reserveControlPlaneResources(RT_RES_GEN2);
+    } catch (const std::runtime_error &) {
+        collisionDetected = true;
+    }
+    assert(collisionDetected);
+
     auto res = makeResource("Gen2");          // default variant
 
     assert(res->getRows()    == 11);
@@ -23,6 +33,21 @@ int main()
     // resource manager test
     bool ret = ResourceMgr::init(std::move(res));
     auto rmgr = ResourceMgr::instance();
+    rmgr->reserveControlPlaneResources(RT_RES_GEN2);
+    assert(rmgr->allocatePktId(8) == 4);
+    assert(rmgr->dataPlanePktArbiter() == 2);
+    assert(rmgr->dataPlanePktSlaveSlot(PortDirection::West) == 3);
+    assert(rmgr->dataPlanePktSlaveSlot(PortDirection::South) == 3);
+    assert(rmgr->dataPlanePktSlaveSlot(PortDirection::East) == 0);
+    assert(rmgr->dataPlanePktSlaveSlot(PortDirection::North) == 0);
+    assert(rmgr->dataPlanePktSlaveSlot(PortDirection::Control) == 1);
+    int dataPort = -1;
+    assert(rmgr->portDirAvailable(Point{3, 0}, dataPort, PortDirection::East, true));
+    assert(dataPort == 1);
+    assert(rmgr->portDirAvailable(Point{3, 1}, dataPort, PortDirection::North, true));
+    assert(dataPort == 0);
+    assert(rmgr->portDirAvailable(Point{3, 0}, dataPort, PortDirection::North, true));
+    assert(dataPort == 1);
     std::optional<Point> dst(Point{3, 20});
     auto free_shim = rmgr->freeShimNoc(dst);
     if (free_shim) {

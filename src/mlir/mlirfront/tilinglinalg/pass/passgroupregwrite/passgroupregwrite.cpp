@@ -67,12 +67,25 @@ void GroupRegWritePass::runOnOperation() {
     if (!hostOp)
         return;
 
+    dfschedule::LoadKernelGroupOp loadOp;
+    dfschedule::LaunchKernelGroupOp launchOp;
+    hostOp.walk([&](dfschedule::LoadKernelGroupOp l) {
+        if (!loadOp)
+            loadOp = l;
+    });
+    hostOp.walk([&](dfschedule::LaunchKernelGroupOp l) {
+        if (!launchOp)
+            launchOp = l;
+    });
+
     // --- 1. Collect deduplicated lock-init tuples (mirror DfscheduleToApi) ---
     // Dedup by (col,row,lockId), matching state.initializedLocks bookkeeping.
     std::set<std::tuple<int, int, int>> seen;
     std::vector<LockInit> inits;
 
     hostOp.walk([&](dfschedule::ConfigDmaBdOp op) {
+        if (!enableGroupWrites)
+            return;
         int acqId = static_cast<int32_t>(op.getAcquireLockId());
         int acqVal = static_cast<int32_t>(op.getAcquireLockVal());
         // Gate identical to DfscheduleToApi (excludes shim BDs).
@@ -119,7 +132,7 @@ void GroupRegWritePass::runOnOperation() {
         inits.push_back(li);
     });
 
-    if (inits.empty())
+    if (inits.empty() && (!enableKernelControl || !loadOp))
         return;
 
     // --- 2. Configured tile set + per-row column coverage ---
@@ -131,24 +144,37 @@ void GroupRegWritePass::runOnOperation() {
         rowCols[li.row].insert(li.col);
         shimCol = std::min(shimCol, li.col);
     }
+    if (enableKernelControl && loadOp) {
+        for (Value tile : loadOp.getTiles()) {
+            auto td = tile.getDefiningOp<dfschedule::DeclareTileOp>();
+            if (!td || td.getRow() < kCoreRowMin)
+                continue;
+            configuredTiles.insert({td.getCol(), td.getRow()});
+            rowCols[td.getRow()].insert(td.getCol());
+            shimCol = std::min(shimCol, static_cast<int>(td.getCol()));
+        }
+        for (const auto &rc : rowCols) {
+            if (rc.second.empty())
+                continue;
+            int colLo = *rc.second.begin();
+            int colHi = *rc.second.rbegin();
+            if (static_cast<int>(rc.second.size()) != colHi - colLo + 1) {
+                loadOp.emitError("control-packet kernel load requires contiguous columns in each row");
+                signalPassFailure();
+                return;
+            }
+        }
+    }
+    if (rowCols.empty())
+        return;
 
     // --- 3. Cluster by (tileAddr,value) ---
     std::map<std::pair<uint32_t, int>, std::vector<const LockInit *>> clusters;
     for (const auto &li : inits)
         clusters[{li.tileAddr, li.value}].push_back(&li);
 
-    // --- 4. Classify + emit. Insert before schedule.launch_kernel_group. ---
-    dfschedule::LaunchKernelGroupOp launchOp;
-    hostOp.walk([&](dfschedule::LaunchKernelGroupOp l) {
-        if (!launchOp)
-            launchOp = l;
-    });
-
+    // --- 4. Classify + emit. ---
     OpBuilder builder(ctx);
-    if (launchOp)
-        builder.setInsertionPoint(launchOp);
-    else
-        builder.setInsertionPointToEnd(&hostOp.getBody().front());
     Location loc = hostOp.getLoc();
 
     // Folded (col,row,lockId) triples for DfscheduleToApi to skip.
@@ -194,7 +220,7 @@ void GroupRegWritePass::runOnOperation() {
             foldedTriples.push_back(builder.getI32ArrayAttr({li->col, li->row, li->lockId}));
     }
 
-    if (emits.empty())
+    if (emits.empty() && !enableKernelControl)
         return;
 
     // --- 5. Build ctrl_plan_init rows (bottom-up) from configured tiles ---
@@ -210,12 +236,21 @@ void GroupRegWritePass::runOnOperation() {
         rowsAttr.push_back(builder.getDictionaryAttr(fields));
     }
 
+    if (enableKernelControl && loadOp)
+        builder.setInsertionPoint(loadOp);
+    else if (launchOp)
+        builder.setInsertionPoint(launchOp);
+    else
+        builder.setInsertionPointToEnd(&hostOp.getBody().front());
+
     auto fabricTy = dfschedule::CtrlFabricType::get(ctx);
     auto planInit = builder.create<dfschedule::CtrlPlanInitOp>(
         loc, fabricTy, static_cast<uint32_t>(shimCol), static_cast<uint32_t>(ctrlId), static_cast<uint32_t>(respS2mmCh),
         builder.getArrayAttr(rowsAttr));
     Value fabric = planInit.getResult();
 
+    if (launchOp)
+        builder.setInsertionPoint(launchOp);
     for (const auto &e : emits) {
         builder.create<dfschedule::GroupRegWriteOp>(loc, fabric, StringRef(e.kind),
                                                     static_cast<uint32_t>(e.row < 0 ? 0 : e.row), e.tileAddr,
@@ -225,7 +260,10 @@ void GroupRegWritePass::runOnOperation() {
 
     // --- 6. Record folded triples for DfscheduleToApi ---
     mod->setAttr("dfschedule.grouped_lock_inits", builder.getArrayAttr(foldedTriples));
+    if (enableKernelControl)
+        mod->setAttr("dfschedule.control_kernel_ops", builder.getI64IntegerAttr(1));
 
     llvm::errs() << "[GroupRegWrite] folded " << foldedTriples.size() << " lock inits into " << emits.size()
-                 << " control-packet group write(s); fabric shim_col=" << shimCol << " ctrl_id=" << ctrlId << "\n";
+                 << " control-packet group write(s); fabric shim_col=" << shimCol << " ctrl_id=" << ctrlId
+                 << " kernel_control=" << enableKernelControl << "\n";
 }

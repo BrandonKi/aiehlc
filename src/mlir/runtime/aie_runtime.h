@@ -48,6 +48,8 @@ typedef struct {
     uint32_t timeout_us;
 } struct_event;
 
+typedef struct __Runtime_CtrlRowFabric_s __Runtime_CtrlRowFabric;
+
 // Global routing instance (kept for legacy path)
 extern XAie_RoutingInstance *g_RoutingInst;
 
@@ -341,8 +343,27 @@ struct_kernel_group __Runtime_load_kernel_group_16t(XAie_DevInst *dev, XAie_LocT
                                                     XAie_LocType t6, XAie_LocType t7, XAie_LocType t8, XAie_LocType t9,
                                                     XAie_LocType t10, XAie_LocType t11, XAie_LocType t12,
                                                     XAie_LocType t13, XAie_LocType t14, XAie_LocType t15, int n);
+struct_kernel_group __Runtime_load_kernel_group_4t_ctrl(XAie_DevInst *dev, __Runtime_CtrlRowFabric *fab,
+                                                        XAie_LocType t0, XAie_LocType t1, XAie_LocType t2,
+                                                        XAie_LocType t3, int n, int32_t bd_id, int32_t mm2s_ch);
+struct_kernel_group __Runtime_load_kernel_group_8t_ctrl(
+    XAie_DevInst *dev, __Runtime_CtrlRowFabric *fab, XAie_LocType t0, XAie_LocType t1, XAie_LocType t2,
+    XAie_LocType t3, XAie_LocType t4, XAie_LocType t5, XAie_LocType t6, XAie_LocType t7, int n, int32_t bd_id,
+    int32_t mm2s_ch);
+struct_kernel_group __Runtime_load_kernel_group_16t_ctrl(
+    XAie_DevInst *dev, __Runtime_CtrlRowFabric *fab, XAie_LocType t0, XAie_LocType t1, XAie_LocType t2,
+    XAie_LocType t3, XAie_LocType t4, XAie_LocType t5, XAie_LocType t6, XAie_LocType t7, XAie_LocType t8,
+    XAie_LocType t9, XAie_LocType t10, XAie_LocType t11, XAie_LocType t12, XAie_LocType t13, XAie_LocType t14,
+    XAie_LocType t15, int n, int32_t bd_id, int32_t mm2s_ch);
 
 struct_event __Runtime_launch_kernel_group(XAie_DevInst *dev, struct_kernel_group kg);
+struct_event __Runtime_launch_kernel_group_ctrl(XAie_DevInst *dev, __Runtime_CtrlRowFabric *fab,
+                                                struct_kernel_group kg, int32_t bd_id, int32_t mm2s_ch);
+
+void __Runtime_phase_cycles(unsigned long long *cyc, unsigned int *calls);
+void __Runtime_wait_io_cycles(unsigned long long *cycles, unsigned int *calls);
+void __Runtime_kload_split_cycles(unsigned long long *elf_cyc, unsigned int *elf_n, unsigned long long *rst_cyc,
+                                  unsigned int *rst_n);
 
 // Core enable (reference: aeg_runtime_api.cpp graph_api::run)
 void __Runtime_core_run(XAie_DevInst *dev, XAie_LocType *tiles, uint32_t num_tiles);
@@ -724,8 +745,6 @@ void __Runtime_free_buffer(XAie_DevInst *dev, void *ptr);
 
 // Forward decl of the row-control fabric (full definition below) so the commit
 // cast target can reference it before the row-control API block.
-typedef struct __Runtime_CtrlRowFabric_s __Runtime_CtrlRowFabric;
-
 // Begin capturing write-only register ops into the XAie transaction buffer
 // WITHOUT applying them to hardware (XAIE_TRANSACTION_DISABLE_AUTO_FLUSH), and
 // record the cast target @row into @fab->txn_row (read back by commit / push).
@@ -988,6 +1007,13 @@ AieRC __Runtime_ctrl_row_emit(XAie_DevInst *dev, const acr_oplist *ops);
 AieRC __Runtime_ctrl_plan_init(__Runtime_CtrlRowFabric *f, XAie_DevInst *dev, uint8_t shim_col, int32_t resp_s2mm_ch,
                                uint8_t ctrl_id, const __Runtime_CtrlRowChain *rows, uint8_t nrows);
 
+// End the control phase: cut the shim MM2S -> spine forward entry and re-run
+// routing() to restore the data-plane climbs that plan_init parked on the spine
+// shim. The control entry and the data plane share the shim SOUTH mux port, so
+// they must not be enabled at the same time. Called automatically at the end of
+// __Runtime_launch_kernel_group_ctrl; idempotent.
+AieRC __Runtime_ctrl_plan_release(__Runtime_CtrlRowFabric *f, int32_t mm2s_ch);
+
 // Tear down fabric state. Best-effort route teardown (partition reset clears the
 // stream switches).
 AieRC __Runtime_ctrl_row_close(__Runtime_CtrlRowFabric *f);
@@ -1040,5 +1066,15 @@ AieRC __Runtime_ctrl_row_read(__Runtime_CtrlRowFabric *f, uint8_t row, uint32_t 
 // XAIE_OK iff every ack drained. Requires @row configured by __Runtime_ctrl_plan_init.
 AieRC __Runtime_ctrl_row_write_ack(__Runtime_CtrlRowFabric *f, uint8_t row, uint32_t tile_addr, const uint32_t *data,
                                    uint32_t nwords, int32_t bd_id, int32_t mm2s_ch);
+
+// Minimal one-tile control-path probe for generated applications that cannot
+// name __Runtime_CtrlRowFabric in their frontend source. Programs a one-row,
+// one-column fabric at @shim_col, sends @value with write-ack to @tile_addr,
+// then verifies the value through the direct memory interface. Writes the
+// observed value to @readback and returns 0 only when every step succeeds.
+int __Runtime_ctrl_row_single_tile_write_ack_verify(void *dev, uint8_t shim_col, uint8_t row,
+                                                    uint32_t tile_addr, uint32_t value, uint8_t ctrl_id,
+                                                    int32_t bd_id, int32_t mm2s_ch, int32_t s2mm_ch,
+                                                    uint32_t *readback);
 
 #endif // AIE_RUNTIME_H

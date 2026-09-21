@@ -14,9 +14,8 @@
 
 namespace mlir {
 
-/// GroupRegWritePass — coalesce identical per-tile register writes (currently
-/// only the lock-init writes that DfscheduleToApiPass emits as individual
-/// XAie_LockSetValue calls) into hardware control-packet group writes.
+/// GroupRegWritePass — materialize the host control fabric and coalesce
+/// identical per-tile lock-init writes into control-packet group writes.
 ///
 /// A control packet pushed once from the shim DMA fans out to N tiles through
 /// the stream switch, replacing N host-side MMIO register writes. The pass runs
@@ -38,8 +37,10 @@ class GroupRegWritePass : public PassWrapper<GroupRegWritePass, OperationPass<Mo
     GroupRegWritePass() = default;
     // Resource selection for the control fabric (must not collide with the
     // data-plane DMA channels/BDs used by the offloaded kernels).
-    GroupRegWritePass(int ctrlId, int respS2mmCh, int sendBdId, int sendMm2sCh)
-        : ctrlId(ctrlId), respS2mmCh(respS2mmCh), sendBdId(sendBdId), sendMm2sCh(sendMm2sCh) {}
+    GroupRegWritePass(bool enableGroupWrites, bool enableKernelControl, int ctrlId = 1, int respS2mmCh = 0,
+                      int sendBdId = 2, int sendMm2sCh = 0)
+        : enableGroupWrites(enableGroupWrites), enableKernelControl(enableKernelControl), ctrlId(ctrlId),
+          respS2mmCh(respS2mmCh), sendBdId(sendBdId), sendMm2sCh(sendMm2sCh) {}
 
     StringRef getArgument() const final { return "group-reg-write"; }
     StringRef getDescription() const final {
@@ -53,14 +54,16 @@ class GroupRegWritePass : public PassWrapper<GroupRegWritePass, OperationPass<Mo
     }
 
   private:
+    bool enableGroupWrites = true;
+    bool enableKernelControl = false;
     int ctrlId = 1;
-    int respS2mmCh = 1;
+    int respS2mmCh = 0;
     // Blocking write-ack uses shim send BD @sendBdId (forward push) plus return
     // BDs sendBdId+1..sendBdId+ncols (per column). For a 4-column row that is 5
     // BDs; they must all be in-range [0,15] and free on the spine shim tile
-    // (which uses only BD0/BD1 for GEMM input). sendBdId=2 -> BDs 2..6.
+    // (which uses only BD0/BD1 on channel 0). sendBdId=2 -> BDs 2..6.
     int sendBdId = 2;
-    int sendMm2sCh = 1;
+    int sendMm2sCh = 0;
 };
 
 } // namespace mlir

@@ -170,6 +170,8 @@ struct ConversionState {
     // that consume its result share the same __ctrl_fabric_N name). Precomputed
     // before conversion so lowering order does not matter.
     DenseMap<Operation *, std::string> ctrlFabricNames;
+    bool controlKernelOps = false;
+    std::string controlKernelFabric;
     int ctrlDataIndex = 0; // unique suffix for emitted __ctrl_data_N[] arrays
 
     // Configured row indices of each group_reg_write's fabric (from the fabric's
@@ -2083,11 +2085,27 @@ struct LoadKernelGroupInnerPattern : public OpConversionPattern<dfschedule::Load
         auto numTilesConst = rewriter.create<emitc::ConstantOp>(loc, i32Type, rewriter.getI32IntegerAttr(numTiles));
         SmallVector<Value> callOperands;
         callOperands.push_back(state.devInstRef); // XAie_DevInst* dev
+        if (state.controlKernelOps) {
+            auto fabPtrTy = emitc::PointerType::get(
+                emitc::OpaqueType::get(rewriter.getContext(), "__Runtime_CtrlRowFabric"));
+            auto fabVal = rewriter.create<emitc::ConstantOp>(
+                loc, fabPtrTy,
+                emitc::OpaqueAttr::get(rewriter.getContext(), "&" + state.controlKernelFabric));
+            callOperands.push_back(fabVal.getResult());
+            funcName += "_ctrl";
+        }
         callOperands.append(tiles.begin(), tiles.end());
         // Pad with last tile to fill the positional slots
-        while (callOperands.size() < padTo + 1) // +1 for dev parameter
+        size_t fixedOperands = state.controlKernelOps ? 2 : 1;
+        while (callOperands.size() < padTo + fixedOperands)
             callOperands.push_back(tiles.back());
         callOperands.push_back(numTilesConst.getResult());
+        if (state.controlKernelOps) {
+            callOperands.push_back(
+                rewriter.create<emitc::ConstantOp>(loc, i32Type, rewriter.getI32IntegerAttr(2)).getResult());
+            callOperands.push_back(
+                rewriter.create<emitc::ConstantOp>(loc, i32Type, rewriter.getI32IntegerAttr(0)).getResult());
+        }
 
         auto loadCall =
             rewriter.create<emitc::CallOpaqueOp>(loc, kernelGroupType, funcName, nullptr, nullptr, callOperands);
@@ -2138,8 +2156,27 @@ struct LaunchKernelGroupInnerPattern : public OpConversionPattern<dfschedule::La
 
         // Create __Runtime_launch_kernel_group call:
         // event = __Runtime_launch_kernel_group(dev, kernel_group);
-        auto launchCall = rewriter.create<emitc::CallOpaqueOp>(loc, eventType, "__Runtime_launch_kernel_group", nullptr,
-                                                               nullptr, ValueRange{state.devInstRef, kernelGroup});
+        SmallVector<Value> launchOperands{state.devInstRef};
+        std::string launchName = "__Runtime_launch_kernel_group";
+        if (state.controlKernelOps) {
+            auto fabPtrTy = emitc::PointerType::get(
+                emitc::OpaqueType::get(rewriter.getContext(), "__Runtime_CtrlRowFabric"));
+            auto fabVal = rewriter.create<emitc::ConstantOp>(
+                loc, fabPtrTy,
+                emitc::OpaqueAttr::get(rewriter.getContext(), "&" + state.controlKernelFabric));
+            launchOperands.push_back(fabVal.getResult());
+            launchName += "_ctrl";
+        }
+        launchOperands.push_back(kernelGroup);
+        if (state.controlKernelOps) {
+            auto i32Type = rewriter.getI32Type();
+            launchOperands.push_back(
+                rewriter.create<emitc::ConstantOp>(loc, i32Type, rewriter.getI32IntegerAttr(2)).getResult());
+            launchOperands.push_back(
+                rewriter.create<emitc::ConstantOp>(loc, i32Type, rewriter.getI32IntegerAttr(0)).getResult());
+        }
+        auto launchCall = rewriter.create<emitc::CallOpaqueOp>(loc, eventType, launchName, nullptr, nullptr,
+                                                               launchOperands);
 
         llvm::errs() << "  ✓ Created __Runtime_launch_kernel_group call\n";
         
@@ -2206,13 +2243,9 @@ struct CtrlPlanInitInnerPattern : public OpConversionPattern<dfschedule::CtrlPla
 };
 
 /// OpConversionPattern for dfschedule.group_reg_write
-/// Lowers a group_reg_write to one or more BLOCKING __Runtime_ctrl_row_write_ack
-/// calls (whole-row write whose acks drain via the fabric's free resp S2MM
-/// channel = delivery barrier). A "broadcast" expands into one write-ack per
-/// configured row; a "row" write-acks that single row. Blocking delivery is
-/// required because the shim MM2S send channel is reused by the data-plane DMA
-/// later in host.cc; the ack barrier guarantees each control packet fully lands
-/// before that channel is re-armed. Emits a static uint32_t data[] array first.
+/// Lowers a group_reg_write. Identical values covering the whole fabric become
+/// one `__Runtime_ctrl_row_broadcast_write` (MM2S drain is the barrier). A
+/// "row" write still uses blocking `__Runtime_ctrl_row_write_ack`.
 struct GroupRegWriteInnerPattern : public OpConversionPattern<dfschedule::GroupRegWriteOp> {
     ConversionState &state;
 
@@ -2257,7 +2290,12 @@ struct GroupRegWriteInnerPattern : public OpConversionPattern<dfschedule::GroupR
         };
 
         unsigned nCalls = 0;
-        if (kind == "row") {
+        if (kind == "broadcast") {
+            std::string call = "__Runtime_ctrl_row_broadcast_write(&" + fab + ", " + tileAddrHex + ", " + dataArr +
+                               ", " + std::to_string(nwords) + ", " + bdId + ", " + mm2sCh + ", 0);";
+            rewriter.create<emitc::VerbatimOp>(loc, call);
+            nCalls = 1;
+        } else if (kind == "row") {
             emitAck(static_cast<int32_t>(op.getRow()));
             nCalls = 1;
         } else {
@@ -3187,6 +3225,8 @@ void DfscheduleToApiPass::runOnOperation() {
     ConversionState state;
     state.enableDebug = enableDebug_;
     state.runtimeDebugLevel = runtimeDebugLevel_;
+    if (auto attr = moduleOp->getAttrOfType<IntegerAttr>("dfschedule.control_kernel_ops"))
+        state.controlKernelOps = attr.getInt() != 0;
 
     // Load the (col,row,lock_id) triples that GroupRegWritePass coalesced into
     // control-packet group writes; their individual XAie_LockSetValue emission is
@@ -3215,6 +3255,8 @@ void DfscheduleToApiPass::runOnOperation() {
             std::string n = "__ctrl_fabric_" + std::to_string(fidx++);
             state.ctrlFabricNames[p.getOperation()] = n;
             planName[p.getOperation()] = n;
+            if (state.controlKernelOps && state.controlKernelFabric.empty())
+                state.controlKernelFabric = n;
         });
         moduleOp.walk([&](dfschedule::GroupRegWriteOp g) {
             if (auto p = g.getFabric().getDefiningOp<dfschedule::CtrlPlanInitOp>()) {
@@ -3230,6 +3272,11 @@ void DfscheduleToApiPass::runOnOperation() {
                 state.ctrlFabricRows[g.getOperation()] = rows;
             }
         });
+    }
+    if (state.controlKernelOps && state.controlKernelFabric.empty()) {
+        moduleOp.emitError("control-packet kernel operations require a control fabric");
+        signalPassFailure();
+        return;
     }
 
     // Type converter

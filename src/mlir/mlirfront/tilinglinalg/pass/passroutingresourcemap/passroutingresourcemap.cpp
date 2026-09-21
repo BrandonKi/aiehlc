@@ -7,6 +7,7 @@
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinTypes.h"
+#include "routinghw_pkt_slot.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/raw_ostream.h"
 
@@ -174,55 +175,18 @@ static void writePort(JsonWriter &jw, StringRef key, StringRef dir, int64_t idx)
     jw.endObject();
 }
 
-// Pkt mask derivation matches routinghwlower.cpp EmitC:
-//   recv/forward slave slot -> mask = 0x0  (forward-all)   [routinghwlower.cpp:237]
-//   local-DMA slave slot    -> mask = 0x1f (exact 5-bit)   [routinghwlower.cpp:243]
-static constexpr int64_t RECV_SLOT_MASK = 0x0;
-static constexpr int64_t DMA_SLOT_MASK = 0x1f;
-
-// Pkt msel/arbiter match routinghwlower.cpp EmitC hardcoded constants:
-//   slave slot (recv + local DMA): msel = 0, arbiter = 0  [routinghwlower.cpp:238-239]
-//   forward master port: Arbitor = 0                      [routinghwlower.cpp:280,300]
-// (XAie_StrmPktSwSlaveSlotEnable(..., Mask, MSel, Arbitor) and
-//  XAie_StrmPktSwMstrPortEnable(..., DropHeader, Arbitor, MSelEn); see xaie_ss.c.)
-//
-// The master's MSelEn is NOT an independent constant: the packet-switch routing
-// rule is that a slave slot with (Arbitor=A, MSel=M) reaches every master port
-// whose Arbitor==A and whose MSelEn has bit M set. So the master port that merges
-// the recv + local-DMA slave slots derives its enable mask by OR-ing in one bit
-// per feeding slave slot:  MSelEn |= (1 << MSel).  With every slot at MSel=0 this
-// yields MSelEn=1, identical to what EmitC programs today; it generalises when
-// slots are ever assigned distinct MSel values.
-static constexpr int64_t SLOT_MSEL = 0;
-static constexpr int64_t SLOT_ARBITER = 0;
-static constexpr int64_t MASTER_ARBITER = 0;
-
-// MSelEn |= (1 << MSel) over the slave slots that actually feed the master.
-// The PKT->CIRC transition op has neither slave present (forward-only); it still
-// needs a non-zero enable, so it defaults to the MSel-0 bit (matches EmitC's
-// hardcoded MSelEn=1).
-static int64_t computeMasterMSelEn(bool recvPresent, int64_t recvMsel, bool dmaPresent, int64_t dmaMsel) {
-    int64_t mselEn = 0;
-    if (recvPresent)
-        mselEn |= (1 << recvMsel);
-    if (dmaPresent)
-        mselEn |= (1 << dmaMsel);
-    if (mselEn == 0)
-        mselEn = (1 << SLOT_MSEL);
-    return mselEn;
-}
-
 static bool writeConnectionOp(JsonWriter &jw, Operation *op) {
     if (auto c = dyn_cast<ConnectStreamPktSwitchPort>(op)) {
         TileInfo t = resolveTile(op->getOperand(0));
+        auto recvSlot = routinghw::pktslot::recvSlaveFromOp(op);
+        auto dmaSlot = routinghw::pktslot::localDmaFromOp(op);
+        auto fwdMaster = routinghw::pktslot::forwardMasterFromOp(op);
         jw.beginObjectInline();
         jw.keyValue("kind", "packet_connect");
         writeTileRef(jw, "tile", t);
 
         std::string recvDir = getStrAttr(op, "receiveslavedirection");
         std::string dmaDir = getStrAttr(op, "localdmadirection");
-        bool recvPresent = (recvDir != "NONE");
-        bool dmaPresent = (dmaDir != "NONE");
 
         jw.key("recv_slave");
         jw.beginObject();
@@ -230,9 +194,10 @@ static bool writeConnectionOp(JsonWriter &jw, Operation *op) {
         jw.keyValue("idx", getIntAttr(op, "receiveslaveportidx"));
         jw.keyValue("pktid", getIntAttr(op, "receiveslavepktid"));
         jw.keyValue("pkttype", getIntAttr(op, "receiveslavepkttype"));
-        jw.keyValue("mask", RECV_SLOT_MASK);
-        jw.keyValue("msel", SLOT_MSEL);
-        jw.keyValue("arbiter", SLOT_ARBITER);
+        jw.keyValue("mask", recvSlot.mask);
+        jw.keyValue("msel", recvSlot.msel);
+        jw.keyValue("arbiter", recvSlot.arbiter);
+        jw.keyValue("slot", recvSlot.slot);
         jw.endObject();
 
         jw.key("local_dma");
@@ -241,21 +206,18 @@ static bool writeConnectionOp(JsonWriter &jw, Operation *op) {
         jw.keyValue("idx", getIntAttr(op, "localdmaportidx"));
         jw.keyValue("pktid", getIntAttr(op, "localdmapktid"));
         jw.keyValue("pkttype", getIntAttr(op, "localdmapkttype"));
-        jw.keyValue("mask", DMA_SLOT_MASK);
-        jw.keyValue("msel", SLOT_MSEL);
-        jw.keyValue("arbiter", SLOT_ARBITER);
+        jw.keyValue("mask", dmaSlot.mask);
+        jw.keyValue("msel", dmaSlot.msel);
+        jw.keyValue("arbiter", dmaSlot.arbiter);
+        jw.keyValue("slot", dmaSlot.slot);
         jw.endObject();
-
-        // MSelEn |= (1 << MSel) over the recv + local-DMA slave slots feeding this
-        // master port; see computeMasterMSelEn / xaie_ss.c packet-switch routing.
-        int64_t masterMSelEn = computeMasterMSelEn(recvPresent, SLOT_MSEL, dmaPresent, SLOT_MSEL);
 
         jw.key("forward_master");
         jw.beginObject();
         jw.keyValue("dir", getStrAttr(op, "forwardmasterdirection"));
         jw.keyValue("idx", getIntAttr(op, "forwardmasterportidx"));
-        jw.keyValue("mselen", masterMSelEn);
-        jw.keyValue("arbiter", MASTER_ARBITER);
+        jw.keyValue("mselen", fwdMaster.mselEn);
+        jw.keyValue("arbiter", fwdMaster.arbiter);
         jw.endObject();
 
         bool preserve = false;

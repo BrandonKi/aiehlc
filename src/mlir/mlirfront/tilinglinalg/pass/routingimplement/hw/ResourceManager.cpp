@@ -220,6 +220,26 @@ bool RoutingTile::releaseByIo(IOType io, int portidx,  PortDirection dir, int io
     return false;
 }
 
+bool RoutingTile::reservePortNumber(PortDirection dir, PortRole role, int portNum, int ownerId) {
+    auto bankIt = banks_.find(dir);
+    if (bankIt == banks_.end())
+        return true;
+    auto &ports = role == PortRole::Master ? bankIt->second.master : bankIt->second.slave;
+    for (int i = 0; i < static_cast<int>(ports.size()); ++i) {
+        auto &port = ports[i];
+        int hardwarePort = port.getportNum() < 0 ? i : port.getportNum();
+        if (hardwarePort != portNum)
+            continue;
+        if (port.used && port.ioId != ownerId)
+            return false;
+        port.used = true;
+        port.invalid = false;
+        port.ioId = ownerId;
+        return true;
+    }
+    return true;
+}
+
 // ──────────────────────────────────────────────────────────────
 // ResourceMgr impl
 // ──────────────────────────────────────────────────────────────
@@ -821,7 +841,7 @@ bool ResourceMgr::isPktIdFree(int pktId) const {
 // ──────────────────────────────────────────────────────────────
 // Control-plane resource reservation (excludes control-plane stream-switch
 // resources from routing/scheduling). Reads the reservation table
-// (aie_runtime_resource.c) — the single source of truth.
+// (aie_runtime_resource.c)
 // ──────────────────────────────────────────────────────────────
 void ResourceMgr::reserveControlPlaneResources(rt_res_gen gen) {
     if (controlPlaneReserved_)
@@ -831,6 +851,8 @@ void ResourceMgr::reserveControlPlaneResources(rt_res_gen gen) {
     uint32_t pmask = __Runtime_res_reserved_pktid_mask(gen);
     for (int i = 0; i < kMaxPktId; ++i) {
         if (pmask & (1u << i)) {
+            if (pktIdPool_[i].used && pktIdPool_[i].ownerId != kControlPlaneOwner)
+                throw std::runtime_error("control-plane packet ID reservation conflicts with an existing allocation");
             pktIdPool_[i].used = true;
             pktIdPool_[i].ownerId = kControlPlaneOwner;
         }
@@ -843,6 +865,31 @@ void ResourceMgr::reserveControlPlaneResources(rt_res_gen gen) {
         reservedSlotMask_[p][1] = __Runtime_res_reserved_slot_mask(gen, (uint8_t)p, /*is_master=*/1);
     }
 
+    int spineCol = hasPartition() ? partitionStartCol_ : 0;
+    auto reservePort = [&](RoutingTile &tile, PortDirection port, PortRole role) {
+        if (!tile.reservePortNumber(port, role, 0, kControlPlaneOwner))
+            throw std::runtime_error("control-plane stream port reservation conflicts with an existing route");
+    };
+    for (int row = 0; row < rows(); ++row) {
+        for (int col = 0; col < cols(); ++col) {
+            if (!isTileInPartition(row, col))
+                continue;
+            RoutingTile &routingTile = tile(row, col);
+            if (routingTile.type() == TileType::Core) {
+                reservePort(routingTile, PortDirection::West, PortRole::Slave);
+                reservePort(routingTile, PortDirection::East, PortRole::Master);
+                reservePort(routingTile, PortDirection::East, PortRole::Slave);
+                reservePort(routingTile, PortDirection::West, PortRole::Master);
+            }
+            if (col == spineCol) {
+                reservePort(routingTile, PortDirection::North, PortRole::Slave);
+                reservePort(routingTile, PortDirection::North, PortRole::Master);
+                reservePort(routingTile, PortDirection::South, PortRole::Slave);
+                reservePort(routingTile, PortDirection::South, PortRole::Master);
+            }
+        }
+    }
+
     controlPlaneReserved_ = true;
     std::cout << "[ResourceMgr] control-plane resources reserved (gen=" << (int)gen << " pktidmask=0x" << std::hex
               << pmask << " arbmask=0x" << reservedArbiterMask_ << std::dec << ")" << std::endl;
@@ -852,4 +899,40 @@ int ResourceMgr::reservedSlotMask(uint8_t port, uint8_t is_master) const {
     if (port >= kNumPortTypes || is_master > 1)
         return 0;
     return reservedSlotMask_[port][is_master];
+}
+
+std::optional<int> ResourceMgr::dataPlanePktArbiter() const {
+    for (int arbiter = 0; arbiter < 8; ++arbiter)
+        if ((reservedArbiterMask_ & (1u << arbiter)) == 0)
+            return arbiter;
+    return std::nullopt;
+}
+
+std::optional<int> ResourceMgr::dataPlanePktSlaveSlot(PortDirection port) const {
+    int resourcePort = -1;
+    switch (port) {
+    case PortDirection::West:
+        resourcePort = RT_RES_PORT_WEST;
+        break;
+    case PortDirection::East:
+        resourcePort = RT_RES_PORT_EAST;
+        break;
+    case PortDirection::North:
+        resourcePort = RT_RES_PORT_NORTH;
+        break;
+    case PortDirection::South:
+        resourcePort = RT_RES_PORT_SOUTH;
+        break;
+    case PortDirection::Control:
+        resourcePort = RT_RES_PORT_CTRL;
+        break;
+    default:
+        return 0;
+    }
+
+    int mask = reservedSlotMask(static_cast<uint8_t>(resourcePort), 0);
+    for (int slot = 0; slot < RT_RES_NUM_SLOTS; ++slot)
+        if ((mask & (1 << slot)) == 0)
+            return slot;
+    return std::nullopt;
 }

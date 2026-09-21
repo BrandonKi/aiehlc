@@ -89,8 +89,9 @@ static int test_book() {
 // Slot budget with the simplified forward chain + return chain. This row_add is
 // planned as the TOP row (is_top=1), so the spine head omits the idle RET_NORTH
 // merge slot. The per-column slot total is forward + return:
-//   spine head (col_lo, on spine col): fwd consume+bcast+transitN (3) +
-//       ret local+transit (2, no north on top head) = 5
+//   spine head (col_lo, on spine col): fwd consume+bcast (2, no transitN on the
+//       top head -- nothing above to climb to) + ret local+transit (2, no north
+//       on top head) = 4
 //   interior (col_lo<c<col_hi): fwd consume+bcast (2) + ret local+transit (2) = 4
 //   last (col_hi): fwd consume+bcast (2) + ret local (1) = 3
 // The forward CTRL master is always 0x3 (no more last-tile 0x7). A plain chain
@@ -101,10 +102,10 @@ static int test_slot_classes() {
     acr_portbook b = {};
     acr_oplist o = {};
     assert(acr_plan_row_add(&s, &o, &b, 2, 3, 2, 4, /*ctrl_id*/ 0, /*is_top*/ 1) == ACR_OK); // head row 3, cols 2..4
-    assert(count_slots(&o, 2) == 5); // top spine head: fwd 3 + ret 2
+    assert(count_slots(&o, 2) == 4); // top spine head: fwd 2 + ret 2
     assert(count_slots(&o, 3) == 4); // interior: fwd 2 + ret 2
     assert(count_slots(&o, 4) == 3); // last: fwd 2 + ret 1
-    assert(count_slots_arb(&o, 2, ACR_ARB_CTRL) == 3);
+    assert(count_slots_arb(&o, 2, ACR_ARB_CTRL) == 2); // top head: no transit-north
     assert(count_slots_arb(&o, 2, ACR_ARB_RET) == 2); // top head: local+transit (no north)
     assert(count_slots_arb(&o, 4, ACR_ARB_CTRL) == 2);
     assert(count_slots_arb(&o, 4, ACR_ARB_RET) == 1);
@@ -142,14 +143,16 @@ static int test_east_forward() {
 }
 
 // Forward slot table (arbiter ACR_ARB_CTRL). Every tile arms consume (pkt rowidx,
-// mask 0x17, msel0) + broadcast (0x10/0x10/msel1); the spine head additionally
-// arms transit-north (0x00/0x10/msel2). No tile arms an only-last / whole-row /
-// transit-east slot anymore (the forward chain is uniform). Row index is 0.
+// mask 0x17, msel0) + broadcast (0x10/0x10/msel1); a spine head that has rows
+// above it additionally arms transit-north (0x00/0x10/msel2). No tile arms an
+// only-last / whole-row / transit-east slot anymore (the forward chain is
+// uniform). Planned with is_top=0 so the transit-north encoding is exercised;
+// test_top_head_no_north_climb covers the top-row case. Row index is 0.
 static int test_forward_slot_table() {
     acr_state s = {};
     acr_portbook b = {};
     acr_oplist o = {};
-    assert(acr_plan_row_add(&s, &o, &b, 2, 3, 2, 4, /*ctrl_id*/ 0, /*is_top*/ 1) ==
+    assert(acr_plan_row_add(&s, &o, &b, 2, 3, 2, 4, /*ctrl_id*/ 0, /*is_top*/ 0) ==
            ACR_OK); // head row 3, cols 2..4, rowidx 0
     const uint8_t rowidx = 0, head = 2, col_hi = 4;
 
@@ -283,9 +286,28 @@ static int test_shared_head_fanout() {
     // Row 4 (not a head) stays a circuit pass-through in BOTH directions.
     assert(has_cct(&o2, 0, 4, ACR_SOUTH, ACR_NORTH));
     assert(has_cct(&o2, 0, 4, ACR_NORTH, ACR_SOUTH));
-    // The new head row 5 emits its own NORTH master (broadcast + transit).
-    assert(count_master(&o2, 0, ACR_NORTH) == 1);
-    assert(master_mselen(&o2, 0, ACR_NORTH) == 0x6);
+    // Row 5 is the TOP row: nothing is configured above it, so its head emits NO
+    // NORTH climb master. Pushing at an unarmed ingress would backpressure the
+    // head's multicast slots and wedge the whole broadcast tree.
+    assert(count_master(&o2, 0, ACR_NORTH) == 0);
+    return 0;
+}
+
+// The topmost configured row's head must not climb north: there is no row above
+// whose ingress slave was armed, so a NORTH master there stalls -- and because
+// CTRL/EAST/NORTH multicast the same slot, that stall blocks the entire forward
+// broadcast once the switch FIFOs fill. Mirror of the RET_NORTH omission.
+static int test_top_head_no_north_climb() {
+    acr_state s = {};
+    acr_portbook b = {};
+    acr_oplist o = {};
+    assert(acr_plan_row_add(&s, &o, &b, 2, 3, 2, 4, /*ctrl_id*/ 0, /*is_top*/ 1) == ACR_OK);
+    assert(find_slot(&o, 2, ACR_SOUTH, ACR_SLOT_TRANSIT_N, ACR_ARB_CTRL) == nullptr);
+    assert(count_master(&o, 2, ACR_NORTH) == 0);
+    // The consume + broadcast taps and the CTRL fan-out are unaffected.
+    assert(find_slot(&o, 2, ACR_SOUTH, ACR_SLOT_CONSUME, ACR_ARB_CTRL) != nullptr);
+    assert(find_slot(&o, 2, ACR_SOUTH, ACR_SLOT_BCAST, ACR_ARB_CTRL) != nullptr);
+    assert(master_mselen(&o, 2, ACR_CTRL) == 0x3);
     return 0;
 }
 
@@ -359,7 +381,7 @@ static int test_is_ret_tagging() {
 
 int main() {
     if (test_book() || test_slot_classes() || test_east_forward() || test_forward_slot_table() || test_return_chain() ||
-        test_spine_reuse() || test_shared_head_fanout() || test_is_ret_tagging())
+        test_spine_reuse() || test_shared_head_fanout() || test_top_head_no_north_climb() || test_is_ret_tagging())
         return 1;
     printf("PASS\n");
     return 0;

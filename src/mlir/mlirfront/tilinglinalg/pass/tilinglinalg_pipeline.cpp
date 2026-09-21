@@ -570,7 +570,13 @@ bool TilingLinalgPipeline::runPipeline(mlir::MLIRContext &ctx, mlir::ModuleOp mo
     // otherwise keep relStartCol = -1 so RoutingTopology skips setPartitionBounds.
     int relStartCol = (partStartCol >= 0 && partEndCol >= 0) ? 0 : -1;
     int relEndCol = (partStartCol >= 0 && partEndCol >= 0) ? (partEndCol - partStartCol) : -1;
+    auto controlPlanAttr =
+        module->getAttrOfType<mlir::IntegerAttr>("routing.control_plan_op_control_packet");
+    bool reserveControlPlane = controlPlanAttr && controlPlanAttr.getInt() != 0;
+    rt_res_gen resourceGen = __Runtime_res_gen_from_name(aieGen.c_str());
     RoutingTopology rtopology(aieGen, "", relStartCol, relEndCol, partStartRow, partEndRow);
+    if (reserveControlPlane)
+        rtopology.getRM()->reserveControlPlaneResources(resourceGen);
 
     std::string irDir = setupPipelineIRDir("dfschedule");
     int stage = 0;
@@ -696,14 +702,8 @@ bool TilingLinalgPipeline::runPipeline(mlir::MLIRContext &ctx, mlir::ModuleOp mo
     {
         auto hwRes = makeResource(aieGen);
         ResourceMgr::init(std::move(hwRes));
-        // Control-plane resource reservation (pkt-ids/arbiters/slots excluded from
-        // routing/scheduling) is OPT-IN via `#pragma control_plan_op_control_packet`
-        // (module attr set in aiehlc.cc). Single source of truth for the reserved
-        // resources is the reservation table (aie_runtime_resource.c).
-        if (auto cpAttr = module->getAttrOfType<mlir::IntegerAttr>("routing.control_plan_op_control_packet");
-            cpAttr && cpAttr.getInt() != 0) {
-            ResourceMgr::instance()->reserveControlPlaneResources(__Runtime_res_gen_from_name(aieGen.c_str()));
-        }
+        if (reserveControlPlane)
+            ResourceMgr::instance()->reserveControlPlaneResources(resourceGen);
     }
 
     // Early memory check: validate that per-tile buffer requirements fit in tile data memory
@@ -775,17 +775,19 @@ bool TilingLinalgPipeline::runPipeline(mlir::MLIRContext &ctx, mlir::ModuleOp mo
         return false;
     }
 
-    // Coalesce identical per-tile lock-init register writes into control-packet
-    // group writes (broadcast / row-multicast). Must run before DfscheduleToApiPass
-    // so the folded triples (module attr dfschedule.grouped_lock_inits) suppress
-    // the individual XAie_LockSetValue emission there. Opt-in only: gated on the
-    // routing.control_plan_group_reg_write module attr, published by aiehlc when
-    // the user writes #pragma CONTROL_PLAN_GROUP_REG_WRITE. Without it, lock inits
-    // are emitted as individual register writes.
+    // Materialize the row-control fabric for pragma-enabled kernel load/launch,
+    // and optionally coalesce lock-init writes. Must run before
+    // DfscheduleToApiPass. Kernel control is gated by
+    // routing.control_plan_op_control_packet; lock folding is independently
+    // gated by routing.control_plan_group_reg_write.
     auto grwAttr = module->getAttrOfType<mlir::IntegerAttr>("routing.control_plan_group_reg_write");
-    if (grwAttr && grwAttr.getInt() != 0) {
-        if (!runPipelineSinglePass(ctx, hostModule, std::make_unique<mlir::GroupRegWritePass>(), irDir, stage,
-                                   "GroupRegWritePass"))
+    auto ctrlAttr = module->getAttrOfType<mlir::IntegerAttr>("routing.control_plan_op_control_packet");
+    bool enableGroupWrites = grwAttr && grwAttr.getInt() != 0;
+    bool enableKernelControl = ctrlAttr && ctrlAttr.getInt() != 0;
+    if (enableGroupWrites || enableKernelControl) {
+        if (!runPipelineSinglePass(
+                ctx, hostModule, std::make_unique<mlir::GroupRegWritePass>(enableGroupWrites, enableKernelControl),
+                irDir, stage, "GroupRegWritePass"))
             return false;
     } else {
         llvm::errs() << "[TilingLinalg] GroupRegWritePass skipped (enable with "
@@ -1689,6 +1691,8 @@ after_host_emit:
         // shim tile info from the dmaphop IR and allocates its own DataIO objects.
         // Use the same 0-based partition-relative columns as the host path.
         RoutingTopology routingPathTopology(aieGen, "", relStartCol, relEndCol, partStartRow, partEndRow);
+        if (reserveControlPlane)
+            routingPathTopology.getRM()->reserveControlPlaneResources(resourceGen);
 
         if (!runPipelineSinglePass(ctx, routingDmaphopModule,
                                    std::make_unique<DmaphopToRoutinghwPass>(routingPathTopology), routingIrDir, rstage,

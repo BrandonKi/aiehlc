@@ -101,6 +101,15 @@ template <typename BuilderT> inline PktSlotAttrValues<BuilderT> makePktSlotAttrs
             builder.getI32IntegerAttr(kForwardMasterArbiter), builder.getI32IntegerAttr(kForwardMasterMselEn)};
 }
 
+template <typename BuilderT>
+inline PktSlotAttrValues<BuilderT> makePktSlotAttrs(BuilderT &builder, int32_t recvSlot, int32_t arbiter) {
+    return {builder.getI32IntegerAttr(kRecvSlaveMask),    builder.getI32IntegerAttr(kRecvSlaveMsel),
+            builder.getI32IntegerAttr(arbiter),           builder.getI32IntegerAttr(recvSlot),
+            builder.getI32IntegerAttr(kLocalDmaMask),     builder.getI32IntegerAttr(kLocalDmaMsel),
+            builder.getI32IntegerAttr(arbiter),           builder.getI32IntegerAttr(kLocalDmaSlot),
+            builder.getI32IntegerAttr(arbiter),           builder.getI32IntegerAttr(kForwardMasterMselEn)};
+}
+
 } // namespace pktslot
 } // namespace routinghw
 

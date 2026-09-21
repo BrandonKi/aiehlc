@@ -517,7 +517,7 @@ int demo_txn_multipl_row(XAie_DevInst *dev) {
     uint32_t ref_pkt[16] = {0u};
     uint32_t ref_nw = __Runtime_ctrl_pktize_write(ref_pkt, (uint32_t)(sizeof(ref_pkt) / sizeof(ref_pkt[0])),
                                                   (uint32_t)ACR_ID_BCAST, DEMO_TXN_MR_ADDR, data, DEMO_TXN_MR_NW,
-                                                  /*lastwriteack=*/0, /*ret_stream_id=*/0u, NULL);
+                                                  /*lastwriteack=*/1, /*ret_stream_id=*/0u, NULL);
     int match = (ref_nw == txn_nw) && (memcmp(txn_pkt, ref_pkt, (size_t)txn_nw * sizeof(uint32_t)) == 0);
     uint32_t pid = 0u, ptype = 0u, prow = 0u, pcol = 0u;
     (void)__Runtime_ctrl_parse_pkt_hdr(txn_pkt[0], &pid, &ptype, &prow, &pcol);
